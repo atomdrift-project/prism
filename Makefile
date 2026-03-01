@@ -2,10 +2,10 @@
 
 help:
 	@echo "Available targets:"
-	@echo "  make build                  Build the web-flayer binary"
+	@echo "  make build                  Build the prism binary"
 	@echo "  make lint                   Run golangci-lint"
 	@echo "  make test                   Run tests"
-	@echo "  make run                    Run locally (requires flayer in PATH)"
+	@echo "  make run                    Run locally (requires cleave in PATH)"
 	@echo "  make clean                  Clean build artifacts"
 	@echo "  make deploy                 Deploy to Cloud Run"
 	@echo ""
@@ -17,7 +17,7 @@ help:
 	@echo "  GCS_BUCKET      GCS bucket name for file storage (required for deploy)"
 
 build:
-	CGO_ENABLED=0 go build -o web-flayer -ldflags="-s -w" .
+	CGO_ENABLED=0 go build -o prism -ldflags="-s -w" .
 
 lint:
 	golangci-lint run ./...
@@ -26,7 +26,7 @@ test:
 	go test -v ./...
 
 run: build
-	PORT=8080 flayer_PATH=flayer ./web-flayer
+	PORT=8080 CLEAVE_PATH=cleave ./prism
 
 check-deploy-deps:
 	@command -v apko >/dev/null 2>&1 || { echo "❌ apko not found. Install with: go install chainguard.dev/apko@latest"; exit 1; }
@@ -39,5 +39,5 @@ deploy: check-deploy-deps
 	./hacks/deploy.sh "$(GCP_PROJECT)" "$(GCS_BUCKET)"
 
 clean:
-	rm -f web-flayer
+	rm -f prism
 	rm -rf dist/

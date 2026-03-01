@@ -344,7 +344,7 @@ func main() {
 		}
 	}
 
-	logger.Info("web-flayer starting",
+	logger.Info("prism starting",
 		"go_version", runtime.Version(),
 		"os", runtime.GOOS,
 		"arch", runtime.GOARCH,
@@ -576,7 +576,7 @@ func validateTools() error {
 		errs = append(errs, fmt.Errorf("cleave server: %w", err))
 	}
 
-	// Validate radare2 or rizin (flayer requires one of these)
+	// Validate radare2 or rizin (cleave requires one of these)
 	radareInfo, err := validateRadare()
 	if err != nil {
 		errs = append(errs, fmt.Errorf("radare2/rizin: %w (set RADARE2_PATH or RIZIN_PATH to specify location)", err))

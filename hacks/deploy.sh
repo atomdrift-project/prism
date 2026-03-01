@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy web-flayer to Google Cloud Run using apko + crane
+# Deploy prism to Google Cloud Run using apko + crane
 # Uses only apko, crane, and gcloud - no Cloud Build or Docker required
 #
 # usage:
@@ -10,7 +10,7 @@ set -eux -o pipefail
 GCP_PROJECT="${1:-${GCP_PROJECT:?GCP_PROJECT not set}}"
 GCS_BUCKET="${2:-${GCS_BUCKET:?GCS_BUCKET not set}}"
 REGION="us-central1"
-APP_NAME="flayer-web"
+APP_NAME="prism"
 APP_IMAGE="gcr.io/${GCP_PROJECT}/${APP_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

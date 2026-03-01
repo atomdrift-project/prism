@@ -1,4 +1,4 @@
-module github.com/chainguard-dev/flayer/tools/web-flayer
+module github.com/chainguard-dev/cleave/tools/prism
 
 go 1.25.4
 
