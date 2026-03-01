@@ -1,0 +1,1312 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{.Filename}} - cleave</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Oxanium:wght@700&display=swap" rel="stylesheet">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --slate: #6b7280;
+            --silver: #9ca3af;
+            --mist: #f3f4f6;
+            --white: #ffffff;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --hostile: #ef4444;
+            --suspicious: #eab308;
+            --notable: #3b82f6;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 22px;
+            letter-spacing: -0.5px;
+        }
+        .logo-accent {
+            color: var(--isotope);
+        }
+        .tagline {
+            font-size: 14px;
+            color: var(--slate);
+            font-weight: 300;
+        }
+        .back-link {
+            font-size: 14px;
+            color: var(--slate);
+        }
+        .back-link:hover {
+            color: var(--carbon);
+        }
+
+        /* Hero Section - Molecule Display */
+        .hero {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            margin-bottom: 48px;
+            padding: 32px;
+            background: var(--mist);
+            border-radius: 16px;
+        }
+        .molecule-info {
+            width: 100%;
+        }
+        .hero-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .file-name {
+            display: inline-block;
+            font-size: 14px;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: var(--isotope-dim);
+            color: var(--isotope);
+            word-break: break-all;
+        }
+        .verdict {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .verdict-label {
+            font-size: 12px;
+            color: var(--silver);
+        }
+        .verdict-value {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+        .verdict-value.hostile { color: var(--hostile); }
+        .verdict-value.suspicious { color: var(--suspicious); }
+        .verdict-value.notable { color: var(--notable); }
+        .verdict-value.baseline { color: #22c55e; }
+        .formula-label {
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--slate);
+            margin-bottom: 4px;
+        }
+        .formula {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 12px;
+            line-height: 1.3;
+            word-break: break-word;
+        }
+        .formula sub {
+            font-size: 0.6em;
+            vertical-align: baseline;
+            position: relative;
+            top: 0.2em;
+        }
+        .meta-table {
+            display: table;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        .meta-row {
+            display: table-row;
+        }
+        .meta-label {
+            display: table-cell;
+            color: var(--silver);
+            padding-right: 12px;
+            padding-bottom: 6px;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.3px;
+        }
+        .meta-value {
+            display: table-cell;
+            color: var(--graphite);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            padding-bottom: 6px;
+        }
+        .molecule-viz {
+            display: flex;
+            justify-content: center;
+        }
+        .molecule-container {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+            height: 400px;
+            border-radius: 12px;
+            background: var(--white);
+            overflow: hidden;
+        }
+        #molecule-canvas {
+            width: 100%;
+            height: 100%;
+            border-radius: 12px;
+        }
+
+        /* Tabs Section */
+        .tabs-section {
+            margin-top: 32px;
+        }
+        .tabs {
+            display: flex;
+            gap: 4px;
+            border-bottom: 1px solid var(--mist);
+            margin-bottom: 0;
+        }
+        .tab {
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--slate);
+            background: none;
+            border: none;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: all 0.2s;
+        }
+        .tab:hover {
+            color: var(--carbon);
+        }
+        .tab.active {
+            color: var(--carbon);
+            border-bottom-color: var(--isotope);
+        }
+        .tab-content {
+            display: none;
+            padding-top: 20px;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .section-header {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .legend {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--slate);
+        }
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .legend-dot.hostile { background: var(--hostile); }
+        .legend-dot.suspicious { background: var(--suspicious); }
+        .legend-dot.notable { background: var(--notable); }
+
+        .findings-output {
+            background: var(--carbon);
+            color: #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .findings-output .hostile { color: #f87171; }
+        .findings-output .suspicious { color: #fbbf24; }
+        .findings-output .notable { color: #60a5fa; }
+        .findings-output .dim { color: #6b7280; }
+
+        /* Terminal Output */
+        .terminal-output {
+            background: var(--carbon);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #e5e7eb;
+            max-height: 500px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .terminal-output .hostile { color: #f87171; }
+        .terminal-output .suspicious { color: #fbbf24; }
+        .terminal-output .notable { color: #60a5fa; }
+        .terminal-output .dim { color: #6b7280; }
+
+        footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: var(--silver);
+        }
+        footer a {
+            color: var(--slate);
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+
+        /* Galaxy labels */
+        .molecule-label {
+            color: var(--white);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 10px;
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 3px;
+            white-space: nowrap;
+            pointer-events: none;
+            user-select: none;
+        }
+        .molecule-label.hostile { border-left: 2px solid var(--hostile); }
+        .molecule-label.suspicious { border-left: 2px solid var(--suspicious); }
+        .molecule-label.notable { border-left: 2px solid var(--notable); }
+
+        /* Galaxy info panel */
+        .galaxy-info {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            right: 8px;
+            background: rgba(10, 10, 10, 0.95);
+            border-radius: 8px;
+            padding: 12px;
+            color: var(--white);
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 10;
+        }
+        .galaxy-info.visible { display: block; }
+        .galaxy-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--graphite);
+        }
+        .galaxy-info-title {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-weight: 500;
+            color: var(--mist);
+        }
+        .galaxy-info-close {
+            cursor: pointer;
+            color: var(--silver);
+            font-size: 16px;
+            line-height: 1;
+        }
+        .galaxy-info-close:hover { color: var(--white); }
+        .galaxy-info-formula {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: var(--mist);
+        }
+        .galaxy-info-findings {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .galaxy-info-findings .hostile { color: #f87171; }
+        .galaxy-info-findings .suspicious { color: #fbbf24; }
+        .galaxy-info-findings .notable { color: #60a5fa; }
+
+        /* Findings Tables */
+        .findings-section {
+            margin-bottom: 32px;
+        }
+        .file-findings {
+            margin-bottom: 24px;
+        }
+        .file-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--mist);
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        }
+        .file-risk-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .file-risk-dot.hostile { background: var(--hostile); }
+        .file-risk-dot.suspicious { background: var(--suspicious); }
+        .file-risk-dot.notable { background: var(--notable); }
+        .file-name-header {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--carbon);
+        }
+        .file-formula {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--slate);
+            margin-left: auto;
+        }
+        .file-meta {
+            padding: 6px 16px;
+            background: rgba(0, 0, 0, 0.02);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+        }
+        .file-sha256 {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--slate);
+            word-break: break-all;
+        }
+        .category-section {
+            margin-bottom: 16px;
+        }
+        .category-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.02);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+        }
+        .findings-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .findings-table th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--slate);
+            padding: 10px 16px;
+            background: var(--white);
+            border-bottom: 1px solid var(--mist);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .findings-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+        }
+        .findings-table tr:last-child td {
+            border-bottom: none;
+        }
+        .findings-table tr:hover {
+            background: rgba(0, 0, 0, 0.01);
+        }
+        .crit-badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .crit-badge.hostile {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--hostile);
+        }
+        .crit-badge.suspicious {
+            background: rgba(234, 179, 8, 0.1);
+            color: var(--suspicious);
+        }
+        .crit-badge.notable {
+            background: var(--isotope-dim);
+            color: var(--notable);
+        }
+        .trait-id {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--graphite);
+        }
+        .trait-desc {
+            color: var(--carbon);
+            line-height: 1.5;
+        }
+        .trait-evidence {
+            margin-top: 6px;
+            padding: 8px 10px;
+            background: var(--white);
+            border: 1px solid var(--isotope-dim);
+            border-left: 3px solid var(--isotope);
+            border-radius: 4px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--isotope);
+            word-break: break-all;
+        }
+        .trait-evidence-item {
+            margin-bottom: 4px;
+        }
+        .trait-evidence-item:last-child {
+            margin-bottom: 0;
+        }
+        .no-findings {
+            padding: 40px;
+            text-align: center;
+            color: var(--silver);
+            font-size: 14px;
+        }
+
+        /* Strings Tab */
+        .strings-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .strings-table th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--slate);
+            padding: 10px 16px;
+            background: var(--white);
+            border-bottom: 1px solid var(--mist);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .strings-table td {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--mist);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--graphite);
+            word-break: break-all;
+        }
+        .strings-table tr:hover {
+            background: rgba(0, 0, 0, 0.01);
+        }
+        .section-badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--isotope-dim);
+            color: var(--isotope);
+            border-radius: 3px;
+            margin-left: 8px;
+        }
+
+        /* Symbols Tab */
+        .symbols-section {
+            margin-bottom: 16px;
+        }
+        .symbols-type {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 6px 16px;
+            background: rgba(0, 0, 0, 0.02);
+        }
+        .symbols-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1px;
+            background: var(--mist);
+        }
+        .symbol-item {
+            padding: 8px 16px;
+            background: var(--white);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--graphite);
+        }
+        .symbol-library {
+            font-size: 10px;
+            color: var(--silver);
+            margin-left: 8px;
+        }
+
+        /* Sections Tab */
+        .sections-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .sections-table th {
+            text-align: left;
+            font-weight: 500;
+            color: var(--slate);
+            padding: 10px 16px;
+            background: var(--white);
+            border-bottom: 1px solid var(--mist);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .sections-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .sections-table tr:hover {
+            background: rgba(0, 0, 0, 0.01);
+        }
+        .section-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--carbon);
+        }
+        .section-size {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--graphite);
+        }
+        .entropy-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--mist);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        .entropy-fill {
+            height: 100%;
+            border-radius: 3px;
+        }
+        .entropy-low { background: #22c55e; }
+        .entropy-medium { background: var(--suspicious); }
+        .entropy-high { background: var(--hostile); }
+        .entropy-value {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--slate);
+        }
+        .section-flags {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--silver);
+        }
+
+        /* Metrics Tab */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+            padding: 16px;
+        }
+        .metric-card {
+            background: var(--white);
+            border: 1px solid var(--mist);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .metric-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 4px;
+        }
+        .metric-value {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--carbon);
+        }
+
+        @media (max-width: 768px) {
+            .hero {
+                padding: 20px;
+            }
+            .hero-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            .formula {
+                font-size: 20px;
+            }
+            .molecule-container {
+                height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <a href="/" class="logo">cle<span class="logo-accent">ave</span></a>
+                <p class="tagline">Molecular decomposition for threat detection</p>
+            </div>
+            <a href="/" class="back-link">← Analyze another</a>
+        </header>
+
+        <section class="hero">
+            <div class="molecule-info">
+                <div class="hero-header">
+                    <div class="file-name">{{.Filename}}</div>
+                    <div class="verdict">
+                        <span class="verdict-label">Verdict:</span>
+                        <span class="verdict-value {{if eq .Verdict "HOSTILE"}}hostile{{else if eq .Verdict "SUSPICIOUS"}}suspicious{{else if eq .Verdict "NOTABLE"}}notable{{else}}baseline{{end}}">{{.Verdict}}</span>
+                    </div>
+                </div>
+                <div class="formula-label">Malecule ID</div>
+                <div class="formula">{{.Formula}}</div>
+                <div class="meta-table">
+                    <div class="meta-row">
+                        <span class="meta-label">SHA256</span>
+                        <span class="meta-value">{{.SHA256}}</span>
+                    </div>
+                    <div class="meta-row">
+                        <span class="meta-label">Size</span>
+                        <span class="meta-value">{{.Size}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="molecule-viz">
+                <div class="molecule-container">
+                    <canvas id="molecule-canvas"></canvas>
+                    <div class="galaxy-info" id="galaxy-info">
+                        <div class="galaxy-info-header">
+                            <span class="galaxy-info-title" id="galaxy-info-title"></span>
+                            <span class="galaxy-info-close" id="galaxy-info-close">&times;</span>
+                        </div>
+                        <div class="galaxy-info-formula" id="galaxy-info-formula"></div>
+                        <div class="galaxy-info-findings" id="galaxy-info-findings"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="tabs-section">
+            <div class="tabs">
+                <button class="tab active" data-tab="traits">Traits</button>
+                <button class="tab" data-tab="strings">Strings</button>
+                <button class="tab" data-tab="symbols">Symbols</button>
+                <button class="tab" data-tab="sections">Sections</button>
+                <button class="tab" data-tab="metrics">Metrics</button>
+            </div>
+
+            <div class="tab-content active" id="tab-traits">
+                <div class="section-header">
+                    <div class="legend">
+                        <span class="legend-item"><span class="legend-dot hostile"></span> hostile</span>
+                        <span class="legend-item"><span class="legend-dot suspicious"></span> suspicious</span>
+                        <span class="legend-item"><span class="legend-dot notable"></span> notable</span>
+                    </div>
+                </div>
+                <div class="findings-section">
+                    {{if .FileFindings}}
+                        {{range .FileFindings}}
+                        <div class="file-findings">
+                            <div class="file-header">
+                                <span class="file-risk-dot {{.Risk}}"></span>
+                                <span class="file-name-header">{{.Basename}}</span>
+                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            </div>
+                            <div class="file-meta">
+                                <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                            </div>
+                            {{range .Categories}}
+                            <div class="category-section">
+                                <div class="category-title">{{.Name}}</div>
+                                <table class="findings-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 90px;">Criticality</th>
+                                            <th style="width: 280px;">Trait</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {{range .Findings}}
+                                        <tr>
+                                            <td><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
+                                            <td class="trait-id">{{.ID}}</td>
+                                            <td>
+                                                <div class="trait-desc">{{.Desc}}</div>
+                                                {{if .Evidence}}
+                                                <div class="trait-evidence">
+                                                    {{range .Evidence}}
+                                                    <div class="trait-evidence-item">{{.}}</div>
+                                                    {{end}}
+                                                </div>
+                                                {{end}}
+                                            </td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {{end}}
+                        </div>
+                        {{end}}
+                    {{else}}
+                        <div class="no-findings">No findings detected</div>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-strings">
+                {{if .FileStrings}}
+                    {{range .FileStrings}}
+                    <div class="file-findings">
+                        <div class="file-header">
+                            <span class="file-risk-dot {{.Risk}}"></span>
+                            <span class="file-name-header">{{.Basename}}</span>
+                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                        </div>
+                        <div class="file-meta">
+                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                        </div>
+                        <table class="strings-table">
+                            <thead>
+                                <tr>
+                                    <th>String</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .Strings}}
+                                <tr>
+                                    <td>{{.Value}}{{if .Section}}<span class="section-badge">{{.Section}}</span>{{end}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{end}}
+                {{else}}
+                    <div class="no-findings">No strings extracted</div>
+                {{end}}
+            </div>
+
+            <div class="tab-content" id="tab-symbols">
+                {{if .FileSymbols}}
+                    {{range .FileSymbols}}
+                    <div class="file-findings">
+                        <div class="file-header">
+                            <span class="file-risk-dot {{.Risk}}"></span>
+                            <span class="file-name-header">{{.Basename}}</span>
+                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                        </div>
+                        <div class="file-meta">
+                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                        </div>
+                        {{if .Imports}}
+                        <div class="symbols-section">
+                            <div class="symbols-type">Imports</div>
+                            <div class="symbols-list">
+                                {{range .Imports}}
+                                <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
+                        {{if .Exports}}
+                        <div class="symbols-section">
+                            <div class="symbols-type">Exports</div>
+                            <div class="symbols-list">
+                                {{range .Exports}}
+                                <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+                    {{end}}
+                {{else}}
+                    <div class="no-findings">No symbols found</div>
+                {{end}}
+            </div>
+
+            <div class="tab-content" id="tab-sections">
+                {{if .FileSections}}
+                    {{range .FileSections}}
+                    <div class="file-findings">
+                        <div class="file-header">
+                            <span class="file-risk-dot {{.Risk}}"></span>
+                            <span class="file-name-header">{{.Basename}}</span>
+                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                        </div>
+                        <div class="file-meta">
+                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                        </div>
+                        <table class="sections-table">
+                            <thead>
+                                <tr>
+                                    <th>Section</th>
+                                    <th>Size</th>
+                                    <th>Entropy</th>
+                                    <th>Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .Sections}}
+                                <tr>
+                                    <td class="section-name">{{.Name}}</td>
+                                    <td class="section-size">{{.Size}} B</td>
+                                    <td>
+                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 5.0}}entropy-low{{else if lt .Entropy 7.0}}entropy-medium{{else}}entropy-high{{end}}" style="width: {{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
+                                        <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
+                                    </td>
+                                    <td class="section-flags">{{.Flags}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{end}}
+                {{else}}
+                    <div class="no-findings">No sections found</div>
+                {{end}}
+            </div>
+
+            <div class="tab-content" id="tab-metrics">
+                {{if .FileMetrics}}
+                    {{range .FileMetrics}}
+                    <div class="file-findings">
+                        <div class="file-header">
+                            <span class="file-risk-dot {{.Risk}}"></span>
+                            <span class="file-name-header">{{.Basename}}</span>
+                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                        </div>
+                        <div class="file-meta">
+                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                        </div>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <div class="metric-label">File Size</div>
+                                <div class="metric-value">{{.FileSize}} B</div>
+                            </div>
+                            {{if .CodeSize}}
+                            <div class="metric-card">
+                                <div class="metric-label">Code Size</div>
+                                <div class="metric-value">{{.CodeSize}} B</div>
+                            </div>
+                            {{end}}
+                            {{if .OverallEntropy}}
+                            <div class="metric-card">
+                                <div class="metric-label">Overall Entropy</div>
+                                <div class="metric-value">{{printf "%.2f" .OverallEntropy}}</div>
+                            </div>
+                            {{end}}
+                            {{if .CodeEntropy}}
+                            <div class="metric-card">
+                                <div class="metric-label">Code Entropy</div>
+                                <div class="metric-value">{{printf "%.2f" .CodeEntropy}}</div>
+                            </div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                {{else}}
+                    <div class="no-findings">No metrics available</div>
+                {{end}}
+            </div>
+        </section>
+
+        <footer>
+            <span>&copy; 2026 The Atomdrift Project</span>
+            <a href="https://codeberg.org/atomdrift/cleave" target="_blank">Codeberg</a>
+        </footer>
+    </div>
+
+    <script type="module">
+import * as THREE from 'three';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// Molecule data from analysis (injected by Go template)
+const moleculeData = {{.MoleculeJSON}};
+
+const canvas = document.getElementById('molecule-canvas');
+if (!canvas) throw new Error('Canvas not found');
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+camera.position.z = 12;
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+// CSS2D renderer for labels
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+const moleculeContainer = canvas.closest('.molecule-container');
+moleculeContainer.appendChild(labelRenderer.domElement);
+
+// Orbit controls for mouse interaction
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.enablePan = true;
+controls.enableZoom = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.0;
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(5, 5, 5);
+scene.add(directionalLight);
+
+const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+backLight.position.set(-5, -5, -5);
+scene.add(backLight);
+
+const moleculeGroup = new THREE.Group();
+scene.add(moleculeGroup);
+
+// Color mapping for severity
+const severityColors = {
+    hostile: 0xef4444,
+    suspicious: 0xeab308,
+    notable: 0x3b82f6,
+    neutral: 0x9ca3af
+};
+
+const bondMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.5, metalness: 0.0 });
+
+// Track clickable meshes for raycasting
+const clickableMeshes = [];
+const meshToMolecule = new Map();
+const meshToAtom = new Map();
+
+// Helper to add atoms and bonds to scene
+function addMolecule(atoms, bonds, group, moleculeIndex = null, moleculeData = null) {
+    atoms.forEach((atom, atomIndex) => {
+        const color = severityColors[atom.severity] || severityColors.neutral;
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.1 });
+        const geo = new THREE.SphereGeometry(atom.radius || 0.4, 32, 32);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(atom.x, atom.y, atom.z);
+        group.add(mesh);
+
+        // Track for raycasting if in galaxy mode
+        if (moleculeIndex !== null) {
+            clickableMeshes.push(mesh);
+            meshToMolecule.set(mesh, moleculeIndex);
+            meshToAtom.set(mesh, { atom, moleculeData });
+        }
+    });
+
+    if (bonds && bonds.length > 0) {
+        const bondGeo = new THREE.CylinderGeometry(0.08, 0.08, 1, 12);
+        bonds.forEach(bond => {
+            const start = atoms[bond[0]];
+            const end = atoms[bond[1]];
+            if (!start || !end) return;
+
+            const startVec = new THREE.Vector3(start.x, start.y, start.z);
+            const endVec = new THREE.Vector3(end.x, end.y, end.z);
+            const mid = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5);
+            const length = startVec.distanceTo(endVec);
+
+            const bondMesh = new THREE.Mesh(bondGeo, bondMat);
+            bondMesh.position.copy(mid);
+            bondMesh.scale.y = length;
+            bondMesh.lookAt(endVec);
+            bondMesh.rotateX(Math.PI / 2);
+            group.add(bondMesh);
+        });
+    }
+}
+
+// Extract basename from path
+function basename(path) {
+    if (path.includes('!!')) {
+        path = path.split('!!').pop();
+    }
+    return path.split('/').pop();
+}
+
+// Galaxy info panel
+const infoPanel = document.getElementById('galaxy-info');
+const infoTitle = document.getElementById('galaxy-info-title');
+const infoFormula = document.getElementById('galaxy-info-formula');
+const infoFindings = document.getElementById('galaxy-info-findings');
+const infoClose = document.getElementById('galaxy-info-close');
+
+function showMoleculeInfo(mol) {
+    infoTitle.textContent = basename(mol.path);
+    infoFormula.textContent = mol.formula;
+
+    // Use mol.risk for severity coloring
+    const severity = mol.risk || 'notable';
+    let findingsHtml = '';
+    if (mol.findings && mol.findings.length > 0) {
+        mol.findings.forEach(f => {
+            findingsHtml += `<div class="${severity}">${f}</div>`;
+        });
+    } else {
+        findingsHtml = '<div>No findings</div>';
+    }
+    infoFindings.innerHTML = findingsHtml;
+    infoPanel.classList.add('visible');
+}
+
+function showAtomInfo(atom, mol) {
+    // Show atom-specific info: element symbol, category, and traits
+    const symbol = atom.symbol || '?';
+    const category = atom.category || 'unknown';
+    infoTitle.textContent = `${symbol} - ${basename(mol.path)}`;
+    infoFormula.textContent = category;
+
+    // Show the specific traits for this atom, using atom's severity for color
+    let findingsHtml = '';
+    if (atom.trait_id) {
+        const severity = atom.severity || 'notable';
+        const traits = atom.trait_id.split(', ');
+        traits.forEach(t => {
+            findingsHtml += `<div class="${severity}">${t}</div>`;
+        });
+    } else {
+        findingsHtml = '<div>No specific traits</div>';
+    }
+    infoFindings.innerHTML = findingsHtml;
+    infoPanel.classList.add('visible');
+}
+
+if (infoClose) {
+    infoClose.addEventListener('click', () => {
+        infoPanel.classList.remove('visible');
+    });
+}
+
+// Raycaster for click detection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+canvas.addEventListener('click', (event) => {
+    if (!moleculeData || !moleculeData.isGalaxy) return;
+
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(clickableMeshes);
+
+    if (intersects.length > 0) {
+        const mesh = intersects[0].object;
+        const atomData = meshToAtom.get(mesh);
+        if (atomData) {
+            showAtomInfo(atomData.atom, atomData.moleculeData);
+        }
+    }
+});
+
+// Change cursor on hover
+canvas.addEventListener('mousemove', (event) => {
+    if (!moleculeData || !moleculeData.isGalaxy) return;
+
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(clickableMeshes);
+
+    canvas.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
+});
+
+// Parse molecule data and create visualization
+if (moleculeData && moleculeData.isGalaxy && moleculeData.molecules) {
+    // Galaxy mode - multiple molecules for archives
+    camera.position.z = 25; // Zoom out for galaxy view
+
+    moleculeData.molecules.forEach((mol, molIndex) => {
+        if (mol.atoms && mol.atoms.length > 0) {
+            addMolecule(mol.atoms, mol.bonds, moleculeGroup, molIndex, mol);
+
+            // Add label for this molecule
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'molecule-label ' + (mol.risk || 'notable');
+            labelDiv.textContent = basename(mol.path);
+            const label = new CSS2DObject(labelDiv);
+            label.position.set(mol.centerX, mol.centerY + 2.5, mol.centerZ);
+            moleculeGroup.add(label);
+        }
+    });
+
+    // Add dropper relationship arrows (dashed green lines)
+    if (moleculeData.links && moleculeData.links.length > 0) {
+        const lineMat = new THREE.LineDashedMaterial({
+            color: 0x22c55e,
+            dashSize: 0.5,
+            gapSize: 0.25,
+            linewidth: 2
+        });
+
+        const arrowheadMat = new THREE.MeshStandardMaterial({
+            color: 0x22c55e,
+            roughness: 0.3,
+            metalness: 0.1
+        });
+
+        // Helper to align a cone along a direction
+        const yAxis = new THREE.Vector3(0, 1, 0);
+        function alignToDirection(mesh, direction) {
+            const quaternion = new THREE.Quaternion();
+            quaternion.setFromUnitVectors(yAxis, direction.clone().normalize());
+            mesh.quaternion.copy(quaternion);
+        }
+
+        moleculeData.links.forEach(link => {
+            const fromMol = moleculeData.molecules[link.from];
+            const toMol = moleculeData.molecules[link.to];
+            if (!fromMol || !toMol) return;
+
+            // Connect directly to molecule centers
+            const start = new THREE.Vector3(fromMol.centerX, fromMol.centerY, fromMol.centerZ);
+            const end = new THREE.Vector3(toMol.centerX, toMol.centerY, toMol.centerZ);
+            const direction = new THREE.Vector3().subVectors(end, start);
+            const length = direction.length();
+
+            if (length < 1) return;
+
+            const dir = direction.clone().normalize();
+            // Pull back the end point slightly for the arrowhead
+            const arrowheadLength = 0.6;
+            const lineEnd = end.clone().sub(dir.clone().multiplyScalar(arrowheadLength));
+
+            // Dashed line from center to center
+            const points = [start, lineEnd];
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geometry, lineMat);
+            line.computeLineDistances(); // Required for dashed lines
+            moleculeGroup.add(line);
+
+            // Arrowhead (cone) at the end
+            const coneGeo = new THREE.ConeGeometry(0.25, arrowheadLength, 12);
+            const cone = new THREE.Mesh(coneGeo, arrowheadMat);
+            cone.position.copy(end.clone().sub(dir.clone().multiplyScalar(arrowheadLength / 2)));
+            alignToDirection(cone, dir);
+            moleculeGroup.add(cone);
+        });
+    }
+
+    // Center the galaxy
+    const box = new THREE.Box3().setFromObject(moleculeGroup);
+    const center = box.getCenter(new THREE.Vector3());
+    moleculeGroup.position.sub(center);
+} else if (moleculeData && moleculeData.atoms && moleculeData.atoms.length > 0) {
+    // Single molecule mode
+    addMolecule(moleculeData.atoms, moleculeData.bonds, moleculeGroup);
+
+    // Center the molecule
+    const box = new THREE.Box3().setFromObject(moleculeGroup);
+    const center = box.getCenter(new THREE.Vector3());
+    moleculeGroup.position.sub(center);
+} else {
+    // No findings - show a simple neutral atom
+    const mat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.3, metalness: 0.1 });
+    const geo = new THREE.SphereGeometry(0.8, 32, 32);
+    const mesh = new THREE.Mesh(geo, mat);
+    moleculeGroup.add(mesh);
+}
+
+// Stop auto-rotate when user interacts
+controls.addEventListener('start', () => {
+    controls.autoRotate = false;
+});
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+    labelRenderer.render(scene, camera);
+}
+
+animate();
+
+window.addEventListener('resize', () => {
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    labelRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+});
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+});
+
+    </script>
+</body>
+</html>

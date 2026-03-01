@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cleave - Molecular Decomposition</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Oxanium:wght@700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --slate: #6b7280;
+            --silver: #9ca3af;
+            --mist: #f3f4f6;
+            --white: #ffffff;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --hostile: #ef4444;
+            --suspicious: #eab308;
+            --notable: #3b82f6;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        header {
+            margin-bottom: 48px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+        }
+        .logo-accent {
+            color: var(--isotope);
+        }
+        .tagline {
+            font-size: 18px;
+            color: var(--slate);
+            font-weight: 300;
+        }
+        .upload-zone {
+            border: 2px dashed var(--silver);
+            border-radius: 12px;
+            padding: 48px;
+            text-align: center;
+            margin: 32px 0;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--isotope);
+            background: var(--isotope-dim);
+        }
+        .upload-zone input[type="file"] {
+            display: none;
+        }
+        .upload-zone label {
+            cursor: pointer;
+            display: block;
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        .upload-text {
+            font-size: 16px;
+            color: var(--graphite);
+            margin-bottom: 8px;
+        }
+        .upload-hint {
+            font-size: 14px;
+            color: var(--silver);
+        }
+        .btn {
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-family: inherit;
+        }
+        .btn-primary {
+            background: var(--carbon);
+            color: var(--white);
+        }
+        .btn-primary:hover {
+            background: var(--graphite);
+        }
+        .btn-primary:disabled {
+            background: var(--silver);
+            cursor: not-allowed;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            margin-top: 48px;
+        }
+        .feature {
+            padding: 24px;
+            border: 1px solid var(--mist);
+            border-radius: 12px;
+        }
+        .feature h3 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .feature p {
+            font-size: 14px;
+            color: var(--slate);
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            font-size: 14px;
+            color: var(--silver);
+            display: flex;
+            justify-content: space-between;
+        }
+        footer a {
+            color: var(--slate);
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+        @media (max-width: 600px) {
+            .features {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span>cle<span class="logo-accent">ave</span></span>
+            </div>
+            <p class="tagline">Molecular decomposition for threat detection</p>
+        </header>
+
+        <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form">
+            <div class="upload-zone" id="upload-zone">
+                <input type="file" name="file" id="file-input" required />
+                <label for="file-input">
+                    <div class="upload-icon">⚛</div>
+                    <div class="upload-text">Drop a file here or click to browse</div>
+                    <div class="upload-hint">Binaries, source code, packages, archives</div>
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary" id="submit-btn" disabled>Analyze</button>
+        </form>
+
+        <div class="features">
+            <div class="feature">
+                <h3>Molecular Analysis</h3>
+                <p>Decomposes files into atomic components, generating molecular fingerprints that reveal behavioral patterns.</p>
+            </div>
+            <div class="feature">
+                <h3>AST-Aware</h3>
+                <p>Understands code semantics across 20+ languages to detect intent, not just strings.</p>
+            </div>
+            <div class="feature">
+                <h3>Deep Inspection</h3>
+                <p>Leverages Radare2/Rizin and Goblin for deep binary analysis of Mach-O, ELF, and PE.</p>
+            </div>
+            <div class="feature">
+                <h3>Recursive Unpacking</h3>
+                <p>Automatically unpacks archives and inspects nested content at any depth.</p>
+            </div>
+        </div>
+
+        <footer>
+            <span>&copy; 2026 The Atomdrift Project</span>
+            <a href="https://codeberg.org/atomdrift/cleave" target="_blank">Codeberg</a>
+        </footer>
+    </div>
+
+    <script>
+        const zone = document.getElementById('upload-zone');
+        const input = document.getElementById('file-input');
+        const btn = document.getElementById('submit-btn');
+        const uploadText = zone.querySelector('.upload-text');
+
+        ['dragenter', 'dragover'].forEach(e => {
+            zone.addEventListener(e, ev => {
+                ev.preventDefault();
+                zone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(e => {
+            zone.addEventListener(e, ev => {
+                ev.preventDefault();
+                zone.classList.remove('dragover');
+            });
+        });
+
+        zone.addEventListener('drop', e => {
+            input.files = e.dataTransfer.files;
+            updateUI();
+        });
+
+        input.addEventListener('change', updateUI);
+
+        function updateUI() {
+            if (input.files.length > 0) {
+                uploadText.textContent = input.files[0].name;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

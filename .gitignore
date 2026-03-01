@@ -1,0 +1,24 @@
+# Build artifacts
+/prism
+/dist/
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code local settings
+.claude/
+
+# Test outputs
+testdata/rendered.html
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
