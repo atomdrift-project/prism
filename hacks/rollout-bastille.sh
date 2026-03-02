@@ -79,7 +79,7 @@ load_rc_config $name
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
 prism_env="PORT=8080 CLEAVE_URL=${prism_cleave_url}"
-command_args="-c -f -P ${pidfile} -r -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
+command_args="-c -f -P ${pidfile} -S -r -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
 
 run_rc_command "$1"
 EOF
