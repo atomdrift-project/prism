@@ -29,7 +29,7 @@ doas bastille cmd "$BUILD" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$BUILD" pw useradd prism -m -s /bin/sh -c "Prism Build"
 
 log "Installing build dependencies"
-doas bastille pkg "$BUILD" install -y go
+doas bastille pkg "$BUILD" install -y go gmake
 
 log "Copying source tree to build jail"
 doas bastille cmd "$BUILD" rm -rf /home/prism/prism
@@ -37,7 +37,7 @@ doas bastille cp "$BUILD" . /home/prism/prism
 doas bastille cmd "$BUILD" chown -R prism:prism /home/prism/prism
 
 log "Building binary"
-doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && make build"
+doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake build"
 
 # --- Transfer binary via jail filesystem ---
 
@@ -73,7 +73,7 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_cleave_url:="http://127.0.0.1:8000"}
+: ${prism_cleave_url:="http://10.9.8.62:8000"}
 
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
