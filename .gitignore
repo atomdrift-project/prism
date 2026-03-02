@@ -22,3 +22,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log
+
+# added by lint-install
+out/

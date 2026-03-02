@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"errors"
 	"fmt"
 	"html"
@@ -30,6 +32,12 @@ import (
 	"github.com/codeGROOVE-dev/fido/pkg/store/null"
 	"github.com/codeGROOVE-dev/retry"
 )
+
+//go:embed templates/*.html
+var templatesFS embed.FS
+
+//go:embed static/*
+var staticFS embed.FS
 
 var (
 	uploadTemplate  *template.Template
@@ -420,7 +428,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	staticContent, _ := fs.Sub(staticFS, "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/upload", handleUpload)
 	mux.HandleFunc("/file/", handleFile)
@@ -761,19 +770,10 @@ func validateRadare() (*toolInfo, error) {
 	return nil, fmt.Errorf("neither radare2 nor rizin found (radare2: %v; rizin: %v); set RADARE2_PATH or RIZIN_PATH", radare2Err, rizinErr)
 }
 
-// loadTemplates parses the HTML templates.
+// loadTemplates parses the HTML templates from embedded filesystem.
 func loadTemplates() error {
-	templateDir := "templates"
-
-	// Check if templates directory exists
-	if info, err := os.Stat(templateDir); err != nil {
-		return fmt.Errorf("templates directory: %w", err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("templates path is not a directory: %s", templateDir)
-	}
-
 	var err error
-	uploadTemplate, err = template.ParseFiles(filepath.Join(templateDir, "upload.html"))
+	uploadTemplate, err = template.ParseFS(templatesFS, "templates/upload.html")
 	if err != nil {
 		return fmt.Errorf("parse upload.html: %w", err)
 	}
@@ -782,12 +782,12 @@ func loadTemplates() error {
 	funcMap := template.FuncMap{
 		"mul": func(a, b float64) float64 { return a * b },
 	}
-	resultTemplate, err = template.New("result.html").Funcs(funcMap).ParseFiles(filepath.Join(templateDir, "result.html"))
+	resultTemplate, err = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/result.html")
 	if err != nil {
 		return fmt.Errorf("parse result.html: %w", err)
 	}
 
-	logger.Debug("templates loaded",
+	logger.Debug("templates loaded (embedded)",
 		"upload_template", "templates/upload.html",
 		"result_template", "templates/result.html",
 	)

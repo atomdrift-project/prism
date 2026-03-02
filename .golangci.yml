@@ -188,6 +188,8 @@ linters:
           disabled: true
         - name: bare-return
           disabled: true
+        - name: confusing-naming # many false positives
+          disabled: true
 
     rowserrcheck:
       # database/sql is always checked.
