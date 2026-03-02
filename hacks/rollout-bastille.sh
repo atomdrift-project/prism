@@ -74,11 +74,11 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_cleave_url:="http://10.9.8.62:8000"}
+: ${prism_cleave_url:="10.9.8.62:8000"}
 
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
-prism_env="PORT=8080 CLEAVE_URL=${prism_cleave_url}"
+prism_env="PORT=8080 CLEAVE_ADDR=${prism_cleave_url}"
 command_args="-c -f -P ${pidfile} -S -r -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
 
 run_rc_command "$1"
