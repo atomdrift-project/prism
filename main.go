@@ -6,17 +6,16 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
-	"io/fs"
 	"errors"
 	"fmt"
 	"html"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -40,22 +39,14 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var (
-	uploadTemplate  *template.Template
-	resultTemplate  *template.Template
-	gcsBucket       string
-	cleavePath      string
-	cleaveAddr      string       // Address of cleave server (e.g., "127.0.0.1:8080")
-	cleaveServerCmd *exec.Cmd    // Managed cleave server process (if we started it)
-	cleaveClient    *http.Client // HTTP client for cleave server
-	traitsPath      string
-	thirdPartyPath  string
-	radare2Path     string
-	rizinPath       string
-	radareCmd       string          // resolved backend: "radare2" or "rizin"
-	radareCmdPath   string          // resolved full path to backend
-	gcsClient       *storage.Client // reusable GCS client
-	cache           *fido.TieredCache[string, storedResult]
-	logger          *slog.Logger
+	uploadTemplate *template.Template
+	resultTemplate *template.Template
+	gcsBucket      string
+	cleaveAddr     string       // Address of cleave server (e.g., "127.0.0.1:8080")
+	cleaveClient   *http.Client // HTTP client for cleave server
+	gcsClient      *storage.Client
+	cache          *fido.TieredCache[string, storedResult]
+	logger         *slog.Logger
 )
 
 // FindingDisplay represents a single finding for table display.
@@ -171,28 +162,15 @@ type storedResult struct {
 	Metrics  string
 }
 
-// cleaveError represents an error from cleave that shouldn't be cached
-// but should still be displayed to the user
-type cleaveError struct {
-	filename string
-	output   string
-}
-
-func (e *cleaveError) Error() string {
-	return "cleave returned an error"
-}
-
 // cleaveReport is constructed from JSONL output (multiple lines)
 type cleaveReport struct {
 	Files   []cleaveFile
 	Summary *cleaveSummary
 }
 
-// cleaveJSONLEntry represents a single line in JSONL output
-type cleaveJSONLEntry struct {
-	Type string `json:"type"` // "file" or "summary"
-
-	// File entry fields
+// cleaveFile represents a file entry in cleave output
+type cleaveFile struct {
+	Type     string         `json:"type,omitempty"` // "file" for JSONL parsing
 	ID       int            `json:"id"`
 	Path     string         `json:"path"`
 	Depth    int            `json:"depth"`
@@ -208,31 +186,12 @@ type cleaveJSONLEntry struct {
 	Sections []sectionInfo  `json:"sections,omitempty"`
 	Metrics  *metricsInfo   `json:"metrics,omitempty"`
 	Formula  string         `json:"formula,omitempty"`
-
-	// Summary entry fields
+	// Summary fields (only present when Type == "summary")
 	FilesAnalyzed      int   `json:"files_analyzed,omitempty"`
 	Hostile            int   `json:"hostile,omitempty"`
 	Suspicious         int   `json:"suspicious,omitempty"`
 	Notable            int   `json:"notable,omitempty"`
 	AnalysisDurationMs int64 `json:"analysis_duration_ms,omitempty"`
-}
-
-type cleaveFile struct {
-	ID       int            `json:"id"`
-	Path     string         `json:"path"`
-	Depth    int            `json:"depth"`
-	FileType string         `json:"file_type"`
-	SHA256   string         `json:"sha256"`
-	Size     int64          `json:"size"`
-	Risk     string         `json:"risk,omitempty"`
-	Counts   *findingCounts `json:"counts,omitempty"`
-	Findings []finding      `json:"findings"`
-	Strings  []stringInfo   `json:"strings,omitempty"`
-	Imports  []symbolInfo   `json:"imports,omitempty"`
-	Exports  []symbolInfo   `json:"exports,omitempty"`
-	Sections []sectionInfo  `json:"sections,omitempty"`
-	Metrics  *metricsInfo   `json:"metrics,omitempty"`
-	Formula  string         `json:"formula,omitempty"`
 }
 
 type stringInfo struct {
@@ -320,12 +279,6 @@ type moleculeData struct {
 	Bonds [][2]int       `json:"bonds"`
 }
 
-// toolInfo holds information about an external tool.
-type toolInfo struct {
-	name    string
-	path    string
-	version string
-}
 
 func init() {
 	// Initialize structured logger with JSON output for production
@@ -364,12 +317,6 @@ func main() {
 	// Load configuration from environment
 	if err := loadConfig(); err != nil {
 		logger.Error("configuration error", "error", err)
-		os.Exit(1)
-	}
-
-	// Validate required external tools
-	if err := validateTools(); err != nil {
-		logger.Error("tool validation failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -417,8 +364,16 @@ func main() {
 	}
 
 	// Parse templates
-	if err := loadTemplates(); err != nil {
-		logger.Error("template loading failed", "error", err)
+	var tmplErr error
+	uploadTemplate, tmplErr = template.ParseFS(templatesFS, "templates/upload.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
+	funcMap := template.FuncMap{"mul": func(a, b float64) float64 { return a * b }}
+	resultTemplate, tmplErr = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/result.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
 
@@ -471,18 +426,12 @@ func main() {
 			}
 		}
 
-		// Stop managed cleave server if we started it
-		stopCleaveServer()
-
 		close(done)
 	}()
 
 	logger.Info("server starting",
 		"port", port,
 		"cleave_addr", cleaveAddr,
-		"traits_path", traitsPath,
-		"radare_backend", radareCmd,
-		"radare_path", radareCmdPath,
 		"gcs_bucket", gcsBucket,
 	)
 
@@ -498,298 +447,31 @@ func main() {
 // loadConfig loads configuration from environment variables.
 func loadConfig() error {
 	gcsBucket = os.Getenv("GCS_BUCKET")
-	cleavePath = os.Getenv("CLEAVE_PATH")
-	traitsPath = os.Getenv("CLEAVE_TRAITS_DIR")
-	thirdPartyPath = os.Getenv("CLEAVE_3P_DIR")
-	radare2Path = os.Getenv("RADARE2_PATH")
-	rizinPath = os.Getenv("RIZIN_PATH")
 
 	// CLEAVE_ADDR from env (flag takes precedence)
 	if cleaveAddr == "" {
 		cleaveAddr = os.Getenv("CLEAVE_ADDR")
 	}
-
-	if cleavePath == "" {
-		cleavePath = "cleave"
-	}
-	if radare2Path == "" {
-		radare2Path = "radare2"
-	}
-	if rizinPath == "" {
-		rizinPath = "rizin"
+	if cleaveAddr == "" {
+		return fmt.Errorf("CLEAVE_ADDR is required (set via --cleave-addr flag or CLEAVE_ADDR env var)")
 	}
 
-	// Auto-discover traits directory if not set
-	if traitsPath == "" {
-		candidates := []string{
-			"traits",
-			"../cleave/traits",
-		}
-		cwd, _ := os.Getwd()
-		logger.Debug("auto-discovering traits directory", "cwd", cwd, "candidates", candidates)
-		for _, candidate := range candidates {
-			absCandidate, _ := filepath.Abs(candidate)
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-				traitsPath = absCandidate
-				logger.Info("auto-discovered traits directory", "path", traitsPath, "candidate", candidate)
-				break
-			} else {
-				logger.Debug("traits candidate not found", "candidate", candidate, "abs_path", absCandidate, "error", err)
-			}
-		}
-		if traitsPath == "" {
-			logger.Warn("no traits directory found - cleave will fail unless CLEAVE_TRAITS_DIR is set")
-		}
-	} else {
-		logger.Info("using configured traits directory", "path", traitsPath)
+	// Initialize HTTP client for cleave server
+	cleaveClient = &http.Client{
+		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
 
-	// Auto-discover third-party directory if not set
-	if thirdPartyPath == "" {
-		candidates := []string{
-			"third_party",
-			"../cleave/third_party",
-		}
-		for _, candidate := range candidates {
-			absCandidate, _ := filepath.Abs(candidate)
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-				thirdPartyPath = absCandidate
-				logger.Info("auto-discovered third-party directory", "path", thirdPartyPath, "candidate", candidate)
-				break
-			}
-		}
-	} else {
-		logger.Info("using configured third-party directory", "path", thirdPartyPath)
+	// Verify cleave server is reachable
+	if err := waitForCleaveServer(30 * time.Second); err != nil {
+		return fmt.Errorf("failed to connect to cleave server at %s: %w", cleaveAddr, err)
 	}
+
+	logger.Info("connected to cleave server", "addr", cleaveAddr)
 
 	logger.Debug("configuration loaded",
-		"CLEAVE_PATH", cleavePath,
 		"CLEAVE_ADDR", cleaveAddr,
-		"CLEAVE_TRAITS_DIR", traitsPath,
-		"CLEAVE_3P_DIR", thirdPartyPath,
-		"RADARE2_PATH", radare2Path,
-		"RIZIN_PATH", rizinPath,
 		"GCS_BUCKET", gcsBucket,
 		"PORT", os.Getenv("PORT"),
-	)
-
-	return nil
-}
-
-// validateTools checks that all required external tools are available.
-func validateTools() error {
-	var errs []error
-
-	// Initialize cleave server (connect to existing or start new)
-	if err := initCleaveServer(); err != nil {
-		errs = append(errs, fmt.Errorf("cleave server: %w", err))
-	}
-
-	// Validate radare2 or rizin (cleave requires one of these)
-	radareInfo, err := validateRadare()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("radare2/rizin: %w (set RADARE2_PATH or RIZIN_PATH to specify location)", err))
-	} else {
-		radareCmd = radareInfo.name
-		radareCmdPath = radareInfo.path
-		logger.Info("radare backend validated",
-			"backend", radareInfo.name,
-			"path", radareInfo.path,
-			"version", radareInfo.version,
-		)
-	}
-
-	// Validate traits path if specified (optional for cleave)
-	if traitsPath != "" {
-		if info, err := os.Stat(traitsPath); err != nil {
-			logger.Warn("traits path not found", "path", traitsPath, "error", err)
-		} else if !info.IsDir() {
-			logger.Warn("traits path is not a directory", "path", traitsPath)
-		} else {
-			traitCount, traitErr := countTraitFiles(traitsPath)
-			if traitErr != nil {
-				logger.Warn("failed to scan traits path", "path", traitsPath, "error", traitErr)
-			} else {
-				logger.Info("traits path validated",
-					"path", traitsPath,
-					"trait_files", traitCount,
-				)
-			}
-		}
-	}
-
-	// Validate GCS bucket if configured
-	if gcsBucket != "" {
-		if err := initGCSClient(); err != nil {
-			errs = append(errs, fmt.Errorf("GCS client: %w", err))
-		} else if err := validateGCSBucket(gcsBucket); err != nil {
-			errs = append(errs, fmt.Errorf("GCS bucket %q: %w", gcsBucket, err))
-		} else {
-			logger.Info("GCS bucket validated",
-				"bucket", gcsBucket,
-			)
-		}
-	} else {
-		logger.Debug("no GCS bucket configured, file archiving disabled")
-	}
-
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-
-	return nil
-}
-
-// validateTool checks if a tool exists and is executable.
-func validateTool(name, path, versionFlag string) (*toolInfo, error) {
-	// Resolve the full path
-	resolvedPath, err := exec.LookPath(path)
-	if err != nil {
-		return nil, fmt.Errorf("not found in PATH: %w", err)
-	}
-
-	logger.Debug("tool path resolved",
-		"name", name,
-		"configured_path", path,
-		"resolved_path", resolvedPath,
-	)
-
-	// Check it's executable
-	info, err := os.Stat(resolvedPath)
-	if err != nil {
-		return nil, fmt.Errorf("cannot stat %q: %w", resolvedPath, err)
-	}
-
-	if info.Mode()&0111 == 0 {
-		return nil, fmt.Errorf("%q is not executable", resolvedPath)
-	}
-
-	// Get version info
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, resolvedPath, versionFlag)
-	output, err := cmd.CombinedOutput()
-	version := strings.TrimSpace(string(output))
-	if err != nil {
-		logger.Warn("failed to get tool version",
-			"name", name,
-			"path", resolvedPath,
-			"error", err,
-			"output", version,
-		)
-		version = "unknown"
-	}
-
-	return &toolInfo{
-		name:    name,
-		path:    resolvedPath,
-		version: version,
-	}, nil
-}
-
-// countTraitFiles counts .yaml files recursively in a directory.
-func countTraitFiles(dir string) (int, error) {
-	count := 0
-	err := filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".yaml") {
-			count++
-		}
-		return nil
-	})
-	return count, err
-}
-
-// initGCSClient initializes the reusable GCS client.
-func initGCSClient() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	logger.Debug("initializing GCS client")
-
-	var err error
-	gcsClient, err = storage.NewClient(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create storage client: %w", err)
-	}
-
-	return nil
-}
-
-// validateGCSBucket checks that the GCS bucket exists and is accessible.
-func validateGCSBucket(bucket string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	logger.Debug("validating GCS bucket connectivity",
-		"bucket", bucket,
-	)
-
-	if gcsClient == nil {
-		return fmt.Errorf("GCS client not initialized")
-	}
-
-	// Check bucket exists and we have access
-	_, err := gcsClient.Bucket(bucket).Attrs(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to access bucket: %w", err)
-	}
-
-	return nil
-}
-
-// validateRadare checks for radare2 or rizin (fallback).
-func validateRadare() (*toolInfo, error) {
-	var radare2Err, rizinErr error
-
-	// Try radare2 first
-	if info, err := validateTool("radare2", radare2Path, "-v"); err == nil {
-		return info, nil
-	} else {
-		radare2Err = err
-		logger.Debug("radare2 not available",
-			"configured_path", radare2Path,
-			"error", err,
-		)
-	}
-
-	// Fall back to rizin
-	if info, err := validateTool("rizin", rizinPath, "-v"); err == nil {
-		return info, nil
-	} else {
-		rizinErr = err
-		logger.Debug("rizin not available",
-			"configured_path", rizinPath,
-			"error", err,
-		)
-	}
-
-	return nil, fmt.Errorf("neither radare2 nor rizin found (radare2: %v; rizin: %v); set RADARE2_PATH or RIZIN_PATH", radare2Err, rizinErr)
-}
-
-// loadTemplates parses the HTML templates from embedded filesystem.
-func loadTemplates() error {
-	var err error
-	uploadTemplate, err = template.ParseFS(templatesFS, "templates/upload.html")
-	if err != nil {
-		return fmt.Errorf("parse upload.html: %w", err)
-	}
-
-	// Template functions for calculations
-	funcMap := template.FuncMap{
-		"mul": func(a, b float64) float64 { return a * b },
-	}
-	resultTemplate, err = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/result.html")
-	if err != nil {
-		return fmt.Errorf("parse result.html: %w", err)
-	}
-
-	logger.Debug("templates loaded (embedded)",
-		"upload_template", "templates/upload.html",
-		"result_template", "templates/result.html",
 	)
 
 	return nil
@@ -877,20 +559,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 		// Run analysis
 		reqLogger.Debug("starting fallback analysis")
-		cleaveRes, err := runCleave(lctx, tempPath, reqLogger)
+		jsonl, err := runCleave(lctx, tempPath, reqLogger)
 		if err != nil {
 			return storedResult{}, fmt.Errorf("cleave failed: %w", err)
 		}
 
-		return storedResult{
-			Filename: filename,
-			JSON:     cleaveRes.JSON,
-			Traits:   cleaveRes.Traits,
-			Strings:  cleaveRes.Strings,
-			Symbols:  cleaveRes.Symbols,
-			Sections: cleaveRes.Sections,
-			Metrics:  cleaveRes.Metrics,
-		}, nil
+		return storedResult{Filename: filename, JSON: jsonl}, nil
 	})
 
 	if err != nil {
@@ -1038,7 +712,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 
 		analysisStart := time.Now()
-		cleaveRes, runErr := runCleave(lctx, tempPath, reqLogger)
+		jsonl, runErr := runCleave(lctx, tempPath, reqLogger)
 		analysisDuration := time.Since(analysisStart)
 
 		if runErr != nil {
@@ -1049,50 +723,18 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			return storedResult{}, fmt.Errorf("cleave run error: %w", runErr)
 		}
 
-		// Check if cleave output contains errors (don't cache these)
-		if strings.Contains(cleaveRes.JSON, "Error:") || strings.Contains(cleaveRes.Traits, "Error:") {
-			reqLogger.Warn("cleave output contains errors, not caching",
-				"duration_ms", analysisDuration.Milliseconds(),
-			)
-			return storedResult{}, &cleaveError{
-				filename: filename,
-				output:   cleaveRes.Traits,
-			}
-		}
-
 		reqLogger.Info("cleave analysis completed",
 			"duration_ms", analysisDuration.Milliseconds(),
 		)
 
-		return storedResult{
-			Filename: filename,
-			JSON:     cleaveRes.JSON,
-			Traits:   cleaveRes.Traits,
-			Strings:  cleaveRes.Strings,
-			Symbols:  cleaveRes.Symbols,
-			Sections: cleaveRes.Sections,
-			Metrics:  cleaveRes.Metrics,
-		}, nil
+		return storedResult{Filename: filename, JSON: jsonl}, nil
 	})
 
 	fetchDuration := time.Since(fetchStart)
 	if err != nil {
-		// Check if it's a cleaveError - these are displayable but not cached
-		var ce *cleaveError
-		if errors.As(err, &ce) {
-			reqLogger.Warn("cleave returned error (not cached)",
-				"fetch_duration_ms", fetchDuration.Milliseconds(),
-			)
-			// Create a minimal result to display the error
-			res = storedResult{
-				Filename: ce.filename,
-				Traits:   ce.output,
-			}
-		} else {
-			reqLogger.Error("analysis fetch failed", "error", err, "fetch_duration_ms", fetchDuration.Milliseconds())
-			http.Error(w, "Analysis failed", http.StatusInternalServerError)
-			return
-		}
+		reqLogger.Error("analysis fetch failed", "error", err, "fetch_duration_ms", fetchDuration.Milliseconds())
+		http.Error(w, "Analysis failed", http.StatusInternalServerError)
+		return
 	}
 
 	reqLogger.Info("request completed, redirecting to result",
@@ -1100,7 +742,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"fetch_duration_ms", fetchDuration.Milliseconds(),
 		"cached_filename", res.Filename,
 		"json_bytes", len(res.JSON),
-		"traits_bytes", len(res.Traits),
 	)
 
 	http.Redirect(w, r, "/file/"+sha256Hex, http.StatusSeeOther)
@@ -1110,14 +751,13 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 func parseJSONL(rawJSON string) (*cleaveReport, error) {
 	report := &cleaveReport{}
 
-	lines := strings.Split(rawJSON, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(rawJSON, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 
-		var entry cleaveJSONLEntry
+		var entry cleaveFile
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			logger.Debug("failed to parse JSONL line", "error", err, "line", line[:min(len(line), 100)])
 			continue
@@ -1125,23 +765,7 @@ func parseJSONL(rawJSON string) (*cleaveReport, error) {
 
 		switch entry.Type {
 		case "file":
-			report.Files = append(report.Files, cleaveFile{
-				ID:       entry.ID,
-				Path:     entry.Path,
-				Depth:    entry.Depth,
-				FileType: entry.FileType,
-				SHA256:   entry.SHA256,
-				Size:     entry.Size,
-				Risk:     entry.Risk,
-				Counts:   entry.Counts,
-				Findings: entry.Findings,
-				Strings:  entry.Strings,
-				Imports:  entry.Imports,
-				Exports:  entry.Exports,
-				Sections: entry.Sections,
-				Metrics:  entry.Metrics,
-				Formula:  entry.Formula,
-			})
+			report.Files = append(report.Files, entry)
 		case "summary":
 			report.Summary = &cleaveSummary{
 				FilesAnalyzed:      entry.FilesAnalyzed,
@@ -1707,120 +1331,7 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// formatTerminalOutput converts ANSI terminal output to HTML.
-func formatTerminalOutput(s string) string {
-	// Simple ANSI to HTML conversion
-	replacer := strings.NewReplacer(
-		"\x1b[0m", "</span>",
-		"\x1b[1m", "<span style=\"font-weight:bold\">",
-		"\x1b[31m", "<span class=\"hostile\">",
-		"\x1b[91m", "<span class=\"hostile\">",
-		"\x1b[33m", "<span class=\"suspicious\">",
-		"\x1b[93m", "<span class=\"suspicious\">",
-		"\x1b[34m", "<span class=\"notable\">",
-		"\x1b[94m", "<span class=\"notable\">",
-		"\x1b[90m", "<span class=\"dim\">",
-		"\x1b[97m", "<span style=\"color:#fff\">",
-		"\x1b[36m", "<span class=\"notable\">",
-		"\x1b[96m", "<span class=\"notable\">",
-	)
 
-	result := replacer.Replace(html.EscapeString(s))
-
-	// Unescape the span tags we just added
-	result = strings.ReplaceAll(result, "&lt;span", "<span")
-	result = strings.ReplaceAll(result, "&lt;/span&gt;", "</span>")
-	result = strings.ReplaceAll(result, "&gt;", ">")
-	result = strings.ReplaceAll(result, "&#34;", "\"")
-
-	return result
-}
-
-// cleaveResult holds all output from cleave analysis
-type cleaveResult struct {
-	JSON     string
-	Traits   string
-	Strings  string
-	Symbols  string
-	Sections string
-	Metrics  string
-}
-
-// initCleaveServer initializes the cleave server connection.
-// If cleaveAddr is set, it connects to the existing server.
-// Otherwise, it starts a new cleave server subprocess.
-func initCleaveServer() error {
-	// Initialize HTTP client for cleave server
-	cleaveClient = &http.Client{
-		Timeout: 150 * time.Second, // 120s analysis + buffer
-	}
-
-	if cleaveAddr != "" {
-		// Connect to existing server
-		logger.Info("connecting to existing cleave server", "addr", cleaveAddr)
-		if err := waitForCleaveServer(30 * time.Second); err != nil {
-			return fmt.Errorf("failed to connect to cleave server at %s: %w", cleaveAddr, err)
-		}
-		logger.Info("connected to cleave server", "addr", cleaveAddr)
-		return nil
-	}
-
-	// Start our own cleave server
-	resolvedCleavePath, err := exec.LookPath(cleavePath)
-	if err != nil {
-		return fmt.Errorf("cleave binary not found: %w (set CLEAVE_PATH to specify location)", err)
-	}
-
-	// Use a fixed port for the managed server
-	cleaveAddr = "127.0.0.1:18080"
-
-	// Increase max size to 200MB for larger files
-	args := []string{"server", "--bind", cleaveAddr, "--max-size-mb", "200"}
-	cleaveServerCmd = exec.Command(resolvedCleavePath, args...)
-
-	// Set working directory to cleave directory (for cache lookup)
-	// The cache is stored relative to the binary or working directory
-	if traitsPath != "" {
-		// If traits path is set, use its parent as the working directory
-		// This helps find the cache when cleave is installed alongside its traits
-		cleaveDir := filepath.Dir(traitsPath)
-		cleaveServerCmd.Dir = cleaveDir
-	}
-
-	// Set environment for traits and third-party paths
-	cleaveServerCmd.Env = os.Environ()
-	if traitsPath != "" {
-		cleaveServerCmd.Env = append(cleaveServerCmd.Env, "CLEAVE_TRAITS_DIR="+traitsPath)
-	}
-	if thirdPartyPath != "" {
-		cleaveServerCmd.Env = append(cleaveServerCmd.Env, "CLEAVE_3P_DIR="+thirdPartyPath)
-	}
-
-	// Stream cleave server output directly to our stdout/stderr
-	cleaveServerCmd.Stdout = os.Stdout
-	cleaveServerCmd.Stderr = os.Stderr
-
-	logger.Info("starting cleave server",
-		"path", resolvedCleavePath,
-		"args", args,
-		"traits_dir", traitsPath,
-		"third_party_dir", thirdPartyPath,
-	)
-
-	if err := cleaveServerCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start cleave server: %w", err)
-	}
-
-	// Wait for server to be ready (it takes ~27s to load YARA rules)
-	logger.Info("waiting for cleave server to initialize (this may take up to 30 seconds)...")
-	if err := waitForCleaveServer(60 * time.Second); err != nil {
-		stopCleaveServer()
-		return fmt.Errorf("cleave server failed to start: %w", err)
-	}
-
-	logger.Info("cleave server ready", "addr", cleaveAddr)
-	return nil
-}
 
 // waitForCleaveServer polls the health endpoint until the server is ready.
 func waitForCleaveServer(timeout time.Duration) error {
@@ -1841,36 +1352,6 @@ func waitForCleaveServer(timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for cleave server at %s", cleaveAddr)
 }
 
-// stopCleaveServer stops the managed cleave server if we started it.
-func stopCleaveServer() {
-	if cleaveServerCmd == nil || cleaveServerCmd.Process == nil {
-		return
-	}
-
-	logger.Info("stopping cleave server")
-
-	// Send SIGTERM for graceful shutdown
-	if err := cleaveServerCmd.Process.Signal(syscall.SIGTERM); err != nil {
-		logger.Warn("failed to send SIGTERM to cleave server", "error", err)
-		cleaveServerCmd.Process.Kill()
-		return
-	}
-
-	// Wait with timeout
-	done := make(chan error, 1)
-	go func() {
-		_, err := cleaveServerCmd.Process.Wait()
-		done <- err
-	}()
-
-	select {
-	case <-done:
-		logger.Info("cleave server stopped")
-	case <-time.After(5 * time.Second):
-		logger.Warn("cleave server did not stop gracefully, killing")
-		cleaveServerCmd.Process.Kill()
-	}
-}
 
 // cleaveAPIResponse represents the JSON response from cleave server's /analyze endpoint.
 // This maps to cleave's AnalysisReport structure.
@@ -1963,14 +1444,14 @@ type cleaveAPIMetadata struct {
 	AnalysisDurationMs int64 `json:"analysis_duration_ms,omitempty"`
 }
 
-// runCleave sends a file to the cleave server for analysis and returns the result.
-func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*cleaveResult, error) {
+// runCleave sends a file to the cleave server for analysis and returns the JSONL result.
+func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (string, error) {
 	startTime := time.Now()
 
 	// Get file info
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to stat file: %w", err)
+		return "", fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	reqLogger.Info("sending file to cleave server",
@@ -1982,7 +1463,7 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 	// Open the file
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
+		return "", fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
@@ -1993,16 +1474,16 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 	// Add file field
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
+		return "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	written, err := io.Copy(part, file)
 	if err != nil {
-		return nil, fmt.Errorf("failed to copy file to form: %w", err)
+		return "", fmt.Errorf("failed to copy file to form: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
+		return "", fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
 	reqLogger.Debug("multipart form created",
@@ -2015,7 +1496,7 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 	url := fmt.Sprintf("http://%s/analyze", cleaveAddr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.ContentLength = int64(buf.Len())
@@ -2032,7 +1513,7 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 			"error", err,
 			"duration_ms", time.Since(startTime).Milliseconds(),
 		)
-		return nil, fmt.Errorf("failed to send request to cleave server: %w", err)
+		return "", fmt.Errorf("failed to send request to cleave server: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -2044,7 +1525,7 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -2052,13 +1533,13 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 			"status", resp.StatusCode,
 			"body", string(body),
 		)
-		return nil, fmt.Errorf("cleave server returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("cleave server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response
 	var apiResp cleaveAPIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("failed to parse cleave response: %w", err)
+		return "", fmt.Errorf("failed to parse cleave response: %w", err)
 	}
 
 	// Convert API response to JSONL format expected by parseJSONL
@@ -2070,14 +1551,7 @@ func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (*c
 		"json_bytes", len(jsonl),
 	)
 
-	return &cleaveResult{
-		JSON:     jsonl,
-		Traits:   "", // Not used by template rendering
-		Strings:  "",
-		Symbols:  "",
-		Sections: "",
-		Metrics:  "",
-	}, nil
+	return jsonl, nil
 }
 
 // convertToJSONL converts a cleave API response to JSONL format for parseJSONL compatibility.
@@ -2086,7 +1560,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 
 	// If files array is empty, create a single file entry from top-level data
 	if len(resp.Files) == 0 && resp.Target.Path != "" {
-		entry := cleaveJSONLEntry{
+		entry := cleaveFile{
 			Type:     "file",
 			ID:       0,
 			Path:     resp.Target.Path,
@@ -2182,7 +1656,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 
 	// Convert each file to a JSONL entry (for archives/multi-file analysis)
 	for _, f := range resp.Files {
-		entry := cleaveJSONLEntry{
+		entry := cleaveFile{
 			Type:     "file",
 			ID:       f.ID,
 			Path:     f.Path,
@@ -2250,7 +1724,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 
 	// Add summary entry
 	if resp.Summary != nil {
-		summary := cleaveJSONLEntry{
+		summary := cleaveFile{
 			Type:               "summary",
 			FilesAnalyzed:      resp.Summary.FilesAnalyzed,
 			Hostile:            resp.Summary.Hostile,
@@ -2264,7 +1738,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 		}
 	} else {
 		// Generate summary from analysis data
-		summary := cleaveJSONLEntry{
+		summary := cleaveFile{
 			Type:               "summary",
 			FilesAnalyzed:      max(len(resp.Files), 1), // At least 1 file analyzed
 			AnalysisDurationMs: resp.Metadata.AnalysisDurationMs,
@@ -2303,14 +1777,6 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// truncateString truncates a string to maxLen characters, adding "..." if truncated.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // uploadToGCS uploads data to GCS with exponential backoff retry.
