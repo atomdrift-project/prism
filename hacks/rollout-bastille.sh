@@ -53,6 +53,7 @@ doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$RUN" pw useradd prism -m -s /bin/sh -c "Prism Service"
 
 log "Installing binary"
+doas bastille cmd "$RUN" mkdir -p /usr/local/bin
 doas bastille cmd "$RUN" install -o root -g wheel -m 755 /tmp/prism /usr/local/bin/prism
 doas bastille cmd "$RUN" rm -f /tmp/prism
 
