@@ -9,9 +9,9 @@ import (
 
 // Element represents a periodic table element.
 type Element struct {
-	Number int
 	Symbol string
 	Name   string
+	Number int
 }
 
 // Severity levels for coloring atoms.
@@ -52,41 +52,41 @@ func (s Severity) Color() string {
 
 // Periodic table elements used for category mapping.
 var (
-	Oxygen       = Element{8, "O", "Oxygen"}          // Objectives
-	Hydrogen     = Element{1, "H", "Hydrogen"}        // Micro-behaviors
-	Mendelevium  = Element{101, "Md", "Mendelevium"}  // Metadata
-	Potassium    = Element{19, "K", "Potassium"}      // Well-known
-	Thorium      = Element{90, "Th", "Thorium"}       // Third-party
-	Carbon       = Element{6, "C", "Carbon"}          // Command & Control
-	Aluminum     = Element{13, "Al", "Aluminum"}      // Anti-analysis
-	Arsenic      = Element{33, "As", "Arsenic"}       // Anti-static
-	Cobalt       = Element{27, "Co", "Cobalt"}        // Collection
-	Calcium      = Element{20, "Ca", "Calcium"}       // Credential-access
-	Dysprosium   = Element{66, "Dy", "Dysprosium"}    // Discovery
-	Xenon        = Element{54, "Xe", "Xenon"}         // Execution
-	Europium     = Element{63, "Eu", "Europium"}      // Exfiltration
-	Iodine       = Element{53, "I", "Iodine"}         // Impact
-	Lanthanum    = Element{57, "La", "Lanthanum"}     // Lateral-movement
-	Phosphorus   = Element{15, "P", "Phosphorus"}     // Persistence
-	Praseodymium = Element{59, "Pr", "Praseodymium"}  // Privilege-escalation
-	Erbium       = Element{68, "Er", "Erbium"}        // Evasion
-	Rubidium     = Element{37, "Rb", "Rubidium"}      // Resource-development
-	Chromium     = Element{24, "Cr", "Chromium"}      // Crypto
-	Curium       = Element{96, "Cm", "Curium"}        // Communications
-	Fluorine     = Element{9, "F", "Fluorine"}        // Filesystem
-	Polonium     = Element{84, "Po", "Polonium"}      // Process
-	Osmium       = Element{76, "Os", "Osmium"}        // OS
-	Dubnium      = Element{105, "Db", "Dubnium"}      // Data
-	Holmium      = Element{67, "Ho", "Holmium"}       // Host
-	Hafnium      = Element{72, "Hf", "Hafnium"}       // Hardware
-	Neptunium    = Element{93, "Np", "Neptunium"}     // Network
-	Darmstadtium = Element{110, "Ds", "Darmstadtium"} // Dylib
-	Actinium     = Element{89, "Ac", "Actinium"}      // Anti-analysis (micro)
-	Astatine     = Element{85, "At", "Astatine"}      // Anti-static (micro)
-	Einsteinium  = Element{99, "Es", "Einsteinium"}   // Execution (micro)
-	Gold         = Element{79, "Au", "Gold"}          // Quality
-	Silver       = Element{47, "Ag", "Silver"}        // Format
-	Platinum     = Element{78, "Pt", "Platinum"}      // Lang
+	Oxygen       = Element{Number: 8, Symbol: "O", Name: "Oxygen"}          // Objectives
+	Hydrogen     = Element{Number: 1, Symbol: "H", Name: "Hydrogen"}        // Micro-behaviors
+	Mendelevium  = Element{Number: 101, Symbol: "Md", Name: "Mendelevium"}  // Metadata
+	Potassium    = Element{Number: 19, Symbol: "K", Name: "Potassium"}      // Well-known
+	Thorium      = Element{Number: 90, Symbol: "Th", Name: "Thorium"}       // Third-party
+	Carbon       = Element{Number: 6, Symbol: "C", Name: "Carbon"}          // Command & Control
+	Aluminum     = Element{Number: 13, Symbol: "Al", Name: "Aluminum"}      // Anti-analysis
+	Arsenic      = Element{Number: 33, Symbol: "As", Name: "Arsenic"}       // Anti-static
+	Cobalt       = Element{Number: 27, Symbol: "Co", Name: "Cobalt"}        // Collection
+	Calcium      = Element{Number: 20, Symbol: "Ca", Name: "Calcium"}       // Credential-access
+	Dysprosium   = Element{Number: 66, Symbol: "Dy", Name: "Dysprosium"}    // Discovery
+	Xenon        = Element{Number: 54, Symbol: "Xe", Name: "Xenon"}         // Execution
+	Europium     = Element{Number: 63, Symbol: "Eu", Name: "Europium"}      // Exfiltration
+	Iodine       = Element{Number: 53, Symbol: "I", Name: "Iodine"}         // Impact
+	Lanthanum    = Element{Number: 57, Symbol: "La", Name: "Lanthanum"}     // Lateral-movement
+	Phosphorus   = Element{Number: 15, Symbol: "P", Name: "Phosphorus"}     // Persistence
+	Praseodymium = Element{Number: 59, Symbol: "Pr", Name: "Praseodymium"}  // Privilege-escalation
+	Erbium       = Element{Number: 68, Symbol: "Er", Name: "Erbium"}        // Evasion
+	Rubidium     = Element{Number: 37, Symbol: "Rb", Name: "Rubidium"}      // Resource-development
+	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}      // Crypto
+	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}        // Communications
+	Fluorine     = Element{Number: 9, Symbol: "F", Name: "Fluorine"}        // Filesystem
+	Polonium     = Element{Number: 84, Symbol: "Po", Name: "Polonium"}      // Process
+	Osmium       = Element{Number: 76, Symbol: "Os", Name: "Osmium"}        // OS
+	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}      // Data
+	Holmium      = Element{Number: 67, Symbol: "Ho", Name: "Holmium"}       // Host
+	Hafnium      = Element{Number: 72, Symbol: "Hf", Name: "Hafnium"}       // Hardware
+	Neptunium    = Element{Number: 93, Symbol: "Np", Name: "Neptunium"}     // Network
+	Darmstadtium = Element{Number: 110, Symbol: "Ds", Name: "Darmstadtium"} // Dylib
+	Actinium     = Element{Number: 89, Symbol: "Ac", Name: "Actinium"}      // Anti-analysis (micro)
+	Astatine     = Element{Number: 85, Symbol: "At", Name: "Astatine"}      // Anti-static (micro)
+	Einsteinium  = Element{Number: 99, Symbol: "Es", Name: "Einsteinium"}   // Execution (micro)
+	Gold         = Element{Number: 79, Symbol: "Au", Name: "Gold"}          // Quality
+	Silver       = Element{Number: 47, Symbol: "Ag", Name: "Silver"}        // Format
+	Platinum     = Element{Number: 78, Symbol: "Pt", Name: "Platinum"}      // Lang
 )
 
 var categoryElements = map[string]Element{
@@ -142,22 +142,22 @@ func categoryToElement(category string) (Element, bool) {
 
 // MaleculeAtom represents an atom in the 3D visualization.
 type MaleculeAtom struct {
-	ID       int     `json:"id"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Z        float64 `json:"z"`
-	Radius   float64 `json:"radius"`
 	Severity string  `json:"severity"`
 	Symbol   string  `json:"symbol"`
 	Category string  `json:"category"`
 	TraitID  string  `json:"trait_id,omitempty"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	Z        float64 `json:"z"`
+	Radius   float64 `json:"radius"`
+	ID       int     `json:"id"`
 }
 
 // MaleculeData contains the complete molecule data for 3D rendering.
 type MaleculeData struct {
+	Formula string         `json:"formula"`
 	Atoms   []MaleculeAtom `json:"atoms"`
 	Bonds   [][2]int       `json:"bonds"`
-	Formula string         `json:"formula"`
 }
 
 // FileMolecule represents a single file's molecule in a galaxy.
@@ -181,9 +181,9 @@ type GalaxyLink struct {
 
 // GalaxyData contains multiple molecules for archive visualization.
 type GalaxyData struct {
-	IsGalaxy  bool           `json:"isGalaxy"`
 	Molecules []FileMolecule `json:"molecules"`
 	Links     []GalaxyLink   `json:"links"` // Dropper relationships
+	IsGalaxy  bool           `json:"isGalaxy"`
 }
 
 // FindingForFormula is a simplified finding for formula generation.
@@ -206,135 +206,216 @@ func critToSeverity(crit string) Severity {
 	}
 }
 
-// BuildMalecule creates a 3D molecule structure from findings.
+// BuildMalecule creates a flat molecule graph from findings.
+// The structure is: file center → L1 category nodes → L2 subcategory nodes → L3 nodes.
+// Single-child chains are collapsed into their parent (e.g. well-known/malware/mirai
+// becomes a single well-known atom). Only notable or higher severity is shown.
+//
+//nolint:maintidx // complex but necessary molecule layout algorithm
 func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
-	mol := MaleculeData{
-		Formula: formula,
-	}
-
+	mol := MaleculeData{Formula: formula}
 	if len(findings) == 0 {
 		return mol
 	}
 
-	// Group findings by top-level and subcategory
-	type atomInfo struct {
-		category string
-		severity Severity
+	type molNode struct {
+		childIdx map[string]int
+		key      string
 		element  Element
 		traitIDs []string
+		children []*molNode
+		severity Severity
 	}
 
-	atomMap := make(map[string]*atomInfo)
+	newNode := func(key string, elem Element, sev Severity) *molNode {
+		return &molNode{key: key, element: elem, severity: sev, childIdx: make(map[string]int)}
+	}
+
+	getOrAdd := func(parent *molNode, key string, elem Element, sev Severity) *molNode {
+		if idx, ok := parent.childIdx[key]; ok {
+			n := parent.children[idx]
+			if sev > n.severity {
+				n.severity = sev
+			}
+			return n
+		}
+		n := newNode(key, elem, sev)
+		parent.childIdx[key] = len(parent.children)
+		parent.children = append(parent.children, n)
+		return n
+	}
+
+	// Build tree up to 3 levels deep, skipping below-notable findings.
+	root := newNode("file", Element{Number: 0, Symbol: "", Name: "File"}, SeverityNeutral)
 
 	for _, f := range findings {
+		if f.Severity < SeverityNotable {
+			continue
+		}
 		parts := strings.Split(f.ID, "/")
 		if len(parts) < 2 {
 			continue
 		}
-
-		topLevel := parts[0]
-		var subCat string
-		var elem Element
-
-		// Find subcategory element
-		for i := len(parts) - 1; i >= 1; i-- {
-			if e, ok := categoryToElement(parts[i]); ok {
-				subCat = parts[i]
-				elem = e
-				break
-			}
-		}
-
-		if subCat == "" {
+		l1Elem, _ := categoryToElement(parts[0])
+		l1 := getOrAdd(root, parts[0], l1Elem, f.Severity)
+		if len(parts) == 2 {
+			l1.traitIDs = append(l1.traitIDs, f.ID)
 			continue
 		}
+		l2Elem, _ := categoryToElement(parts[1])
+		l2 := getOrAdd(l1, parts[1], l2Elem, f.Severity)
+		if len(parts) == 3 {
+			l2.traitIDs = append(l2.traitIDs, f.ID)
+			continue
+		}
+		l3Elem, _ := categoryToElement(parts[2])
+		l3 := getOrAdd(l2, parts[2], l3Elem, f.Severity)
+		l3.traitIDs = append(l3.traitIDs, f.ID)
+	}
 
-		key := topLevel + "/" + subCat
-		if ai, exists := atomMap[key]; exists {
-			ai.traitIDs = append(ai.traitIDs, f.ID)
-			if f.Severity > ai.severity {
-				ai.severity = f.Severity
+	// Collapse: while a node has exactly one child, absorb it upward.
+	// This collapses single-path chains (e.g. well-known→malware→mirai) into
+	// a single node at the top level.
+	var collapse func(n *molNode)
+	collapse = func(n *molNode) {
+		for _, child := range n.children {
+			collapse(child)
+		}
+		for len(n.children) == 1 {
+			child := n.children[0]
+			n.traitIDs = append(n.traitIDs, child.traitIDs...)
+			if child.severity > n.severity {
+				n.severity = child.severity
 			}
-		} else {
-			atomMap[key] = &atomInfo{
-				category: key,
-				severity: f.Severity,
-				element:  elem,
-				traitIDs: []string{f.ID},
+			n.children = child.children
+		}
+	}
+	collapse(root)
+
+	if len(root.children) == 0 {
+		return mol
+	}
+
+	// Sort children: severity desc then key asc, for deterministic layout.
+	var sortTree func(n *molNode)
+	sortTree = func(n *molNode) {
+		sort.Slice(n.children, func(i, j int) bool {
+			if n.children[i].severity != n.children[j].severity {
+				return n.children[i].severity > n.children[j].severity
+			}
+			return n.children[i].key < n.children[j].key
+		})
+		for _, child := range n.children {
+			sortTree(child)
+		}
+	}
+	sortTree(root)
+
+	// Radial layout: file at center, L1 evenly around it, deeper levels
+	// extend outward from their parents. All z=0 (flat diagram).
+	type vec2 struct{ x, y float64 }
+	nodePos := make(map[*molNode]vec2)
+	nodePos[root] = vec2{0, 0}
+
+	const r1, r2, r3 = 3.2, 1.8, 1.4
+
+	numL1 := len(root.children)
+	for i, l1 := range root.children {
+		angle := 2*math.Pi*float64(i)/float64(numL1) - math.Pi/2
+		nodePos[l1] = vec2{r1 * math.Cos(angle), r1 * math.Sin(angle)}
+	}
+
+	// spreadChildren places a node's children in an arc extending outward
+	// from the root, centered on the parent's radial direction.
+	spreadChildren := func(parent *molNode, childRadius, maxArc float64) {
+		if len(parent.children) == 0 {
+			return
+		}
+		pp := nodePos[parent]
+		outAngle := math.Atan2(pp.y, pp.x)
+		n := len(parent.children)
+		arc := math.Min(maxArc, math.Pi*0.85)
+		for j, child := range parent.children {
+			var angle float64
+			if n == 1 {
+				angle = outAngle
+			} else {
+				angle = outAngle - arc/2 + arc*float64(j)/float64(n-1)
+			}
+			nodePos[child] = vec2{
+				pp.x + childRadius*math.Cos(angle),
+				pp.y + childRadius*math.Sin(angle),
 			}
 		}
 	}
 
-	// Convert to atoms with 3D positions using spherical layout
+	arcL2 := math.Min(2*math.Pi/float64(numL1)*0.75, math.Pi)
+	for _, l1 := range root.children {
+		spreadChildren(l1, r2, arcL2)
+		numL2 := math.Max(1, float64(len(l1.children)))
+		for _, l2 := range l1.children {
+			spreadChildren(l2, r3, arcL2/numL2)
+		}
+	}
+
+	// BFS to build atoms list and parent→child bonds.
+	type qItem struct {
+		node      *molNode
+		parentIdx int
+	}
+	queue := []qItem{{root, -1}}
+	nodeAtomIdx := make(map[*molNode]int)
 	var atoms []MaleculeAtom
-	idx := 0
+	var bonds [][2]int
 
-	// Sort keys for deterministic order
-	var keys []string
-	for k := range atomMap {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		ai, aj := atomMap[keys[i]], atomMap[keys[j]]
-		if ai.severity != aj.severity {
-			return ai.severity > aj.severity
-		}
-		return keys[i] < keys[j]
-	})
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		n := item.node
 
-	n := float64(len(keys))
-	goldenAngle := math.Pi * (3.0 - math.Sqrt(5.0))
-	radius := 3.0
+		p := nodePos[n]
+		atomIdx := len(atoms)
+		nodeAtomIdx[n] = atomIdx
 
-	for i, key := range keys {
-		ai := atomMap[key]
-
-		// Fibonacci sphere distribution
-		y := 1.0 - (float64(i)+0.5)/n*2.0
-		r := math.Sqrt(1.0 - y*y)
-		theta := goldenAngle * float64(i)
-
-		x := r * math.Cos(theta) * radius
-		z := r * math.Sin(theta) * radius
-		y = y * radius
-
-		atomRadius := 0.4
-		if ai.severity >= SeveritySuspicious {
+		atomRadius := 0.35
+		switch {
+		case n == root:
+			atomRadius = 0.45
+		case n.severity == SeverityHostile:
 			atomRadius = 0.5
+		case n.severity >= SeveritySuspicious:
+			atomRadius = 0.42
+		default:
 		}
-		if ai.severity == SeverityHostile {
-			atomRadius = 0.6
+		sev := n.severity.String()
+		if n == root {
+			sev = "neutral"
 		}
 
 		atoms = append(atoms, MaleculeAtom{
-			ID:       idx,
-			X:        x,
-			Y:        y,
-			Z:        z,
+			ID:       atomIdx,
+			X:        p.x,
+			Y:        p.y,
+			Z:        0,
 			Radius:   atomRadius,
-			Severity: ai.severity.String(),
-			Symbol:   ai.element.Symbol,
-			Category: ai.category,
-			TraitID:  strings.Join(ai.traitIDs, ", "),
+			Severity: sev,
+			Symbol:   n.element.Symbol,
+			Category: n.key,
+			TraitID:  strings.Join(n.traitIDs, ", "),
 		})
-		idx++
-	}
 
-	// Create bonds between atoms in same top-level category
-	var bonds [][2]int
-	for i := 0; i < len(atoms); i++ {
-		topI := strings.Split(atoms[i].Category, "/")[0]
-		for j := i + 1; j < len(atoms); j++ {
-			topJ := strings.Split(atoms[j].Category, "/")[0]
-			if topI == topJ {
-				bonds = append(bonds, [2]int{i, j})
-			}
+		if item.parentIdx >= 0 {
+			bonds = append(bonds, [2]int{item.parentIdx, atomIdx})
+		}
+
+		for _, child := range n.children {
+			queue = append(queue, qItem{child, atomIdx})
 		}
 	}
+	_ = nodeAtomIdx
 
 	mol.Atoms = atoms
 	mol.Bonds = bonds
-
 	return mol
 }
 
@@ -348,6 +429,8 @@ type FileFindings struct {
 }
 
 // BuildGalaxy creates a galaxy of molecules from multiple files.
+//
+//nolint:gocognit,maintidx // complex galaxy layout algorithm
 func BuildGalaxy(files []FileFindings) GalaxyData {
 	if len(files) <= 1 {
 		// Single file or empty - not a galaxy

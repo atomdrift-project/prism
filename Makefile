@@ -1,4 +1,4 @@
-.PHONY: build lint run test clean deploy check-deploy-deps rollout-bastille help
+.PHONY: build lint run test integration clean deploy check-deploy-deps rollout-bastille help
 
 help:
 	@echo "Available targets:"
@@ -22,6 +22,9 @@ build:
 
 test:
 	go test -v ./...
+
+integration:
+	go test -tags integration -timeout 10m -v -run TestIntegration .
 
 run: build
 	PORT=8080 CLEAVE_PATH=cleave ./prism

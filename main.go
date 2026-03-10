@@ -1,3 +1,4 @@
+// Package main implements the prism malware analysis web service.
 package main
 
 import (
@@ -5,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,8 +45,8 @@ var (
 	uploadTemplate *template.Template
 	resultTemplate *template.Template
 	gcsBucket      string
-	cleaveAddr     string       // Address of cleave server (e.g., "127.0.0.1:8080")
-	cleaveClient   *http.Client // HTTP client for cleave server
+	litmusAddr     string       // Address of litmus server (e.g., "127.0.0.1:8080")
+	litmusClient   *http.Client // HTTP client for litmus server
 	gcsClient      *storage.Client
 	cache          *fido.TieredCache[string, storedResult]
 	logger         *slog.Logger
@@ -113,9 +116,9 @@ type FileSectionsDisplay struct {
 
 type SectionDisplay struct {
 	Name    string
-	Size    int64
-	Entropy float64
 	Flags   string
+	Entropy float64
+	Size    int64
 }
 
 // FileMetricsDisplay represents metrics for a single file.
@@ -138,7 +141,7 @@ type resultData struct {
 	FileType     string
 	RiskLevel    string // "hostile", "suspicious", "notable", or ""
 	RiskLabel    string
-	Verdict      string // "HOSTILE", "SUSPICIOUS", "NOTABLE", or "BASELINE"
+	Verdict      string // "HOSTILE", "SUSPICIOUS", "BENIGN", or "UNKNOWN"
 	Size         string
 	FindingCount string
 	Duration     string
@@ -151,47 +154,50 @@ type resultData struct {
 	FileMetrics  []FileMetricsDisplay
 }
 
-// storedResult is what we persist in fido/datastore
+// storedResult is what we persist in fido/datastore.
 type storedResult struct {
-	Filename string
-	JSON     string
-	Traits   string
-	Strings  string
-	Symbols  string
-	Sections string
-	Metrics  string
+	Filename       string
+	JSON           string
+	Traits         string
+	Strings        string
+	Symbols        string
+	Sections       string
+	Metrics        string
+	Classification string // "hostile", "suspicious", or "benign" from litmus
+	Formula        string // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
+	FileType       string // file type from litmus (e.g. "macho", "pe")
 }
 
-// cleaveReport is constructed from JSONL output (multiple lines)
+// cleaveReport is constructed from JSONL output (multiple lines).
 type cleaveReport struct {
-	Files   []cleaveFile
 	Summary *cleaveSummary
+	Files   []cleaveFile
 }
 
-// cleaveFile represents a file entry in cleave output
+// cleaveFile represents a file entry in cleave output.
 type cleaveFile struct {
-	Type     string         `json:"type,omitempty"` // "file" for JSONL parsing
-	ID       int            `json:"id"`
-	Path     string         `json:"path"`
-	Depth    int            `json:"depth"`
-	FileType string         `json:"file_type"`
-	SHA256   string         `json:"sha256"`
-	Size     int64          `json:"size"`
-	Risk     string         `json:"risk,omitempty"`
-	Counts   *findingCounts `json:"counts,omitempty"`
-	Findings []finding      `json:"findings,omitempty"`
-	Strings  []stringInfo   `json:"strings,omitempty"`
-	Imports  []symbolInfo   `json:"imports,omitempty"`
-	Exports  []symbolInfo   `json:"exports,omitempty"`
-	Sections []sectionInfo  `json:"sections,omitempty"`
-	Metrics  *metricsInfo   `json:"metrics,omitempty"`
-	Formula  string         `json:"formula,omitempty"`
+	Type               string         `json:"type,omitempty"` // "file" for JSONL parsing
+	Path               string         `json:"path"`
+	FileType           string         `json:"file_type"`
+	SHA256             string         `json:"sha256"`
+	Risk               string         `json:"risk,omitempty"`
+	Formula            string         `json:"formula,omitempty"`
+	Counts             *findingCounts `json:"counts,omitempty"`
+	Metrics            *metricsInfo   `json:"metrics,omitempty"`
+	Findings           []finding      `json:"findings,omitempty"`
+	Strings            []stringInfo   `json:"strings,omitempty"`
+	Imports            []symbolInfo   `json:"imports,omitempty"`
+	Exports            []symbolInfo   `json:"exports,omitempty"`
+	Sections           []sectionInfo  `json:"sections,omitempty"`
+	Size               int64          `json:"size"`
+	AnalysisDurationMs int64          `json:"analysis_duration_ms,omitempty"`
+	ID                 int            `json:"id"`
+	Depth              int            `json:"depth"`
 	// Summary fields (only present when Type == "summary")
-	FilesAnalyzed      int   `json:"files_analyzed,omitempty"`
-	Hostile            int   `json:"hostile,omitempty"`
-	Suspicious         int   `json:"suspicious,omitempty"`
-	Notable            int   `json:"notable,omitempty"`
-	AnalysisDurationMs int64 `json:"analysis_duration_ms,omitempty"`
+	FilesAnalyzed int `json:"files_analyzed,omitempty"`
+	Hostile       int `json:"hostile,omitempty"`
+	Suspicious    int `json:"suspicious,omitempty"`
+	Notable       int `json:"notable,omitempty"`
 }
 
 type stringInfo struct {
@@ -211,11 +217,11 @@ type symbolInfo struct {
 }
 
 type sectionInfo struct {
-	Name    string      `json:"name"`
-	Address interface{} `json:"address,omitempty"` // Can be string or number
-	Size    int64       `json:"size"`
-	Entropy float64     `json:"entropy,omitempty"`
-	Flags   string      `json:"flags,omitempty"`
+	Address any     `json:"address,omitempty"`
+	Name    string  `json:"name"`
+	Flags   string  `json:"flags,omitempty"`
+	Size    int64   `json:"size"`
+	Entropy float64 `json:"entropy,omitempty"`
 }
 
 type metricsInfo struct {
@@ -246,10 +252,10 @@ type findingCounts struct {
 type finding struct {
 	ID       string     `json:"id"`
 	Desc     string     `json:"desc"`
-	Crit     string     `json:"crit,omitempty"` // optional - defaults to neutral
-	Conf     float64    `json:"conf"`
-	Kind     string     `json:"kind,omitempty"` // "structural" for internal symbols
+	Crit     string     `json:"crit,omitempty"`
+	Kind     string     `json:"kind,omitempty"`
 	Evidence []evidence `json:"evidence,omitempty"`
+	Conf     float64    `json:"conf"`
 }
 
 type evidence struct {
@@ -264,31 +270,13 @@ type cleaveSummary struct {
 	AnalysisDurationMs int64 `json:"analysis_duration_ms"`
 }
 
-// moleculeAtom for 3D visualization
-type moleculeAtom struct {
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Z        float64 `json:"z"`
-	Radius   float64 `json:"radius"`
-	Severity string  `json:"severity"`
-	ID       string  `json:"id"`
-}
-
-type moleculeData struct {
-	Atoms []moleculeAtom `json:"atoms"`
-	Bonds [][2]int       `json:"bonds"`
-}
-
-
-func init() {
+func main() {
 	// Initialize structured logger with JSON output for production
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 	slog.SetDefault(logger)
-}
 
-func main() {
 	// Parse command-line flags
 	flushCache := false
 	noCache := false
@@ -298,10 +286,11 @@ func main() {
 			flushCache = true
 		case arg == "--no-cache" || arg == "-no-cache":
 			noCache = true
-		case strings.HasPrefix(arg, "--cleave-addr="):
-			cleaveAddr = strings.TrimPrefix(arg, "--cleave-addr=")
-		case arg == "--cleave-addr" && i+1 < len(os.Args[1:]):
-			cleaveAddr = os.Args[i+2]
+		case strings.HasPrefix(arg, "--litmus-addr="):
+			litmusAddr = strings.TrimPrefix(arg, "--litmus-addr=")
+		case arg == "--litmus-addr" && i+1 < len(os.Args[1:]):
+			litmusAddr = os.Args[i+2]
+		default:
 		}
 	}
 
@@ -333,8 +322,8 @@ func main() {
 		}
 	} else {
 		// Use Cloud Run auto-detection for production
-		logger.Debug("initializing fido store", "cache_id", "divine")
-		store, storeErr := cloudrun.New[string, storedResult](ctx, "divine")
+		logger.Debug("initializing fido store", "cache_id", "divine-v2")
+		store, storeErr := cloudrun.New[string, storedResult](ctx, "divine-v2")
 		if storeErr != nil {
 			logger.Error("failed to initialize fido store", "error", storeErr)
 			os.Exit(1)
@@ -365,13 +354,13 @@ func main() {
 
 	// Parse templates
 	var tmplErr error
-	uploadTemplate, tmplErr = template.ParseFS(templatesFS, "templates/upload.html")
+	uploadTemplate, tmplErr = template.New("upload.html").ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
 	funcMap := template.FuncMap{"mul": func(a, b float64) float64 { return a * b }}
-	resultTemplate, tmplErr = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/result.html")
+	resultTemplate, tmplErr = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
@@ -383,7 +372,11 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	staticContent, _ := fs.Sub(staticFS, "static")
+	staticContent, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		logger.Error("failed to sub static fs", "error", err)
+		os.Exit(1)
+	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/upload", handleUpload)
@@ -431,7 +424,7 @@ func main() {
 
 	logger.Info("server starting",
 		"port", port,
-		"cleave_addr", cleaveAddr,
+		"litmus_addr", litmusAddr,
 		"gcs_bucket", gcsBucket,
 	)
 
@@ -448,28 +441,28 @@ func main() {
 func loadConfig() error {
 	gcsBucket = os.Getenv("GCS_BUCKET")
 
-	// CLEAVE_ADDR from env (flag takes precedence)
-	if cleaveAddr == "" {
-		cleaveAddr = os.Getenv("CLEAVE_ADDR")
+	// LITMUS_ADDR from env (flag takes precedence)
+	if litmusAddr == "" {
+		litmusAddr = os.Getenv("LITMUS_ADDR")
 	}
-	if cleaveAddr == "" {
-		return fmt.Errorf("CLEAVE_ADDR is required (set via --cleave-addr flag or CLEAVE_ADDR env var)")
+	if litmusAddr == "" {
+		return errors.New("LITMUS_ADDR is required (set via --litmus-addr flag or LITMUS_ADDR env var)")
 	}
 
-	// Initialize HTTP client for cleave server
-	cleaveClient = &http.Client{
+	// Initialize HTTP client for litmus server
+	litmusClient = &http.Client{
 		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
 
-	// Verify cleave server is reachable
-	if err := waitForCleaveServer(30 * time.Second); err != nil {
-		return fmt.Errorf("failed to connect to cleave server at %s: %w", cleaveAddr, err)
+	// Verify litmus server is reachable
+	if err := waitForLitmusServer(30 * time.Second); err != nil {
+		return fmt.Errorf("failed to connect to litmus server at %s: %w", litmusAddr, err)
 	}
 
-	logger.Info("connected to cleave server", "addr", cleaveAddr)
+	logger.Info("connected to litmus server", "addr", litmusAddr)
 
 	logger.Debug("configuration loaded",
-		"CLEAVE_ADDR", cleaveAddr,
+		"LITMUS_ADDR", litmusAddr,
 		"GCS_BUCKET", gcsBucket,
 		"PORT", os.Getenv("PORT"),
 	)
@@ -492,7 +485,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK\n")); err != nil {
 		logger.Debug("health check write failed", "error", err)
@@ -510,7 +503,9 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	reqLogger.Debug("file request received")
 
 	// Use Fetch to deduplicate concurrent loads and provide a potential fallback
+	cacheHit := true
 	res, err := cache.Fetch(r.Context(), sha, func(lctx context.Context) (storedResult, error) {
+		cacheHit = false
 		// Fallback: If not in cache, check GCS if configured
 		if gcsBucket == "" || gcsClient == nil {
 			reqLogger.Debug("cache miss, GCS not configured for fallback")
@@ -535,38 +530,51 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Info("found file in GCS, re-analyzing", "filename", filename, "gcs_path", attrs.Name)
 
 		// Download from GCS to temp file
-		tempFile, err := os.CreateTemp("", "cleave-fallback-*")
+		tempFile, err := os.CreateTemp("", "litmus-fallback-*")
 		if err != nil {
 			return storedResult{}, fmt.Errorf("failed to create temp file: %w", err)
 		}
 		tempPath := tempFile.Name()
-		defer os.Remove(tempPath)
-		defer tempFile.Close()
+		defer func() {
+			if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				reqLogger.Debug("failed to remove temp file", "path", tempPath, "error", err)
+			}
+		}()
+		defer func() {
+			if err := tempFile.Close(); err != nil {
+				reqLogger.Debug("failed to close temp file", "error", err)
+			}
+		}()
 
 		reqLogger.Debug("downloading from GCS", "temp_path", tempPath)
 		rc, err := gcsClient.Bucket(gcsBucket).Object(attrs.Name).NewReader(lctx)
 		if err != nil {
 			return storedResult{}, fmt.Errorf("GCS reader failed: %w", err)
 		}
-		defer rc.Close()
+		defer func() {
+			if err := rc.Close(); err != nil {
+				reqLogger.Debug("failed to close GCS reader", "error", err)
+			}
+		}()
 
 		dlStart := time.Now()
 		if _, err := io.Copy(tempFile, rc); err != nil {
 			return storedResult{}, fmt.Errorf("failed to download from GCS: %w", err)
 		}
 		reqLogger.Debug("GCS download complete", "duration_ms", time.Since(dlStart).Milliseconds())
-		tempFile.Close()
+		if err := tempFile.Close(); err != nil {
+			reqLogger.Debug("failed to close temp file after download", "error", err)
+		}
 
 		// Run analysis
 		reqLogger.Debug("starting fallback analysis")
-		jsonl, err := runCleave(lctx, tempPath, reqLogger)
+		jsonl, classification, formula, fileType, err := runLitmus(lctx, tempPath, filename, reqLogger)
 		if err != nil {
-			return storedResult{}, fmt.Errorf("cleave failed: %w", err)
+			return storedResult{}, fmt.Errorf("litmus failed: %w", err)
 		}
 
-		return storedResult{Filename: filename, JSON: jsonl}, nil
+		return storedResult{Filename: filename, JSON: jsonl, Classification: classification, Formula: formula, FileType: fileType}, nil
 	})
-
 	if err != nil {
 		reqLogger.Warn("failed to retrieve or regenerate result", "error", err)
 		if strings.Contains(err.Error(), "not found") {
@@ -577,7 +585,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqLogger.Debug("rendering result", "filename", res.Filename)
+	reqLogger.Debug("rendering result", "filename", res.Filename, "cache_hit", cacheHit)
 	data := prepareResultData(res.Filename, sha, &res)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -591,7 +599,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
-	requestID := fmt.Sprintf("%d", time.Now().UnixNano())
+	requestID := strconv.FormatInt(time.Now().UnixNano(), 10)
 
 	reqLogger := logger.With(
 		"request_id", requestID,
@@ -623,17 +631,20 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to read file", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			reqLogger.Debug("failed to close uploaded file", "error", err)
+		}
+	}()
 
 	filename := filepath.Base(fileHeader.Filename)
 	reqLogger = reqLogger.With("filename", filename, "size", fileHeader.Size)
 	reqLogger.Info("file received")
 
-	// Preserve file extension for cleave to detect archive types
 	ext := filepath.Ext(filename)
-	tempPattern := "cleave-*"
+	tempPattern := "litmus-*"
 	if ext != "" {
-		tempPattern = "cleave-*" + ext
+		tempPattern = "litmus-*" + ext
 	}
 	tempFile, err := os.CreateTemp("", tempPattern)
 	if err != nil {
@@ -642,41 +653,45 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tempPath := tempFile.Name()
+	reqLogger.Debug("temp file created", "path", tempPath)
 
-	// Use WaitGroup to coordinate cleanup across background tasks
+	// cleanupWg tracks only the background GCS upload goroutine.
+	// Analysis runs synchronously inside cache.Fetch, so the temp file is
+	// guaranteed to exist for the duration of that call.  The defer below
+	// waits for GCS (if started) before removing the file.
 	var cleanupWg sync.WaitGroup
-	cleanupWg.Add(2) // GCS upload + Analysis task
-
-	go func() {
-		reqLogger.Debug("waiting for cleanup tasks to complete", "path", tempPath)
+	defer func() {
 		cleanupWg.Wait()
-		if err := os.Remove(tempPath); err != nil {
+		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			reqLogger.Debug("failed to remove temp file", "path", tempPath, "error", err)
 		} else {
-			reqLogger.Debug("temp file removed successfully", "path", tempPath)
+			reqLogger.Debug("temp file removed", "path", tempPath)
 		}
 	}()
-
-	reqLogger.Debug("temp file created", "path", tempPath)
 
 	hash := sha256.New()
 	written, err := io.Copy(io.MultiWriter(tempFile, hash), file)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
+		if cerr := tempFile.Close(); cerr != nil {
+			reqLogger.Debug("failed to close temp file", "error", cerr)
+		}
 		reqLogger.Error("failed to write temp file", "error", err, "bytes_written", written)
 		http.Error(w, "Failed to write file", http.StatusInternalServerError)
 		return
 	}
-	tempFile.Close()
+	if err := tempFile.Close(); err != nil {
+		reqLogger.Debug("failed to close temp file after write", "error", err)
+	}
 
-	sha256Hex := fmt.Sprintf("%x", hash.Sum(nil))
+	sha256Hex := hex.EncodeToString(hash.Sum(nil))
 	reqLogger = reqLogger.With("sha256", sha256Hex)
 	reqLogger.Info("file written to temp", "bytes", written)
 
-	// Upload to GCS if configured (background, simultaneous to analysis)
+	// Upload to GCS if configured (background, simultaneous to analysis).
+	// Add(1) here so the defer above waits for the upload before deleting the file.
 	if gcsBucket != "" && gcsClient != nil {
-		go func() {
+		cleanupWg.Add(1)
+		go func() { //nolint:contextcheck,modernize // background context intentional: upload must outlive request
 			defer cleanupWg.Done()
 			reqLogger.Debug("starting background GCS upload")
 			// Use a background context that isn't tied to the request lifecycle
@@ -689,7 +704,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Error("failed to open temp file for background GCS upload", "error", err)
 				return
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					reqLogger.Debug("failed to close temp file in GCS upload", "error", err)
+				}
+			}()
 
 			if err := uploadToGCS(bgCtx, gcsBucket, sha256Hex, filename, f, reqLogger); err != nil {
 				reqLogger.Error("background GCS upload failed", "error", err)
@@ -697,37 +716,36 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		}()
 	} else {
 		reqLogger.Debug("skipping GCS upload (not configured)")
-		cleanupWg.Done()
 	}
 
-	// Run cleave analysis via fido.Fetch to deduplicate concurrent requests
+	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
 	// With --no-cache, uses null store which doesn't persist but still deduplicates
 	reqLogger.Info("starting/joining analysis fetch", "sha256", sha256Hex, "filename", filename)
 	fetchStart := time.Now()
 	res, err := cache.Fetch(ctx, sha256Hex, func(_ context.Context) (storedResult, error) {
-		defer cleanupWg.Done()
-
 		reqLogger.Info("cache miss, executing new analysis", "sha256", sha256Hex)
 		lctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
 		analysisStart := time.Now()
-		jsonl, runErr := runCleave(lctx, tempPath, reqLogger)
+		//nolint:contextcheck // analysis uses its own timeout independent of request context
+		jsonl, classification, formula, fileType, runErr := runLitmus(lctx, tempPath, filename, reqLogger)
 		analysisDuration := time.Since(analysisStart)
 
 		if runErr != nil {
-			reqLogger.Error("cleave analysis failed",
+			reqLogger.Error("litmus analysis failed",
 				"error", runErr,
 				"duration_ms", analysisDuration.Milliseconds(),
 			)
-			return storedResult{}, fmt.Errorf("cleave run error: %w", runErr)
+			return storedResult{}, fmt.Errorf("litmus run error: %w", runErr)
 		}
 
-		reqLogger.Info("cleave analysis completed",
+		reqLogger.Info("litmus analysis completed",
 			"duration_ms", analysisDuration.Milliseconds(),
+			"classification", classification,
 		)
 
-		return storedResult{Filename: filename, JSON: jsonl}, nil
+		return storedResult{Filename: filename, JSON: jsonl, Classification: classification, Formula: formula, FileType: fileType}, nil
 	})
 
 	fetchDuration := time.Since(fetchStart)
@@ -748,10 +766,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseJSONL parses cleave's JSONL output into a cleaveReport.
-func parseJSONL(rawJSON string) (*cleaveReport, error) {
+func parseJSONL(rawJSON string) *cleaveReport {
 	report := &cleaveReport{}
 
-	for _, line := range strings.Split(rawJSON, "\n") {
+	for line := range strings.SplitSeq(rawJSON, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -774,13 +792,16 @@ func parseJSONL(rawJSON string) (*cleaveReport, error) {
 				Notable:            entry.Notable,
 				AnalysisDurationMs: entry.AnalysisDurationMs,
 			}
+		default:
 		}
 	}
 
-	return report, nil
+	return report
 }
 
 // prepareResultData converts raw cleave output to template data.
+//
+//nolint:gocognit,maintidx // inherently complex data assembly
 func prepareResultData(filename, sha256Hex string, res *storedResult) resultData {
 	data := resultData{
 		Filename:     html.EscapeString(filename),
@@ -800,15 +821,20 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	// Parse JSONL to extract metadata and findings
-	report, err := parseJSONL(res.JSON)
-	if err != nil || (len(report.Files) == 0 && report.Summary == nil) {
-		logger.Debug("failed to parse cleave JSONL", "error", err)
+	report := parseJSONL(res.JSON)
+	if len(report.Files) == 0 && report.Summary == nil {
+		preview := res.JSON
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		logger.Debug("failed to parse cleave JSONL", "json_preview", preview)
 		data.Formula = template.HTML("?")
 		return data
 	}
 
 	// Extract target info from top-level file (depth=0) or first file
-	for _, file := range report.Files {
+	for i := range report.Files {
+		file := &report.Files[i]
 		if file.Depth == 0 {
 			data.FileType = strings.ToUpper(file.FileType)
 			data.Size = formatBytes(file.Size)
@@ -830,7 +856,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	var findings []FindingForFormula
 	var totalFindings int
 
-	for _, file := range report.Files {
+	for i := range report.Files {
+		file := &report.Files[i]
 		for _, f := range file.Findings {
 			// Skip structural/internal symbols - they clutter the formula
 			if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
@@ -844,31 +871,25 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 	}
 
-	data.FindingCount = fmt.Sprintf("%d", totalFindings)
+	data.FindingCount = strconv.Itoa(totalFindings)
 
-	// Determine max risk from summary or calculate from findings
-	if report.Summary != nil {
-		if report.Summary.Hostile > 0 {
-			data.RiskLevel = "hostile"
-			data.RiskLabel = "Hostile"
-		} else if report.Summary.Suspicious > 0 {
-			data.RiskLevel = "suspicious"
-			data.RiskLabel = "Suspicious"
-		} else if report.Summary.Notable > 0 {
-			data.RiskLevel = "notable"
-			data.RiskLabel = "Notable"
-		}
-	} else if len(findings) > 0 {
-		maxSev := SeverityNeutral
-		for _, f := range findings {
-			if f.Severity > maxSev {
-				maxSev = f.Severity
-			}
-		}
-		if maxSev > SeverityNeutral {
-			data.RiskLevel = maxSev.String()
-			data.RiskLabel = strings.Title(maxSev.String())
-		}
+	// Set verdict and risk level from litmus classification.
+	switch res.Classification {
+	case "hostile":
+		data.Verdict = "HOSTILE"
+		data.RiskLevel = "hostile"
+		data.RiskLabel = "Hostile"
+	case "suspicious":
+		data.Verdict = "SUSPICIOUS"
+		data.RiskLevel = "suspicious"
+		data.RiskLabel = "Suspicious"
+	case "benign":
+		data.Verdict = "BENIGN"
+		// RiskLevel intentionally empty for benign
+	default:
+		data.Verdict = "UNKNOWN"
+		data.RiskLevel = "unknown"
+		data.RiskLabel = "Unknown"
 	}
 
 	// Build structured data for table display
@@ -878,46 +899,36 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FileSections = buildStructuredSections(report.Files)
 	data.FileMetrics = buildStructuredMetrics(report.Files)
 
-	// Set verdict based on highest criticality found in structured findings
-	data.Verdict = "BASELINE"
-	for _, ff := range data.FileFindings {
-		switch ff.Risk {
-		case "hostile":
-			data.Verdict = "HOSTILE"
-		case "suspicious":
-			if data.Verdict != "HOSTILE" {
-				data.Verdict = "SUSPICIOUS"
-			}
-		case "notable":
-			if data.Verdict != "HOSTILE" && data.Verdict != "SUSPICIOUS" {
-				data.Verdict = "NOTABLE"
-			}
-		}
-	}
-
-	// Use formula from cleave with file type prefix
-	// For archives, find the top-level entry (Depth == 0)
+	// Use formula from cleave with file type prefix.
+	// For archives, find the top-level entry (Depth == 0).
 	formula := ""
-	for _, file := range report.Files {
+	for i := range report.Files {
+		file := &report.Files[i]
 		if file.Depth == 0 {
 			formula = formatFormula(file.FileType, file.Formula)
 			break
 		}
 	}
-	// Fallback to first file if no depth=0 found
+	// Fallback to first file if no depth=0 found.
 	if formula == "" && len(report.Files) > 0 {
 		formula = formatFormula(report.Files[0].FileType, report.Files[0].Formula)
 	}
-	if formula == "" {
-		formula = "∅" // Empty set for no findings
+	// Fallback to the top-level formula returned directly by litmus, which is
+	// computed before finalize() and may not be present in per-file JSON.
+	if formula == "" && res.Formula != "" {
+		formula = formatFormula(res.FileType, res.Formula)
 	}
-	data.Formula = template.HTML(html.EscapeString(formula))
+	if formula == "" {
+		formula = "∅"
+	}
+	data.Formula = template.HTML(html.EscapeString(formula)) //nolint:gosec // html.EscapeString sanitizes the input before conversion
 
 	// Generate molecule/galaxy data for 3D visualization
 	// For archives with multiple files, build a galaxy
 	if len(report.Files) > 1 {
 		var fileFindings []FileFindings
-		for _, file := range report.Files {
+		for i := range report.Files {
+			file := &report.Files[i]
 			var ff []FindingForFormula
 			for _, f := range file.Findings {
 				if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
@@ -959,9 +970,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			logger.Debug("failed to marshal galaxy data", "error", err)
 			data.MoleculeJSON = template.JS("{}")
 		} else {
-			data.MoleculeJSON = template.JS(galaxyJSON)
+			data.MoleculeJSON = template.JS(galaxyJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
 		}
-
 	} else {
 		// Single file - build single molecule
 		mol := BuildMalecule(findings, formula)
@@ -970,7 +980,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			logger.Debug("failed to marshal molecule data", "error", err)
 			data.MoleculeJSON = template.JS("{}")
 		} else {
-			data.MoleculeJSON = template.JS(molJSON)
+			data.MoleculeJSON = template.JS(molJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
 		}
 	}
 
@@ -979,6 +989,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 // buildStructuredFindings converts cleave findings into structured display data grouped by category.
 // Findings are aggregated by directory path, keeping only the highest criticality/confidence per directory.
+//
+//nolint:gocognit // complex findings aggregation logic
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 	var result []FileFindingsDisplay
 
@@ -999,7 +1011,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		"":           0,
 	}
 
-	for _, file := range files {
+	for i := range files {
+		file := &files[i]
 		if len(file.Findings) == 0 {
 			continue
 		}
@@ -1007,12 +1020,12 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		// Aggregate findings by directory path (everything except last component)
 		// Key: "topLevel/dirPath", Value: best finding for that directory
 		type aggregatedFinding struct {
-			dirPath  string // Directory path without top-level (e.g., "execution/shell")
+			evidence map[string]bool
+			dirPath  string
 			topLevel string
 			crit     string
-			conf     float64
 			desc     string
-			evidence map[string]bool // Deduplicated evidence
+			conf     float64
 		}
 		aggregated := make(map[string]*aggregatedFinding)
 
@@ -1093,6 +1106,9 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				evidence = append(evidence, e)
 			}
 			sort.Strings(evidence)
+			if len(evidence) > 4 {
+				evidence = evidence[:4]
+			}
 
 			fd := FindingDisplay{
 				ID:       agg.dirPath, // Show directory path without top-level
@@ -1164,7 +1180,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 	var result []FileStringsDisplay
 
-	for _, file := range files {
+	for i := range files {
+		file := &files[i]
 		if len(file.Strings) == 0 {
 			continue
 		}
@@ -1194,7 +1211,8 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 	var result []FileSymbolsDisplay
 
-	for _, file := range files {
+	for i := range files {
+		file := &files[i]
 		if len(file.Imports) == 0 && len(file.Exports) == 0 {
 			continue
 		}
@@ -1241,7 +1259,8 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 	var result []FileSectionsDisplay
 
-	for _, file := range files {
+	for i := range files {
+		file := &files[i]
 		if len(file.Sections) == 0 {
 			continue
 		}
@@ -1274,7 +1293,8 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 	var result []FileMetricsDisplay
 
-	for _, file := range files {
+	for i := range files {
+		file := &files[i]
 		if file.Metrics == nil || file.Metrics.Binary == nil {
 			continue
 		}
@@ -1309,7 +1329,7 @@ func extractBasename(path string) string {
 	return path
 }
 
-// formatFormula returns "FILETYPE:formula" format, e.g. "GO:H₂O"
+// formatFormula returns "FILETYPE:formula" format, e.g. "GO:H₂O".
 func formatFormula(fileType, formula string) string {
 	if formula == "" {
 		return ""
@@ -1331,17 +1351,18 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-
-
-// waitForCleaveServer polls the health endpoint until the server is ready.
-func waitForCleaveServer(timeout time.Duration) error {
-	healthURL := fmt.Sprintf("http://%s/health", cleaveAddr)
+// waitForLitmusServer polls the health endpoint until the server is ready.
+func waitForLitmusServer(timeout time.Duration) error {
+	healthURL := fmt.Sprintf("http://%s/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
 	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 5 * time.Second}
 
 	for time.Now().Before(deadline) {
-		resp, err := cleaveClient.Get(healthURL)
+		resp, err := client.Get(healthURL) //nolint:noctx // polling loop uses short-timeout client instead of context
 		if err == nil {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				logger.Debug("failed to close health check response body", "error", err)
+			}
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -1349,72 +1370,70 @@ func waitForCleaveServer(timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout waiting for cleave server at %s", cleaveAddr)
+	return fmt.Errorf("timeout waiting for litmus server at %s", litmusAddr)
 }
 
+// litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
+// It wraps the cleave analysis report with an ML-based classification outcome.
+type litmusAPIResponse struct {
+	Path           string          `json:"path"`
+	Classification string          `json:"classification"`
+	Formula        string          `json:"formula"`
+	FileType       string          `json:"file_type"`
+	SHA256         string          `json:"sha256"`
+	Cleave         json.RawMessage `json:"cleave,omitempty"`
+	SizeBytes      int64           `json:"size_bytes"`
+	Probability    float32         `json:"probability"`
+}
 
-// cleaveAPIResponse represents the JSON response from cleave server's /analyze endpoint.
-// This maps to cleave's AnalysisReport structure.
+// cleaveAPIResponse represents the JSON response from cleave's AnalysisReport.
+// After finalize(), cleave clears top-level arrays and target — all data lives in files[].
 type cleaveAPIResponse struct {
-	SchemaVersion string            `json:"schema_version"`
-	Target        cleaveTargetInfo  `json:"target"`
-	Files         []cleaveAPIFile   `json:"files"`
-	Summary       *cleaveAPISummary `json:"summary,omitempty"`
-	Metadata      cleaveAPIMetadata `json:"metadata"`
-
-	// Top-level fields for single-file analysis (when files array is empty)
+	Files    []cleaveAPIFile    `json:"files"`
 	Findings []finding          `json:"findings,omitempty"`
 	Strings  []stringInfo       `json:"strings,omitempty"`
-	Imports  []cleaveAPIImport  `json:"imports,omitempty"`
-	Exports  []cleaveAPIExport  `json:"exports,omitempty"`
+	Imports  []symbolInfo       `json:"imports,omitempty"`
+	Exports  []symbolInfo       `json:"exports,omitempty"`
 	Sections []cleaveAPISection `json:"sections,omitempty"`
+	Version  string             `json:"version"`
+	Summary  *cleaveAPISummary  `json:"summary,omitempty"`
 	Metrics  *cleaveAPIMetrics  `json:"metrics,omitempty"`
+	Target   cleaveTargetInfo   `json:"target"`
 }
 
 type cleaveTargetInfo struct {
 	Path     string `json:"path"`
 	FileType string `json:"type"`
-	Size     int64  `json:"size_bytes"`
 	SHA256   string `json:"sha256"`
+	Size     int64  `json:"size_bytes"`
 }
 
 type cleaveAPIFile struct {
-	ID       int                `json:"id"`
-	Path     string             `json:"path"`
 	ParentID *int               `json:"parent_id,omitempty"`
-	Depth    int                `json:"depth"`
-	FileType string             `json:"file_type"`
-	SHA256   string             `json:"sha256"`
-	Size     int64              `json:"size"`
-	Risk     string             `json:"risk,omitempty"`
-	Counts   *findingCounts     `json:"counts,omitempty"`
-	Findings []finding          `json:"findings,omitempty"`
-	Strings  []stringInfo       `json:"strings,omitempty"`
-	Imports  []cleaveAPIImport  `json:"imports,omitempty"`
-	Exports  []cleaveAPIExport  `json:"exports,omitempty"`
-	Sections []cleaveAPISection `json:"sections,omitempty"`
 	Metrics  *cleaveAPIMetrics  `json:"metrics,omitempty"`
+	Counts   *findingCounts     `json:"counts,omitempty"`
 	Formula  string             `json:"formula,omitempty"`
-}
-
-type cleaveAPIImport struct {
-	Symbol  string `json:"symbol"`
-	Library string `json:"library,omitempty"`
-	Address string `json:"address,omitempty"`
-}
-
-type cleaveAPIExport struct {
-	Symbol  string `json:"symbol"`
-	Address string `json:"address,omitempty"`
+	Risk     string             `json:"risk,omitempty"`
+	SHA256   string             `json:"sha256"`
+	FileType string             `json:"file_type"`
+	Path     string             `json:"path"`
+	Imports  []symbolInfo       `json:"imports,omitempty"`
+	Sections []cleaveAPISection `json:"sections,omitempty"`
+	Exports  []symbolInfo       `json:"exports,omitempty"`
+	Strings  []stringInfo       `json:"strings,omitempty"`
+	Findings []finding          `json:"findings,omitempty"`
+	ID       int                `json:"id"`
+	Depth    int                `json:"depth"`
+	Size     int64              `json:"size"`
 }
 
 type cleaveAPISection struct {
 	Name       string  `json:"name"`
+	Flags      string  `json:"flags,omitempty"`
+	Permission string  `json:"permission,omitempty"`
 	Address    uint64  `json:"address,omitempty"`
 	Size       int64   `json:"size"`
 	Entropy    float64 `json:"entropy,omitempty"`
-	Flags      string  `json:"flags,omitempty"`
-	Permission string  `json:"permission,omitempty"`
 }
 
 type cleaveAPIMetrics struct {
@@ -1433,128 +1452,167 @@ type cleaveAPIBinaryMetrics struct {
 }
 
 type cleaveAPISummary struct {
-	FilesAnalyzed      int   `json:"files_analyzed"`
-	Hostile            int   `json:"hostile"`
-	Suspicious         int   `json:"suspicious"`
-	Notable            int   `json:"notable"`
-	AnalysisDurationMs int64 `json:"analysis_duration_ms"`
+	Counts        *findingCounts `json:"counts,omitempty"`
+	MaxRisk       string         `json:"max_risk,omitempty"`
+	FilesAnalyzed int            `json:"files_analyzed"`
+	DurationMs    int64          `json:"duration_ms,omitempty"`
 }
 
-type cleaveAPIMetadata struct {
-	AnalysisDurationMs int64 `json:"analysis_duration_ms,omitempty"`
-}
-
-// runCleave sends a file to the cleave server for analysis and returns the JSONL result.
-func runCleave(ctx context.Context, filePath string, reqLogger *slog.Logger) (string, error) {
+// runLitmus sends a file to the litmus server for analysis.
+// Returns the JSONL-formatted cleave data, litmus classification, formula, and file type.
+//
+//nolint:revive // function-result-limit: multiple return values required to avoid struct allocation
+func runLitmus(
+	ctx context.Context,
+	filePath, originalFilename string,
+	reqLogger *slog.Logger,
+) (jsonl, classification, formula, fileType string, err error) {
 	startTime := time.Now()
 
-	// Get file info
-	fileInfo, err := os.Stat(filePath)
+	fileInfo, err := os.Stat(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
 	if err != nil {
-		return "", fmt.Errorf("failed to stat file: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	reqLogger.Info("sending file to cleave server",
-		"cleave_addr", cleaveAddr,
+	reqLogger.Info("sending file to litmus server",
+		"litmus_addr", litmusAddr,
 		"file_path", filePath,
 		"file_size", fileInfo.Size(),
 	)
 
-	// Open the file
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
 	if err != nil {
-		return "", fmt.Errorf("failed to open file: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			reqLogger.Debug("failed to close file", "error", err)
+		}
+	}()
 
-	// Create multipart form
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	// Add file field
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	part, err := writer.CreateFormFile("file", originalFilename)
 	if err != nil {
-		return "", fmt.Errorf("failed to create form file: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	written, err := io.Copy(part, file)
 	if err != nil {
-		return "", fmt.Errorf("failed to copy file to form: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to copy file to form: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("failed to close multipart writer: %w", err)
+		return "", "", "", "", fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
+	bodyBytes := buf.Bytes()
+	contentType := writer.FormDataContentType()
 	reqLogger.Debug("multipart form created",
-		"body_size", buf.Len(),
+		"body_size", len(bodyBytes),
 		"file_bytes_written", written,
-		"content_type", writer.FormDataContentType(),
+		"content_type", contentType,
 	)
 
-	// Create request
-	url := fmt.Sprintf("http://%s/analyze", cleaveAddr)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+	analyzeURL := fmt.Sprintf("http://%s/analyze", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
+
+	var litmusResp litmusAPIResponse
+	var attempt int
+	if retryErr := retry.Do(
+		func() error {
+			attempt++
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, analyzeURL, bytes.NewReader(bodyBytes))
+			if err != nil {
+				return retry.Unrecoverable(fmt.Errorf("failed to create request: %w", err))
+			}
+			req.Header.Set("Content-Type", contentType)
+			req.ContentLength = int64(len(bodyBytes))
+
+			reqLogger.Debug("sending HTTP request to litmus",
+				"url", analyzeURL,
+				"content_length", req.ContentLength,
+				"attempt", attempt,
+			)
+
+			resp, err := litmusClient.Do(req) //nolint:gosec // SSRF risk accepted: litmusAddr is operator-configured, not user-supplied
+			if err != nil {
+				reqLogger.Warn("litmus HTTP request failed, will retry",
+					"error", err,
+					"attempt", attempt,
+					"duration_ms", time.Since(startTime).Milliseconds(),
+				)
+				return fmt.Errorf("HTTP request failed: %w", err)
+			}
+			defer func() {
+				if err := resp.Body.Close(); err != nil {
+					reqLogger.Debug("failed to close response body", "error", err)
+				}
+			}()
+
+			reqLogger.Debug("received HTTP response from litmus",
+				"status", resp.StatusCode,
+				"duration_ms", time.Since(startTime).Milliseconds(),
+				"attempt", attempt,
+			)
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read response: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				reqLogger.Error("litmus server returned error",
+					"status", resp.StatusCode,
+					"body", string(body),
+					"attempt", attempt,
+				)
+				// 4xx errors are not retryable (bad request, too large, etc.)
+				if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+					return retry.Unrecoverable(fmt.Errorf("litmus server returned status %d: %s", resp.StatusCode, string(body)))
+				}
+				return fmt.Errorf("litmus server returned status %d: %s", resp.StatusCode, string(body))
+			}
+
+			if err := json.Unmarshal(body, &litmusResp); err != nil {
+				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus response: %w", err))
+			}
+			return nil
+		},
+		retry.Context(ctx),
+		retry.Attempts(5),
+		retry.MaxDelay(2*time.Minute),
+		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
+	); retryErr != nil {
+		return "", "", "", "", fmt.Errorf("failed to send request to litmus server: %w", retryErr)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.ContentLength = int64(buf.Len())
 
-	reqLogger.Debug("sending HTTP request",
-		"url", url,
-		"content_length", req.ContentLength,
-	)
-
-	// Send request
-	resp, err := cleaveClient.Do(req)
-	if err != nil {
-		reqLogger.Error("HTTP request failed",
-			"error", err,
-			"duration_ms", time.Since(startTime).Milliseconds(),
-		)
-		return "", fmt.Errorf("failed to send request to cleave server: %w", err)
-	}
-	defer resp.Body.Close()
-
-	reqLogger.Debug("received HTTP response",
-		"status", resp.StatusCode,
-		"duration_ms", time.Since(startTime).Milliseconds(),
-	)
-
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
+	// Extract nested cleave report and convert to JSONL for display.
+	var jsonlOut string
+	if len(litmusResp.Cleave) > 0 {
+		var cleaveResp cleaveAPIResponse
+		if err := json.Unmarshal(litmusResp.Cleave, &cleaveResp); err == nil {
+			jsonlOut = convertToJSONL(&cleaveResp)
+		} else {
+			reqLogger.Warn("failed to parse nested cleave data", "error", err)
+		}
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		reqLogger.Error("cleave server returned error",
-			"status", resp.StatusCode,
-			"body", string(body),
-		)
-		return "", fmt.Errorf("cleave server returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var apiResp cleaveAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return "", fmt.Errorf("failed to parse cleave response: %w", err)
-	}
-
-	// Convert API response to JSONL format expected by parseJSONL
-	jsonl := convertToJSONL(&apiResp)
-
-	reqLogger.Info("cleave analysis complete",
+	reqLogger.Info("litmus analysis complete",
 		"total_duration_ms", time.Since(startTime).Milliseconds(),
-		"files_analyzed", len(apiResp.Files),
-		"json_bytes", len(jsonl),
+		"classification", litmusResp.Classification,
+		"probability", litmusResp.Probability,
+		"formula", litmusResp.Formula,
+		"file_type", litmusResp.FileType,
+		"json_bytes", len(jsonlOut),
 	)
 
-	return jsonl, nil
+	return jsonlOut, litmusResp.Classification, litmusResp.Formula, litmusResp.FileType, nil
 }
 
 // convertToJSONL converts a cleave API response to JSONL format for parseJSONL compatibility.
+//
+//nolint:maintidx // complex but necessary JSONL conversion function
 func convertToJSONL(resp *cleaveAPIResponse) string {
 	var lines []string
 
@@ -1585,6 +1643,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 				if entry.Risk == "" {
 					entry.Risk = "notable"
 				}
+			default:
 			}
 		}
 
@@ -1598,28 +1657,15 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 				counts.Suspicious++
 			case "notable":
 				counts.Notable++
+			default:
 			}
 		}
 		if counts.Hostile > 0 || counts.Suspicious > 0 || counts.Notable > 0 {
 			entry.Counts = counts
 		}
 
-		// Convert imports
-		for _, imp := range resp.Imports {
-			entry.Imports = append(entry.Imports, symbolInfo{
-				Symbol:  imp.Symbol,
-				Library: imp.Library,
-				Address: imp.Address,
-			})
-		}
-
-		// Convert exports
-		for _, exp := range resp.Exports {
-			entry.Exports = append(entry.Exports, symbolInfo{
-				Symbol:  exp.Symbol,
-				Address: exp.Address,
-			})
-		}
+		entry.Imports = resp.Imports
+		entry.Exports = resp.Exports
 
 		// Convert sections
 		for _, sec := range resp.Sections {
@@ -1654,8 +1700,9 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 		}
 	}
 
-	// Convert each file to a JSONL entry (for archives/multi-file analysis)
-	for _, f := range resp.Files {
+	// Convert each file to a JSONL entry
+	for i := range resp.Files {
+		f := &resp.Files[i]
 		entry := cleaveFile{
 			Type:     "file",
 			ID:       f.ID,
@@ -1671,22 +1718,8 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 			Formula:  f.Formula,
 		}
 
-		// Convert imports
-		for _, imp := range f.Imports {
-			entry.Imports = append(entry.Imports, symbolInfo{
-				Symbol:  imp.Symbol,
-				Library: imp.Library,
-				Address: imp.Address,
-			})
-		}
-
-		// Convert exports
-		for _, exp := range f.Exports {
-			entry.Exports = append(entry.Exports, symbolInfo{
-				Symbol:  exp.Symbol,
-				Address: exp.Address,
-			})
-		}
+		entry.Imports = f.Imports
+		entry.Exports = f.Exports
 
 		// Convert sections
 		for _, sec := range f.Sections {
@@ -1727,10 +1760,12 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 		summary := cleaveFile{
 			Type:               "summary",
 			FilesAnalyzed:      resp.Summary.FilesAnalyzed,
-			Hostile:            resp.Summary.Hostile,
-			Suspicious:         resp.Summary.Suspicious,
-			Notable:            resp.Summary.Notable,
-			AnalysisDurationMs: resp.Summary.AnalysisDurationMs,
+			AnalysisDurationMs: resp.Summary.DurationMs,
+		}
+		if resp.Summary.Counts != nil {
+			summary.Hostile = resp.Summary.Counts.Hostile
+			summary.Suspicious = resp.Summary.Counts.Suspicious
+			summary.Notable = resp.Summary.Counts.Notable
 		}
 		line, err := json.Marshal(summary)
 		if err == nil {
@@ -1739,13 +1774,13 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 	} else {
 		// Generate summary from analysis data
 		summary := cleaveFile{
-			Type:               "summary",
-			FilesAnalyzed:      max(len(resp.Files), 1), // At least 1 file analyzed
-			AnalysisDurationMs: resp.Metadata.AnalysisDurationMs,
+			Type:          "summary",
+			FilesAnalyzed: max(len(resp.Files), 1), // At least 1 file analyzed
 		}
 
 		// Count risk levels from files array
-		for _, f := range resp.Files {
+		for i := range resp.Files {
+			f := &resp.Files[i]
 			switch f.Risk {
 			case "hostile":
 				summary.Hostile++
@@ -1753,6 +1788,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 				summary.Suspicious++
 			case "notable":
 				summary.Notable++
+			default:
 			}
 		}
 
@@ -1766,6 +1802,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 					summary.Suspicious++
 				case "notable":
 					summary.Notable++
+				default:
 				}
 			}
 		}
@@ -1782,7 +1819,7 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 // uploadToGCS uploads data to GCS with exponential backoff retry.
 func uploadToGCS(ctx context.Context, bucket, sha256Hex, filename string, r io.Reader, reqLogger *slog.Logger) error {
 	if gcsClient == nil {
-		return fmt.Errorf("GCS client not initialized")
+		return errors.New("GCS client not initialized")
 	}
 
 	objectPath := fmt.Sprintf("%s/%s", sha256Hex, filename)
@@ -1803,10 +1840,14 @@ func uploadToGCS(ctx context.Context, bucket, sha256Hex, filename string, r io.R
 			wc.ContentType = "application/octet-stream"
 
 			if _, err := io.Copy(wc, r); err != nil {
-				wc.Close()
+				if cerr := wc.Close(); cerr != nil {
+					reqLogger.Debug("failed to close GCS writer after copy error", "error", cerr)
+				}
 				// Seek back to start if it's a seeker for the next retry
 				if rs, ok := r.(io.Seeker); ok {
-					_, _ = rs.Seek(0, io.SeekStart)
+					if _, serr := rs.Seek(0, io.SeekStart); serr != nil {
+						reqLogger.Debug("failed to seek file", "error", serr)
+					}
 				}
 				return fmt.Errorf("write: %w", err)
 			}

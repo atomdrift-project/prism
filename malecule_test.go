@@ -69,7 +69,7 @@ func TestBuildGalaxy_DropperDetection(t *testing.T) {
 	}
 
 	// Find molecule indices
-	var updateIdx, seedIdx int = -1, -1
+	updateIdx, seedIdx := -1, -1
 	for i, mol := range galaxy.Molecules {
 		if mol.Path == "/tmp/midd.zip!!update.html" {
 			updateIdx = i
@@ -189,7 +189,7 @@ func TestBuildGalaxy_MoleculePositioning(t *testing.T) {
 	}
 
 	// Check that molecules have different positions
-	for i := 0; i < len(galaxy.Molecules); i++ {
+	for i := range galaxy.Molecules {
 		for j := i + 1; j < len(galaxy.Molecules); j++ {
 			mi, mj := galaxy.Molecules[i], galaxy.Molecules[j]
 			if mi.CenterX == mj.CenterX && mi.CenterY == mj.CenterY && mi.CenterZ == mj.CenterZ {
@@ -292,12 +292,12 @@ func TestBuildGalaxy_RealMiddZipData(t *testing.T) {
 	}
 
 	// Find indices
-	var terminalIdx, seedIdx int = -1, -1
+	terminalIdx, seedIdx := -1, -1
 	for i, mol := range galaxy.Molecules {
-		switch {
-		case mol.Path == "/tmp/midd.zip!!terminal.go":
+		switch mol.Path {
+		case "/tmp/midd.zip!!terminal.go":
 			terminalIdx = i
-		case mol.Path == "/tmp/midd.zip!!seed.php":
+		case "/tmp/midd.zip!!seed.php":
 			seedIdx = i
 		}
 	}
@@ -332,8 +332,8 @@ func TestBuildGalaxy_RealMiddZipData(t *testing.T) {
 }
 
 func TestBuildGalaxy_IntegrationWithCleave(t *testing.T) {
-	// This test runs actual cleave on testdata/midd.zip and verifies
-	// the galaxy building works with real cleave output
+	// This test runs cleave directly on testdata/midd.zip and verifies
+	// the galaxy building works with the cleave JSONL format that litmus nests in its response.
 
 	// Skip if cleave not available or traits not configured
 	traitsDir := os.Getenv("CLEAVE_TRAITS_DIR")
@@ -351,7 +351,7 @@ func TestBuildGalaxy_IntegrationWithCleave(t *testing.T) {
 	var files []FileFindings
 	basenames := make(map[string]bool)
 
-	for _, line := range strings.Split(string(output), "\n") {
+	for line := range strings.SplitSeq(string(output), "\n") {
 		if line == "" {
 			continue
 		}
@@ -412,7 +412,7 @@ func TestBuildGalaxy_IntegrationWithCleave(t *testing.T) {
 		}
 	}
 
-	t.Logf("Parsed %d files from cleave output", len(files))
+	t.Logf("Parsed %d files from cleave JSONL", len(files))
 	t.Logf("Basenames in archive: %v", basenames)
 
 	for _, f := range files {
@@ -457,6 +457,8 @@ func truncate(s string, maxLen int) string {
 
 // TestRenderHTMLPage renders a complete HTML page from a zipfile for visual inspection.
 // The output is written to testdata/rendered.html which can be opened in a browser.
+// Note: this test drives cleave directly to generate the nested cleave JSONL; verdict will
+// show UNKNOWN since no litmus classification is provided.
 func TestRenderHTMLPage(t *testing.T) {
 	zipPath := "testdata/midd.zip"
 	if _, err := os.Stat(zipPath); os.IsNotExist(err) {
@@ -471,7 +473,7 @@ func TestRenderHTMLPage(t *testing.T) {
 		t.Skipf("traits directory not found: %s", traitsDir)
 	}
 
-	// Run cleave with separate stdout/stderr
+	// Run cleave directly to generate the JSONL that litmus would normally nest in its response.
 	cmd := exec.Command("cleave", "--json", "--validate=false", "analyze", zipPath)
 	cmd.Env = append(cmd.Environ(), "CLEAVE_TRAITS_DIR="+traitsDir)
 
@@ -492,7 +494,7 @@ func TestRenderHTMLPage(t *testing.T) {
 	hash := sha256.Sum256(data)
 	sha256Hex := hex.EncodeToString(hash[:])
 
-	// Create storedResult from cleave output
+	// No Classification set — verdict will render as UNKNOWN (no litmus result).
 	res := &storedResult{
 		Filename: "midd.zip",
 		JSON:     stdout.String(),
@@ -511,7 +513,7 @@ func TestRenderHTMLPage(t *testing.T) {
 	funcMap := template.FuncMap{
 		"mul": func(a, b float64) float64 { return a * b },
 	}
-	tmpl, err := template.New("result.html").Funcs(funcMap).ParseFiles("templates/result.html")
+	tmpl, err := template.New("result.html").Funcs(funcMap).ParseFiles("templates/base.html", "templates/result.html")
 	if err != nil {
 		t.Fatalf("failed to parse template: %v", err)
 	}
@@ -524,7 +526,7 @@ func TestRenderHTMLPage(t *testing.T) {
 
 	// Write to file for visual inspection
 	outputPath := "testdata/rendered.html"
-	if err := os.WriteFile(outputPath, buf.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(outputPath, buf.Bytes(), 0o644); err != nil {
 		t.Fatalf("failed to write output: %v", err)
 	}
 

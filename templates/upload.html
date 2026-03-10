@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>cleave - Molecular Decomposition</title>
+    <title>litmus - Molecular Decomposition</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Oxanium:wght@700&display=swap" rel="stylesheet">
@@ -159,9 +159,9 @@
     <div class="container">
         <header>
             <div class="logo">
-                <span>cle<span class="logo-accent">ave</span></span>
+                <span>{{template "wordmark" .}}</span>
             </div>
-            <p class="tagline">Molecular decomposition for threat detection</p>
+            <p class="tagline">{{template "tagline" .}}</p>
         </header>
 
         <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form">
@@ -195,10 +195,7 @@
             </div>
         </div>
 
-        <footer>
-            <span>&copy; 2026 The Atomdrift Project</span>
-            <a href="https://codeberg.org/atomdrift/cleave" target="_blank">Codeberg</a>
-        </footer>
+        {{template "footer" .}}
     </div>
 
     <script>

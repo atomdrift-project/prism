@@ -36,13 +36,14 @@ doas bastille cmd "$BUILD" rm -rf /home/prism/prism
 doas bastille cp "$BUILD" . /home/prism/prism
 doas bastille cmd "$BUILD" chown -R prism:prism /home/prism/prism
 
-log "Building binary"
+log "Building prism binary"
 doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake build"
 
 # --- Transfer binary via jail filesystem ---
 
-log "Transferring binary to run jail"
 BASTILLE_DIR="/usr/local/bastille/jails"
+
+log "Transferring binary to run jail"
 doas cp "$BASTILLE_DIR/$BUILD/root/home/prism/prism/prism" \
        "$BASTILLE_DIR/$RUN/root/tmp/prism"
 
@@ -52,12 +53,16 @@ log "Ensuring run user exists"
 doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$RUN" pw useradd prism -m -s /bin/sh -c "Prism Service"
 
-log "Installing binary"
+log "Installing prism binary"
 doas bastille cmd "$RUN" mkdir -p /usr/local/bin
 doas bastille cmd "$RUN" install -o root -g wheel -m 755 /tmp/prism /usr/local/bin/prism
 doas bastille cmd "$RUN" rm -f /tmp/prism
 
-log "Creating rc.d service"
+log "Installing proclist via cargo"
+doas bastille pkg "$RUN" install -y rust
+doas bastille cmd "$RUN" su -l prism -c "cargo install proclist"
+
+log "Creating rc.d service for prism"
 doas bastille cmd "$RUN" mkdir -p /usr/local/etc/rc.d
 doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/prism >/dev/null <<'EOF'
 #!/bin/sh
@@ -74,11 +79,11 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_cleave_url:="10.9.8.62:8000"}
+: ${prism_litmus_addr:=""}
 
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
-prism_env="PORT=8080 CLEAVE_ADDR=${prism_cleave_url}"
+prism_env="PORT=8080 LITMUS_ADDR=${prism_litmus_addr}"
 command_args="-c -f -P ${pidfile} -S -r -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
 
 run_rc_command "$1"
