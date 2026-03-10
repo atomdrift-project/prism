@@ -332,6 +332,11 @@
             user-select: none;
             text-align: center;
         }
+        .atom-label-baseline {
+            font-size: 9px;
+            font-weight: 400;
+            opacity: 0.5;
+        }
 
         /* Galaxy info panel */
         .galaxy-info {
@@ -721,7 +726,7 @@
                         <span class="verdict-value {{if eq .Verdict "HOSTILE"}}hostile{{else if eq .Verdict "SUSPICIOUS"}}suspicious{{else if eq .Verdict "NOTABLE"}}notable{{else}}baseline{{end}}">{{.Verdict}}</span>
                     </div>
                 </div>
-                <div class="formula-label">Malecule ID</div>
+                <div class="formula-label">Mal-ecule ID</div>
                 <div class="formula">{{.Formula}}</div>
                 <div class="meta-table">
                     <div class="meta-row">
@@ -993,7 +998,7 @@ if (!canvas) throw new Error('Canvas not found');
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
 // Default camera position for single molecule (flat diagram, slight elevation)
-camera.position.set(0, 4, 11);
+camera.position.set(0, 5, 16);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setSize(canvas.clientWidth, canvas.clientHeight);
@@ -1041,19 +1046,29 @@ const severityColors = {
     neutral: 0x9ca3af
 };
 
+// Bond materials: standard for notable+ connections, dim for baseline connections
 const bondMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.5, metalness: 0.0 });
+const bondMatBaseline = new THREE.MeshStandardMaterial({ color: 0x4b5563, roughness: 0.7, metalness: 0.0, transparent: true, opacity: 0.35 });
 
 // Track clickable meshes for raycasting
 const clickableMeshes = [];
 const meshToMolecule = new Map();
 const meshToAtom = new Map();
 
+// Returns true if this atom is a dim supporting/neutral atom.
+// Ring atoms (inner hexagonal ring) and the file fallback atom are always opaque.
+function isBaseline(atom) {
+    return atom.severity === 'neutral' && !atom.ring && atom.category !== 'file';
+}
+
 // Helper to add atoms and bonds to scene
 function addMolecule(atoms, bonds, group, moleculeIndex = null, moleculeData = null) {
     atoms.forEach((atom, atomIndex) => {
         const color = severityColors[atom.severity] || severityColors.neutral;
-        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.1 });
-        const geo = new THREE.SphereGeometry(atom.radius || 0.4, 32, 32);
+        const mat = isBaseline(atom)
+            ? new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.45 })
+            : new THREE.MeshStandardMaterial({ color, roughness: 0.3, metalness: 0.1 });
+        const geo = new THREE.SphereGeometry(atom.radius || 0.4, 16, 16);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.set(atom.x, atom.y, atom.z);
         group.add(mesh);
@@ -1063,10 +1078,10 @@ function addMolecule(atoms, bonds, group, moleculeIndex = null, moleculeData = n
         meshToMolecule.set(mesh, moleculeIndex);
         meshToAtom.set(mesh, { atom, moleculeData });
 
-        // Element symbol label on each atom (skip file center node)
-        if (atom.symbol && atom.category !== "file") {
+        // Element symbol label on each atom
+        if (atom.symbol) {
             const labelDiv = document.createElement('div');
-            labelDiv.className = 'atom-label';
+            labelDiv.className = 'atom-label' + (isBaseline(atom) ? ' atom-label-baseline' : '');
             labelDiv.textContent = atom.symbol;
             const label = new CSS2DObject(labelDiv);
             label.position.set(0, 0, 0);
@@ -1075,7 +1090,8 @@ function addMolecule(atoms, bonds, group, moleculeIndex = null, moleculeData = n
     });
 
     if (bonds && bonds.length > 0) {
-        const bondGeo = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+        const bondGeoStd      = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+        const bondGeoBaseline = new THREE.CylinderGeometry(0.03, 0.03, 1, 6);
         bonds.forEach(bond => {
             const start = atoms[bond[0]];
             const end = atoms[bond[1]];
@@ -1086,7 +1102,11 @@ function addMolecule(atoms, bonds, group, moleculeIndex = null, moleculeData = n
             const mid = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5);
             const length = startVec.distanceTo(endVec);
 
-            const bondMesh = new THREE.Mesh(bondGeo, bondMat);
+            const useBaseline = isBaseline(start) || isBaseline(end);
+            const bondMesh = new THREE.Mesh(
+                useBaseline ? bondGeoBaseline : bondGeoStd,
+                useBaseline ? bondMatBaseline : bondMat
+            );
             bondMesh.position.copy(mid);
             bondMesh.scale.y = length;
             bondMesh.lookAt(endVec);
@@ -1130,15 +1150,25 @@ function showMoleculeInfo(mol) {
 }
 
 function showAtomInfo(atom, mol) {
-    const symbol = atom.symbol || '?';
-    const category = atom.category || 'unknown';
-    // Category is "topLevel/subCat" — show subCat as primary label
-    const parts = category.split('/');
-    const subCat = parts[parts.length - 1];
-    infoTitle.textContent = symbol + ' · ' + subCat;
-    infoFormula.textContent = mol ? basename(mol.path) : parts[0];
+    // File center atom: show filename and file type
+    if (atom.category === 'file') {
+        const filename = moleculeData.filename || (mol ? basename(mol.path) : 'file');
+        const fileType = moleculeData.fileType || (mol ? mol.formula : '');
+        infoTitle.textContent = 'C · ' + filename;
+        infoFormula.textContent = fileType;
+        infoFindings.innerHTML = '<div class="dim">File root</div>';
+        infoPanel.classList.add('visible');
+        return;
+    }
 
-    const severity = atom.severity || 'notable';
+    const symbol = atom.symbol;
+    const category = atom.category || 'unknown';
+    const baseline = isBaseline(atom);
+    // Category is the node key (e.g. "execution", "network") — show it directly
+    infoTitle.textContent = symbol + ' · ' + category + (baseline ? ' (baseline)' : '');
+    infoFormula.textContent = mol ? basename(mol.path) : '';
+
+    const severity = baseline ? 'dim' : (atom.severity || 'notable');
     let findingsHtml = '';
     if (atom.trait_id) {
         atom.trait_id.split(', ').forEach(t => {

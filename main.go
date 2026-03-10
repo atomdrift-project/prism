@@ -822,6 +822,16 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 	// Parse JSONL to extract metadata and findings
 	report := parseJSONL(res.JSON)
+
+	// Normalize paths: replace the temp file path with the real uploaded filename
+	// for any top-level file (depth=0, no archive separator). Cleave reports the
+	// path it analyzed on the server, which may be a tmp path.
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 && !strings.Contains(report.Files[i].Path, "!!") {
+			report.Files[i].Path = filename
+		}
+	}
+
 	if len(report.Files) == 0 && report.Summary == nil {
 		preview := res.JSON
 		if len(preview) > 200 {
@@ -975,6 +985,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	} else {
 		// Single file - build single molecule
 		mol := BuildMalecule(findings, formula)
+		mol.Filename = filename
+		mol.FileType = data.FileType
 		molJSON, err := json.Marshal(mol)
 		if err != nil {
 			logger.Debug("failed to marshal molecule data", "error", err)

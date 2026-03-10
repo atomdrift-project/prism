@@ -151,13 +151,16 @@ type MaleculeAtom struct {
 	Z        float64 `json:"z"`
 	Radius   float64 `json:"radius"`
 	ID       int     `json:"id"`
+	Ring     bool    `json:"ring,omitempty"`
 }
 
 // MaleculeData contains the complete molecule data for 3D rendering.
 type MaleculeData struct {
-	Formula string         `json:"formula"`
-	Atoms   []MaleculeAtom `json:"atoms"`
-	Bonds   [][2]int       `json:"bonds"`
+	Filename string         `json:"filename,omitempty"`
+	FileType string         `json:"fileType,omitempty"`
+	Formula  string         `json:"formula"`
+	Atoms    []MaleculeAtom `json:"atoms"`
+	Bonds    [][2]int       `json:"bonds"`
 }
 
 // FileMolecule represents a single file's molecule in a galaxy.
@@ -245,8 +248,9 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 		return n
 	}
 
-	// Build tree up to 3 levels deep, skipping below-notable findings.
-	root := newNode("file", Element{Number: 0, Symbol: "", Name: "File"}, SeverityNeutral)
+	// Build tree up to 3 levels deep. Only notable or higher severity is shown —
+	// baseline/composite traits are excluded until cleave exposes dependency data.
+	root := newNode("file", Element{Symbol: "C", Name: "File", Number: 0}, SeverityNeutral)
 
 	for _, f := range findings {
 		if f.Severity < SeverityNotable {
@@ -311,30 +315,40 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	}
 	sortTree(root)
 
-	// Radial layout: file at center, L1 evenly around it, deeper levels
-	// extend outward from their parents. All z=0 (flat diagram).
+	// Hexagonal ring layout: L1 category nodes form the inner ring (like an aromatic
+	// ring in caffeine), connected to each other. L2/L3 branch outward from the ring.
+	// Fallback: if no notable traits at all, return a single neutral C atom.
+	if len(root.children) == 0 {
+		mol.Atoms = []MaleculeAtom{{
+			ID: 0, Severity: "neutral", Symbol: "C", Category: "file",
+			X: 0, Y: 0, Z: 0, Radius: 0.45,
+		}}
+		return mol
+	}
+
+	// rRing: radius of the inner ring. r2/r3: distance from parent to child.
+	const rRing, r2, r3 = 1.8, 3.2, 2.2
+
 	type vec2 struct{ x, y float64 }
 	nodePos := make(map[*molNode]vec2)
-	nodePos[root] = vec2{0, 0}
-
-	const r1, r2, r3 = 3.2, 1.8, 1.4
 
 	numL1 := len(root.children)
 	for i, l1 := range root.children {
 		angle := 2*math.Pi*float64(i)/float64(numL1) - math.Pi/2
-		nodePos[l1] = vec2{r1 * math.Cos(angle), r1 * math.Sin(angle)}
+		nodePos[l1] = vec2{rRing * math.Cos(angle), rRing * math.Sin(angle)}
 	}
 
-	// spreadChildren places a node's children in an arc extending outward
-	// from the root, centered on the parent's radial direction.
-	spreadChildren := func(parent *molNode, childRadius, maxArc float64) {
-		if len(parent.children) == 0 {
+	// spreadChildren fans a node's children outward from the center.
+	// The arc grows with the number of children (arcPerChild minimum per slot)
+	// up to maxArc, so more children always get more room rather than less.
+	spreadChildren := func(parent *molNode, childRadius, arcPerChild, maxArc float64) {
+		n := len(parent.children)
+		if n == 0 {
 			return
 		}
 		pp := nodePos[parent]
 		outAngle := math.Atan2(pp.y, pp.x)
-		n := len(parent.children)
-		arc := math.Min(maxArc, math.Pi*0.85)
+		arc := math.Min(arcPerChild*float64(n), maxArc)
 		for j, child := range parent.children {
 			var angle float64
 			if n == 1 {
@@ -349,47 +363,68 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 		}
 	}
 
-	arcL2 := math.Min(2*math.Pi/float64(numL1)*0.75, math.Pi)
+	sectorArc := 2 * math.Pi / float64(numL1) * 0.88
 	for _, l1 := range root.children {
-		spreadChildren(l1, r2, arcL2)
-		numL2 := math.Max(1, float64(len(l1.children)))
+		spreadChildren(l1, r2, math.Pi/4, sectorArc)
 		for _, l2 := range l1.children {
-			spreadChildren(l2, r3, arcL2/numL2)
+			spreadChildren(l2, r3, math.Pi*40/180, math.Min(sectorArc, math.Pi*0.6))
 		}
 	}
 
-	// BFS to build atoms list and parent→child bonds.
+	// atomSeverity: intermediate nodes (have children but no direct traits) are neutral,
+	// since they are structural groupings rather than specific threat indicators.
+	atomSeverity := func(n *molNode) Severity {
+		if len(n.traitIDs) == 0 && len(n.children) > 0 {
+			return SeverityNeutral
+		}
+		return n.severity
+	}
+
+	// BFS from L1 ring nodes (no central file atom).
 	type qItem struct {
 		node      *molNode
 		parentIdx int
+		isL1      bool
 	}
-	queue := []qItem{{root, -1}}
-	nodeAtomIdx := make(map[*molNode]int)
+	queue := make([]qItem, 0, numL1)
+	for _, l1 := range root.children {
+		queue = append(queue, qItem{l1, -1, true})
+	}
+
 	var atoms []MaleculeAtom
 	var bonds [][2]int
+	l1AtomIndices := make([]int, 0, numL1)
 
 	for len(queue) > 0 {
 		item := queue[0]
 		queue = queue[1:]
 		n := item.node
-
 		p := nodePos[n]
 		atomIdx := len(atoms)
-		nodeAtomIdx[n] = atomIdx
 
-		atomRadius := 0.35
-		switch {
-		case n == root:
-			atomRadius = 0.45
-		case n.severity == SeverityHostile:
-			atomRadius = 0.5
-		case n.severity >= SeveritySuspicious:
-			atomRadius = 0.42
-		default:
+		if item.isL1 {
+			l1AtomIndices = append(l1AtomIndices, atomIdx)
 		}
-		sev := n.severity.String()
-		if n == root {
-			sev = "neutral"
+
+		// Ring atoms are always neutral — they are structural category groupings.
+		// Other nodes are neutral only when they have children but no direct traits.
+		sev := SeverityNeutral
+		if !item.isL1 {
+			sev = atomSeverity(n)
+		}
+
+		atomRadius := 0.22
+		if item.isL1 {
+			atomRadius = 0.32 // uniform ring atom size
+		} else {
+			switch {
+			case sev == SeverityHostile:
+				atomRadius = 0.5
+			case sev >= SeveritySuspicious:
+				atomRadius = 0.42
+			case sev >= SeverityNotable:
+				atomRadius = 0.35
+			}
 		}
 
 		atoms = append(atoms, MaleculeAtom{
@@ -398,10 +433,11 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 			Y:        p.y,
 			Z:        0,
 			Radius:   atomRadius,
-			Severity: sev,
+			Severity: sev.String(),
 			Symbol:   n.element.Symbol,
 			Category: n.key,
 			TraitID:  strings.Join(n.traitIDs, ", "),
+			Ring:     item.isL1,
 		})
 
 		if item.parentIdx >= 0 {
@@ -409,10 +445,15 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 		}
 
 		for _, child := range n.children {
-			queue = append(queue, qItem{child, atomIdx})
+			queue = append(queue, qItem{child, atomIdx, false})
 		}
 	}
-	_ = nodeAtomIdx
+
+	// Close the ring: connect each L1 atom to its neighbor, forming the aromatic ring.
+	for i, idx := range l1AtomIndices {
+		next := l1AtomIndices[(i+1)%len(l1AtomIndices)]
+		bonds = append(bonds, [2]int{idx, next})
+	}
 
 	mol.Atoms = atoms
 	mol.Bonds = bonds
