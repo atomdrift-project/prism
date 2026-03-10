@@ -191,8 +191,9 @@ type GalaxyData struct {
 
 // FindingForFormula is a simplified finding for formula generation.
 type FindingForFormula struct {
-	ID       string
-	Severity Severity
+	ID        string
+	Severity  Severity
+	TraitRefs []string // component trait IDs for composite findings
 }
 
 // critToSeverity converts cleave's criticality string to Severity.
@@ -446,6 +447,133 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 
 		for _, child := range n.children {
 			queue = append(queue, qItem{child, atomIdx, false})
+		}
+	}
+
+	// Trait ref atoms: composite findings (notable+) reference underlying simple traits
+	// via trait_refs. Each unique ref becomes ONE atom regardless of how many composites
+	// reference it; all referencing composites get a bond to that single atom.
+	//
+	// Build traitID→atomIdx so we can find composite atoms and detect refs that are
+	// already present as notable+ findings in the molecule.
+	traitIDToAtomIdx := make(map[string]int, len(atoms))
+	for i, a := range atoms {
+		for _, tid := range strings.Split(a.TraitID, ", ") {
+			if tid != "" {
+				traitIDToAtomIdx[tid] = i
+			}
+		}
+	}
+
+	// refComposites maps each unique ref ID to the list of composite atom indices
+	// that depend on it. Order of first appearance determines primary composite
+	// (used for positioning when the ref is new).
+	type refEntry struct {
+		composites []int // atom indices of composites that reference this ref
+	}
+	refPool := make(map[string]*refEntry)
+	for _, f := range findings {
+		if f.Severity < SeverityNotable || len(f.TraitRefs) == 0 {
+			continue
+		}
+		ci, ok := traitIDToAtomIdx[f.ID]
+		if !ok {
+			continue
+		}
+		for _, ref := range f.TraitRefs {
+			if refPool[ref] == nil {
+				refPool[ref] = &refEntry{}
+			}
+			re := refPool[ref]
+			seen := false
+			for _, existing := range re.composites {
+				if existing == ci {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				re.composites = append(re.composites, ci)
+			}
+		}
+	}
+
+	if len(refPool) > 0 {
+		// Group refs by primary composite for arc positioning.
+		type refPos struct {
+			id   string
+			entry *refEntry
+		}
+		compositeRefs := make(map[int][]refPos)
+		for ref, re := range refPool {
+			primary := re.composites[0]
+			compositeRefs[primary] = append(compositeRefs[primary], refPos{ref, re})
+		}
+
+		// refAtomIdx maps ref ID → atom index (for refs already in the molecule).
+		refAtomIdx := make(map[string]int)
+		for ref := range refPool {
+			if idx, ok := traitIDToAtomIdx[ref]; ok {
+				refAtomIdx[ref] = idx
+			}
+		}
+
+		// For each primary composite, fan its new ref atoms outward.
+		for primaryIdx, refs := range compositeRefs {
+			// Sort for determinism.
+			sort.Slice(refs, func(i, j int) bool { return refs[i].id < refs[j].id })
+
+			// Count refs that need new atoms (not already in molecule).
+			newRefs := refs[:0:0]
+			for _, rp := range refs {
+				if _, exists := refAtomIdx[rp.id]; !exists {
+					newRefs = append(newRefs, rp)
+				}
+			}
+
+			if len(newRefs) > 0 {
+				cx := atoms[primaryIdx].X
+				cy := atoms[primaryIdx].Y
+				outAngle := math.Atan2(cy, cx)
+				const refRadius = 1.2
+				const arcPerRef = math.Pi * 25 / 180
+				arc := math.Min(arcPerRef*float64(len(newRefs)), math.Pi*0.5)
+
+				for j, rp := range newRefs {
+					var angle float64
+					if len(newRefs) == 1 {
+						angle = outAngle
+					} else {
+						angle = outAngle - arc/2 + arc*float64(j)/float64(len(newRefs)-1)
+					}
+					refParts := strings.Split(rp.id, "/")
+					refElem, _ := categoryToElement(refParts[len(refParts)-1])
+					idx := len(atoms)
+					atoms = append(atoms, MaleculeAtom{
+						ID:       idx,
+						X:        cx + refRadius*math.Cos(angle),
+						Y:        cy + refRadius*math.Sin(angle),
+						Z:        0,
+						Radius:   0.22,
+						Severity: "neutral",
+						Symbol:   refElem.Symbol,
+						Category: rp.id,
+						TraitID:  rp.id,
+					})
+					refAtomIdx[rp.id] = idx
+				}
+			}
+		}
+
+		// Bond every composite to its ref atoms (shared refs get bonds from all composites).
+		for ref, re := range refPool {
+			idx, ok := refAtomIdx[ref]
+			if !ok {
+				continue
+			}
+			for _, ci := range re.composites {
+				bonds = append(bonds, [2]int{ci, idx})
+			}
 		}
 	}
 

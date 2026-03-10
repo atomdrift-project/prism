@@ -250,12 +250,13 @@ type findingCounts struct {
 }
 
 type finding struct {
-	ID       string     `json:"id"`
-	Desc     string     `json:"desc"`
-	Crit     string     `json:"crit,omitempty"`
-	Kind     string     `json:"kind,omitempty"`
-	Evidence []evidence `json:"evidence,omitempty"`
-	Conf     float64    `json:"conf"`
+	ID        string     `json:"id"`
+	Desc      string     `json:"desc"`
+	Crit      string     `json:"crit,omitempty"`
+	Kind      string     `json:"kind,omitempty"`
+	TraitRefs []string   `json:"trait_refs,omitempty"`
+	Evidence  []evidence `json:"evidence,omitempty"`
+	Conf      float64    `json:"conf"`
 }
 
 type evidence struct {
@@ -875,8 +876,9 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			}
 			totalFindings++
 			findings = append(findings, FindingForFormula{
-				ID:       f.ID,
-				Severity: critToSeverity(f.Crit),
+				ID:        f.ID,
+				Severity:  critToSeverity(f.Crit),
+				TraitRefs: f.TraitRefs,
 			})
 		}
 	}
@@ -945,8 +947,9 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 					continue
 				}
 				ff = append(ff, FindingForFormula{
-					ID:       f.ID,
-					Severity: critToSeverity(f.Crit),
+					ID:        f.ID,
+					Severity:  critToSeverity(f.Crit),
+					TraitRefs: f.TraitRefs,
 				})
 			}
 
