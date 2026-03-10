@@ -58,10 +58,6 @@ doas bastille cmd "$RUN" mkdir -p /usr/local/bin
 doas bastille cmd "$RUN" install -o root -g wheel -m 755 /tmp/prism /usr/local/bin/prism
 doas bastille cmd "$RUN" rm -f /tmp/prism
 
-log "Installing proclist via cargo"
-doas bastille pkg "$RUN" install -y rust
-doas bastille cmd "$RUN" su -l prism -c "cargo install proclist"
-
 log "Creating rc.d service for prism"
 doas bastille cmd "$RUN" mkdir -p /usr/local/etc/rc.d
 doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/prism >/dev/null <<'EOF'
