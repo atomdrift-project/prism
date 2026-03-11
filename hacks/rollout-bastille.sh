@@ -118,9 +118,11 @@ doas bastille cmd "$RUN" mkdir -p "$CF_HOME"
 
 # Authenticate with Cloudflare if not already done.
 # On first run this prints a URL to open in a browser; cert.pem is persisted for future runs.
+# cloudflared always writes cert.pem to ~/.cloudflared/, so we move it afterward.
 if ! doas bastille cmd "$RUN" test -f "$CF_HOME/cert.pem"; then
     log "Authenticating with Cloudflare (open the URL printed below in a browser)"
-    doas bastille cmd "$RUN" cloudflared tunnel --origincert "$CF_HOME/cert.pem" login
+    doas bastille cmd "$RUN" cloudflared tunnel login
+    doas bastille cmd "$RUN" mv /root/.cloudflared/cert.pem "$CF_HOME/cert.pem"
 fi
 
 # Create the tunnel if it doesn't already exist.
