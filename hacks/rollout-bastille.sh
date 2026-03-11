@@ -1,6 +1,13 @@
 #!/bin/sh
 # rollout-bastille.sh - Deploy prism using separate build and run jails
 # Usage: ./rollout-bastille.sh <build-jail> <run-jail>
+#
+# Environment:
+#   CF_TUNNEL_NAME     - Tunnel name (default: "prism")
+#   CF_TUNNEL_HOSTNAME - Public hostname for the tunnel (default: "prism.example.com")
+#
+# On first run, cloudflared prints a URL to authenticate with Cloudflare.
+# The resulting cert.pem is persisted in the jail for subsequent runs.
 
 set -e
 
@@ -15,6 +22,9 @@ die() {
 log() {
     echo "==> $*"
 }
+
+CF_TUNNEL_NAME="${CF_TUNNEL_NAME:-prism}"
+CF_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME:-prism.atomdrift.org}"
 
 [ -z "$BUILD" ] || [ -z "$RUN" ] && die "usage: $0 <build-jail> <run-jail>"
 
@@ -78,9 +88,10 @@ load_rc_config $name
 : ${prism_litmus_addr:="10.9.8.63:8880"}
 
 pidfile="/var/run/${name}.pid"
+prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 prism_env="PORT=8080 LITMUS_ADDR=${prism_litmus_addr}"
-command_args="-c -f -P ${pidfile} -S -r -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
+command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
 
 run_rc_command "$1"
 EOF
@@ -91,5 +102,92 @@ log "Enabling and restarting prism service"
 doas bastille sysrc "$RUN" prism_enable=YES
 doas bastille service "$RUN" prism stop 2>/dev/null || true
 doas bastille service "$RUN" prism start
+
+# --- Cloudflare Tunnel setup ---
+
+CF_HOME="/usr/local/etc/cloudflared"
+
+log "Installing cloudflared"
+doas bastille pkg "$RUN" install -y cloudflared
+
+log "Creating cloudflared user"
+doas bastille cmd "$RUN" id -u cloudflared >/dev/null 2>&1 || \
+    doas bastille cmd "$RUN" pw useradd cloudflared -d /nonexistent -s /usr/sbin/nologin -c "Cloudflare Tunnel"
+
+doas bastille cmd "$RUN" mkdir -p "$CF_HOME"
+
+# Authenticate with Cloudflare if not already done.
+# On first run this prints a URL to open in a browser; cert.pem is persisted for future runs.
+if ! doas bastille cmd "$RUN" test -f "$CF_HOME/cert.pem"; then
+    log "Authenticating with Cloudflare (open the URL printed below in a browser)"
+    doas bastille cmd "$RUN" cloudflared tunnel --origincert "$CF_HOME/cert.pem" login
+fi
+
+# Create the tunnel if it doesn't already exist.
+if ! doas bastille cmd "$RUN" cloudflared tunnel --origincert "$CF_HOME/cert.pem" --cred-file "$CF_HOME" list -n "$CF_TUNNEL_NAME" 2>/dev/null | grep -q "$CF_TUNNEL_NAME"; then
+    log "Creating tunnel '$CF_TUNNEL_NAME'"
+    doas bastille cmd "$RUN" cloudflared tunnel --origincert "$CF_HOME/cert.pem" --cred-file "$CF_HOME" create "$CF_TUNNEL_NAME"
+else
+    log "Tunnel '$CF_TUNNEL_NAME' already exists"
+fi
+
+# Resolve the tunnel UUID from the credentials file.
+CF_TUNNEL_UUID=$(doas bastille cmd "$RUN" ls "$CF_HOME" | grep '\.json$' | head -1 | sed 's/\.json$//')
+[ -z "$CF_TUNNEL_UUID" ] && die "could not determine tunnel UUID"
+log "Tunnel UUID: $CF_TUNNEL_UUID"
+
+# Write the tunnel config file.
+log "Writing cloudflared config"
+doas bastille cmd "$RUN" tee "$CF_HOME/config.yml" >/dev/null <<CFEOF
+tunnel: ${CF_TUNNEL_UUID}
+credentials-file: ${CF_HOME}/${CF_TUNNEL_UUID}.json
+origincert: ${CF_HOME}/cert.pem
+
+ingress:
+  - hostname: ${CF_TUNNEL_HOSTNAME}
+    service: http://localhost:8080
+  - service: http_status:404
+CFEOF
+
+# Route DNS (idempotent — updates the CNAME if it already exists).
+log "Routing DNS for $CF_TUNNEL_HOSTNAME"
+doas bastille cmd "$RUN" cloudflared tunnel --origincert "$CF_HOME/cert.pem" route dns "$CF_TUNNEL_NAME" "$CF_TUNNEL_HOSTNAME" || true
+
+# Fix ownership so the unprivileged user can read credentials.
+doas bastille cmd "$RUN" chown -R cloudflared:cloudflared "$CF_HOME"
+doas bastille cmd "$RUN" chmod 700 "$CF_HOME"
+doas bastille cmd "$RUN" chmod 600 "$CF_HOME"/*.json "$CF_HOME"/cert.pem
+
+log "Creating rc.d service for cloudflared"
+doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/cloudflared >/dev/null <<'EOF'
+#!/bin/sh
+
+# PROVIDE: cloudflared
+# REQUIRE: LOGIN DAEMON NETWORKING prism
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="cloudflared"
+rcvar="cloudflared_enable"
+
+load_rc_config $name
+
+: ${cloudflared_enable:="NO"}
+
+pidfile="/var/run/${name}.pid"
+cloudflared_log="/var/log/${name}.log"
+command="/usr/sbin/daemon"
+command_args="-c -f -P ${pidfile} -S -R 5 -o ${cloudflared_log} -u cloudflared /usr/local/bin/cloudflared tunnel --no-autoupdate --config /usr/local/etc/cloudflared/config.yml run"
+
+run_rc_command "$1"
+EOF
+
+doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/cloudflared
+
+log "Enabling and restarting cloudflared"
+doas bastille sysrc "$RUN" cloudflared_enable=YES
+doas bastille service "$RUN" cloudflared stop 2>/dev/null || true
+doas bastille service "$RUN" cloudflared start
 
 log "Deployment complete"
