@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -429,7 +430,14 @@ func main() {
 		"gcs_bucket", gcsBucket,
 	)
 
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	ln, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		logger.Error("server error", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("everything done, ready to serve traffic at http://localhost:" + port + "!")
+
+	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server error", "error", err)
 		os.Exit(1)
 	}

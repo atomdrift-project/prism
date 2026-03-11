@@ -75,7 +75,7 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_litmus_addr:=""}
+: ${prism_litmus_addr:="10.9.8.63:8880"}
 
 pidfile="/var/run/${name}.pid"
 command="/usr/sbin/daemon"
