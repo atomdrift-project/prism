@@ -647,8 +647,7 @@
             height: 100%;
             border-radius: 3px;
         }
-        .entropy-low { background: #22c55e; }
-        .entropy-medium { background: var(--suspicious); }
+        .entropy-normal { background: #22c55e; }
         .entropy-high { background: var(--hostile); }
         .entropy-value {
             font-family: 'SF Mono', Consolas, monospace;
@@ -922,7 +921,7 @@
                                     <td class="section-name">{{.Name}}</td>
                                     <td class="section-size">{{.Size}} B</td>
                                     <td>
-                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 5.0}}entropy-low{{else if lt .Entropy 7.0}}entropy-medium{{else}}entropy-high{{end}}" style="width: {{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
+                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" style="width: {{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
                                         <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
                                     </td>
                                     <td class="section-flags">{{.Flags}}</td>
