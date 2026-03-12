@@ -150,15 +150,19 @@ function showMoleculeInfo(mol) {
 
     // Use mol.risk for severity coloring
     const severity = mol.risk || 'notable';
-    let findingsHtml = '';
+    infoFindings.replaceChildren();
     if (mol.findings && mol.findings.length > 0) {
         mol.findings.forEach(f => {
-            findingsHtml += `<div class="${severity}">${f}</div>`;
+            const div = document.createElement('div');
+            div.className = severity;
+            div.textContent = f;
+            infoFindings.appendChild(div);
         });
     } else {
-        findingsHtml = '<div>No findings</div>';
+        const div = document.createElement('div');
+        div.textContent = 'No findings';
+        infoFindings.appendChild(div);
     }
-    infoFindings.innerHTML = findingsHtml;
     infoPanel.classList.add('visible');
 }
 
@@ -169,7 +173,11 @@ function showAtomInfo(atom, mol) {
         const fileType = moleculeData.fileType || (mol ? mol.formula : '');
         infoTitle.textContent = 'C \u00b7 ' + filename;
         infoFormula.textContent = fileType;
-        infoFindings.innerHTML = '<div class="dim">File root</div>';
+        infoFindings.replaceChildren();
+        const div = document.createElement('div');
+        div.className = 'dim';
+        div.textContent = 'File root';
+        infoFindings.appendChild(div);
         infoPanel.classList.add('visible');
         return;
     }
@@ -182,15 +190,20 @@ function showAtomInfo(atom, mol) {
     infoFormula.textContent = mol ? basename(mol.path) : '';
 
     const severity = baseline ? 'dim' : (atom.severity || 'notable');
-    let findingsHtml = '';
+    infoFindings.replaceChildren();
     if (atom.trait_id) {
         atom.trait_id.split(', ').forEach(t => {
-            findingsHtml += `<div class="${severity}">${t}</div>`;
+            const div = document.createElement('div');
+            div.className = severity;
+            div.textContent = t;
+            infoFindings.appendChild(div);
         });
     } else {
-        findingsHtml = '<div class="dim">No specific traits</div>';
+        const div = document.createElement('div');
+        div.className = 'dim';
+        div.textContent = 'No specific traits';
+        infoFindings.appendChild(div);
     }
-    infoFindings.innerHTML = findingsHtml;
     infoPanel.classList.add('visible');
 }
 
