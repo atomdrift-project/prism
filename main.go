@@ -90,7 +90,8 @@ func csrfValid(token string, maxAge time.Duration) bool {
 	if err != nil {
 		return false
 	}
-	if time.Since(time.Unix(ts, 0)) > maxAge {
+	age := time.Since(time.Unix(ts, 0))
+	if age < 0 || age > maxAge {
 		return false
 	}
 	mac := hmac.New(sha256.New, csrfKey[:])
@@ -414,8 +415,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Parse command-line flags
-	flushCache := false
-	noCache := false
+	var flushCache, noCache bool
 	for i, arg := range os.Args[1:] {
 		switch {
 		case arg == "--flush" || arg == "-flush":
@@ -493,25 +493,22 @@ func main() {
 
 	// Parse templates. isPublic is available in all templates so base.html
 	// can switch branding and banners without per-handler plumbing.
-	baseFuncs := template.FuncMap{
-		"isPublic": func() bool { return publicMode },
-	}
-	var tmplErr error
-	uploadTemplate, tmplErr = template.New("upload.html").Funcs(baseFuncs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
-	if tmplErr != nil {
-		logger.Error("template loading failed", "error", tmplErr)
-		os.Exit(1)
-	}
-	resultFuncs := template.FuncMap{
+	funcs := template.FuncMap{
 		"isPublic": func() bool { return publicMode },
 		"mul":      func(a, b float64) float64 { return a * b },
 	}
-	resultTemplate, tmplErr = template.New("result.html").Funcs(resultFuncs).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
+	var tmplErr error
+	uploadTemplate, tmplErr = template.New("upload.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
-	errorTemplate, tmplErr = template.New("error.html").Funcs(baseFuncs).ParseFS(templatesFS, "templates/base.html", "templates/error.html")
+	resultTemplate, tmplErr = template.New("result.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
+	errorTemplate, tmplErr = template.New("error.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/error.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
@@ -580,13 +577,13 @@ func main() {
 		"gcs_bucket", gcsBucket,
 	)
 
-	lc := net.ListenConfig{}
+	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", server.Addr)
 	if err != nil {
-		logger.Error("server error", "error", err)
+		logger.Error("listen failed", "addr", server.Addr, "error", err)
 		os.Exit(1)
 	}
-	logger.Info("everything done, ready to serve traffic at http://localhost:" + port + "!")
+	logger.Info("listening", "addr", server.Addr)
 
 	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server error", "error", err)
@@ -1312,7 +1309,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
-	formula := ""
+	var formula string
 	for i := range report.Files {
 		file := &report.Files[i]
 		if file.Depth == 0 {
