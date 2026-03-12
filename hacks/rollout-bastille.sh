@@ -85,7 +85,7 @@ pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 prism_env="PORT=8080 LITMUS_ADDR=${prism_litmus_addr}"
-command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism"
+command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public"
 
 run_rc_command "$1"
 EOF

@@ -33,13 +33,13 @@
     }
 {{end}}
 
-{{define "wordmark"}}lit<span class="logo-accent">mus</span><span class="alpha-tag">ALPHA</span>{{end}}
+{{define "wordmark"}}{{if isPublic}}atom<span class="logo-accent">drift</span> lab<span class="alpha-tag">ALPHA</span>{{else}}lit<span class="logo-accent">mus</span><span class="alpha-tag">ALPHA</span>{{end}}{{end}}
 
 {{define "tagline"}}Open-source atomic malware analysis{{end}}
 
 {{define "banner"}}
     <div class="alpha-banner">
-        Welcome Mastodon users to our initial alpha test! Please abuse and send feedback to <a href="https://triangletoot.party/@thomrstrom">@thomrstrom</a>
+        {{if isPublic}}You are uploading files to a public instance. Data may be shared with security researchers and other members of the public. Prefer privacy? <a href="https://codeberg.org/atomdrift/prism">Self-host prism</a> or use <a href="https://codeberg.org/atomdrift/litmus">litmus CLI</a>.{{else}}Welcome to litmus! Please send feedback to <a href="https://triangletoot.party/@thomrstrom">@thomrstrom</a>{{end}}
     </div>
 {{end}}
 

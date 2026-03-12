@@ -67,6 +67,7 @@ gcloud run deploy "${APP_NAME}" \
 	--project "${GCP_PROJECT}" \
 	--allow-unauthenticated \
 	--set-env-vars "GCS_BUCKET=${GCS_BUCKET}" \
+	--args="--public" \
 	--memory 2Gi \
 	--timeout 120s \
 	--cpu-boost || true

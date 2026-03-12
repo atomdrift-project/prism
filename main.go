@@ -57,6 +57,7 @@ var (
 	gcsClient      *storage.Client
 	cache          *fido.TieredCache[string, storedResult]
 	logger         *slog.Logger
+	publicMode     bool // true when --public flag is set; changes branding and shows data-sharing notice
 )
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
@@ -404,6 +405,7 @@ type cleaveSummary struct {
 	AnalysisDurationMs int64 `json:"analysis_duration_ms"`
 }
 
+//nolint:maintidx // main is inherently complex: flag parsing, config, template init, server setup
 func main() {
 	// Initialize structured logger with JSON output for production
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -420,6 +422,8 @@ func main() {
 			flushCache = true
 		case arg == "--no-cache" || arg == "-no-cache":
 			noCache = true
+		case arg == "--public" || arg == "-public":
+			publicMode = true
 		case strings.HasPrefix(arg, "--litmus-addr="):
 			litmusAddr = strings.TrimPrefix(arg, "--litmus-addr=")
 		case arg == "--litmus-addr" && i+1 < len(os.Args[1:]):
@@ -433,6 +437,7 @@ func main() {
 		"os", runtime.GOOS,
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
+		"public_mode", publicMode,
 	)
 
 	ctx := context.Background()
@@ -486,20 +491,27 @@ func main() {
 		}
 	}
 
-	// Parse templates
+	// Parse templates. isPublic is available in all templates so base.html
+	// can switch branding and banners without per-handler plumbing.
+	baseFuncs := template.FuncMap{
+		"isPublic": func() bool { return publicMode },
+	}
 	var tmplErr error
-	uploadTemplate, tmplErr = template.New("upload.html").ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
+	uploadTemplate, tmplErr = template.New("upload.html").Funcs(baseFuncs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
-	funcMap := template.FuncMap{"mul": func(a, b float64) float64 { return a * b }}
-	resultTemplate, tmplErr = template.New("result.html").Funcs(funcMap).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
+	resultFuncs := template.FuncMap{
+		"isPublic": func() bool { return publicMode },
+		"mul":      func(a, b float64) float64 { return a * b },
+	}
+	resultTemplate, tmplErr = template.New("result.html").Funcs(resultFuncs).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
-	errorTemplate, tmplErr = template.New("error.html").ParseFS(templatesFS, "templates/base.html", "templates/error.html")
+	errorTemplate, tmplErr = template.New("error.html").Funcs(baseFuncs).ParseFS(templatesFS, "templates/base.html", "templates/error.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
