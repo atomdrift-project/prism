@@ -169,15 +169,19 @@ func (ul *uploadLimiter) reap() {
 
 var rateLimiter = newUploadLimiter()
 
-// clientIP extracts the client IP from the request, preferring X-Forwarded-For
-// (set by Cloudflare / reverse proxies) and falling back to RemoteAddr.
+// clientIP extracts the client IP from the request, preferring the rightmost
+// entry in X-Forwarded-For (set by the nearest trusted proxy — Cloud Run LB
+// or cloudflared) and falling back to RemoteAddr.
+//
+// The rightmost entry is used because it is added by the infrastructure proxy
+// and cannot be spoofed by the client.  The leftmost entry is attacker-
+// controlled: any client can send "X-Forwarded-For: fake" and the proxy
+// appends the real IP, yielding "fake, real".
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// First entry is the original client.
-		if ip, _, ok := strings.Cut(xff, ","); ok {
-			return strings.TrimSpace(ip)
-		}
-		return strings.TrimSpace(xff)
+		// Rightmost entry is added by the nearest trusted proxy.
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -2000,9 +2004,14 @@ func runLitmus(
 			}
 
 			if resp.StatusCode != http.StatusOK {
+				// Truncate body for logging to prevent log storage exhaustion.
+				logBody := string(body)
+				if len(logBody) > 1024 {
+					logBody = logBody[:1024] + "...(truncated)"
+				}
 				reqLogger.Error("litmus server returned error",
 					"status", resp.StatusCode,
-					"body", string(body),
+					"body", logBody,
 					"attempt", attempt,
 				)
 				// 4xx errors are not retryable (bad request, too large, etc.)
