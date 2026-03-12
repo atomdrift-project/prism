@@ -491,7 +491,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		// CSP: allow self, inline styles (templates), Three.js from unpkg
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' https://unpkg.com; "+
+				"script-src 'self'; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"font-src 'self'; "+
 				"img-src 'self' data:; "+
