@@ -1311,8 +1311,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.RiskLabel = "Unknown"
 	}
 
-	// Flag when we have limited analysis info (unknown file type, no findings)
-	if data.FileType == "UNKNOWN" || (data.FileType == "" && totalFindings == 0) {
+	// Flag when we have limited analysis info (unknown file type AND no findings)
+	if (data.FileType == "UNKNOWN" || data.FileType == "") && totalFindings == 0 {
 		data.LimitedInfo = true
 		logger.Info("limited analysis info for file",
 			"filename", filename,
@@ -1441,7 +1441,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		"hostile":    3,
 		"suspicious": 2,
 		"notable":    1,
-		"":           0,
+		"baseline":   0,
+		"":           -1,
 	}
 
 	for i := range files {
@@ -1468,8 +1469,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				continue
 			}
 
-			// Only show notable or higher (skip baseline/component)
-			if f.Crit != "hostile" && f.Crit != "suspicious" && f.Crit != "notable" {
+			// Only show baseline or higher (skip component/empty)
+			if f.Crit == "" || f.Crit == "component" {
 				continue
 			}
 
