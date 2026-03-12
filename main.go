@@ -559,7 +559,7 @@ func main() {
 		sig := <-sigCh
 		logger.Info("shutdown signal received", "signal", sig.String())
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {

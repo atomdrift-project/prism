@@ -51,7 +51,7 @@ log "Transferring binary to run jail"
 doas cp "$BASTILLE_DIR/$BUILD/root/home/prism/prism/prism" \
        "$BASTILLE_DIR/$RUN/root/tmp/prism"
 
-# --- Run jail setup ---
+# --- Run jail setup (all config before any restarts) ---
 
 log "Ensuring run user exists"
 doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
@@ -91,11 +91,7 @@ run_rc_command "$1"
 EOF
 
 doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/prism
-
-log "Enabling and restarting prism service"
 doas bastille sysrc "$RUN" prism_enable=YES
-doas bastille service "$RUN" prism stop 2>/dev/null || true
-doas bastille service "$RUN" prism start
 
 # --- Cloudflare Tunnel setup ---
 # Tunnel and DNS are configured in the Cloudflare dashboard (Zero Trust -> Tunnels).
@@ -138,10 +134,21 @@ run_rc_command "$1"
 EOF
 
 doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/cloudflared
-
-log "Enabling and restarting cloudflared"
 doas bastille sysrc "$RUN" cloudflared_enable=YES
-doas bastille service "$RUN" cloudflared stop 2>/dev/null || true
-doas bastille service "$RUN" cloudflared start
+
+# --- Restart prism; start cloudflared only if not already running ---
+
+if doas bastille cmd "$RUN" service prism status >/dev/null 2>&1; then
+    log "Restarting prism service"
+    doas bastille service "$RUN" prism restart
+else
+    log "Starting prism service (first deploy)"
+    doas bastille service "$RUN" prism start
+fi
+
+if ! doas bastille cmd "$RUN" service cloudflared status >/dev/null 2>&1; then
+    log "Starting cloudflared (first deploy)"
+    doas bastille service "$RUN" cloudflared start
+fi
 
 log "Deployment complete"
