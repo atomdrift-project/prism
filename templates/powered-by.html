@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Powered By - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <style nonce="{{.Nonce}}">
+    {{template "fonts" .}}
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --slate: #6b7280;
+            --silver: #9ca3af;
+            --mist: #f3f4f6;
+            --white: #ffffff;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --hostile: #ef4444;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        header {
+            margin-bottom: 48px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-accent {
+            color: var(--isotope);
+        }
+        .alpha-tag {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--hostile);
+            background: rgba(239, 68, 68, 0.12);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: super;
+            letter-spacing: 0.5px;
+        }
+        .alpha-banner {
+            background: var(--isotope);
+            color: var(--white);
+            text-align: center;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.2px;
+        }
+        .alpha-banner a {
+            color: var(--white);
+            text-decoration: underline;
+            font-weight: 600;
+        }
+        .page-title {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .page-desc {
+            font-size: 16px;
+            color: var(--slate);
+            margin-bottom: 36px;
+        }
+        .tool-section {
+            margin-bottom: 36px;
+        }
+        .tool-section h2 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .tool-section .section-desc {
+            font-size: 14px;
+            color: var(--slate);
+            margin-bottom: 12px;
+        }
+        .tool-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .tool-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+        }
+        .tool-table tr:last-child td {
+            border-bottom: none;
+        }
+        .tool-table td:first-child {
+            width: 180px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .tool-table a {
+            color: var(--isotope);
+            text-decoration: none;
+        }
+        .tool-table a:hover {
+            text-decoration: underline;
+        }
+        .tool-table .desc {
+            color: var(--slate);
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            font-size: 14px;
+            color: var(--silver);
+            display: flex;
+            justify-content: space-between;
+        }
+        footer a {
+            color: var(--slate);
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    <div class="container">
+        <header>
+            <a href="/" class="logo">{{template "wordmark" .}}</a>
+        </header>
+
+        <div class="page-title">Powered By</div>
+        <p class="page-desc">The open-source projects that make this tool possible.</p>
+
+        <div class="tool-section">
+            <h2>Malware Analysis</h2>
+            <p class="section-desc">Our own open-source tools, available on Codeberg.</p>
+            <table class="tool-table">
+                <tbody>
+                    <tr>
+                        <td><a href="https://codeberg.org/atomdrift/cleave" target="_blank">cleave</a></td>
+                        <td class="desc">Static analysis engine; binary, AST, YARA</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://codeberg.org/atomdrift/litmus" target="_blank">litmus</a></td>
+                        <td class="desc">ML-powered malware classifier</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://codeberg.org/atomdrift/stng" target="_blank">stng</a></td>
+                        <td class="desc">Language-aware string extractor for binaries</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://codeberg.org/atomdrift/collimator" target="_blank">collimator</a></td>
+                        <td class="desc">XGBoost training pipeline for malware models</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://codeberg.org/atomdrift/prism" target="_blank">prism</a></td>
+                        <td class="desc">Web interface for malware analysis</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="tool-section">
+            <h2>Program Analysis</h2>
+            <p class="section-desc">Libraries and tools used for deep code and binary analysis.</p>
+            <table class="tool-table">
+                <tbody>
+                    <tr>
+                        <td><a href="https://tree-sitter.github.io/tree-sitter/" target="_blank">tree-sitter</a></td>
+                        <td class="desc">Parser generator for 20+ language ASTs</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://rizin.re/" target="_blank">rizin</a></td>
+                        <td class="desc">Reverse engineering and disassembly framework</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://virustotal.github.io/yara-x/" target="_blank">YARA-X</a></td>
+                        <td class="desc">Pattern matching engine for malware rules</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://github.com/m4b/goblin" target="_blank">goblin</a></td>
+                        <td class="desc">ELF, PE, and Mach-O binary parser</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        {{if isPublic}}
+        <div class="tool-section">
+            <h2>Infrastructure</h2>
+            <p class="section-desc">The systems this service runs on.</p>
+            <table class="tool-table">
+                <tbody>
+                    <tr>
+                        <td><a href="https://www.freebsd.org/" target="_blank">FreeBSD</a></td>
+                        <td class="desc">Operating system with Capsicum sandboxing</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://bastillebsd.org/" target="_blank">Bastille</a></td>
+                        <td class="desc">FreeBSD jail container management</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+
+        <div class="tool-section">
+            <h2>Programming Languages</h2>
+            <p class="section-desc">Languages used to build the Atomdrift toolchain.</p>
+            <table class="tool-table">
+                <tbody>
+                    <tr>
+                        <td><a href="https://www.rust-lang.org/" target="_blank">Rust</a></td>
+                        <td class="desc">Fast, memory-safe systems language</td>
+                    </tr>
+                    <tr>
+                        <td><a href="https://go.dev/" target="_blank">Go</a></td>
+                        <td class="desc">Simple, efficient compiled language</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        {{template "footer" .}}
+    </div>
+</body>
+</html>
