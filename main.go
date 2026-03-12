@@ -381,18 +381,19 @@ func main() {
 		logger.Error("failed to sub static fs", "error", err)
 		os.Exit(1)
 	}
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
-	mux.HandleFunc("/", handleIndex)
-	mux.HandleFunc("/upload", handleUpload)
-	mux.HandleFunc("/file/", handleFile)
-	mux.HandleFunc("/_/health", handleHealth)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
+	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("POST /upload", handleUpload)
+	mux.HandleFunc("GET /file/{sha256}", handleFile)
+	mux.HandleFunc("GET /_/health", handleHealth)
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 150 * time.Second, // 120s analysis + buffer
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + port,
+		Handler:           securityHeaders(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Graceful shutdown
@@ -403,10 +404,10 @@ func main() {
 		sig := <-sigCh
 		logger.Info("shutdown signal received", "signal", sig.String())
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if err := server.Shutdown(ctx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			logger.Error("graceful shutdown failed", "error", err)
 		}
 
@@ -432,7 +433,8 @@ func main() {
 		"gcs_bucket", gcsBucket,
 	)
 
-	ln, err := net.Listen("tcp", server.Addr)
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", server.Addr)
 	if err != nil {
 		logger.Error("server error", "error", err)
 		os.Exit(1)
@@ -478,12 +480,28 @@ func loadConfig() error {
 	return nil
 }
 
-func handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// securityHeaders wraps a handler with standard security response headers.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// CSP: allow self, inline styles (templates), Three.js from unpkg
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' https://unpkg.com; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"font-src 'self'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
 
+func handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := uploadTemplate.Execute(w, nil); err != nil {
 		logger.Error("template execution failed",
@@ -500,10 +518,23 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// validSHA256 reports whether s is exactly 64 lowercase hex characters.
+func validSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func handleFile(w http.ResponseWriter, r *http.Request) {
-	sha := strings.TrimPrefix(r.URL.Path, "/file/")
-	if sha == "" {
-		http.Error(w, "Missing SHA256", http.StatusBadRequest)
+	sha := r.PathValue("sha256")
+	if !validSHA256(sha) {
+		http.Error(w, "Invalid SHA256", http.StatusBadRequest)
 		return
 	}
 
@@ -607,7 +638,8 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
-	requestID := strconv.FormatInt(time.Now().UnixNano(), 10)
+	h := sha256.Sum256(fmt.Appendf(nil, "%d-%p", time.Now().UnixNano(), r))
+	requestID := hex.EncodeToString(h[:])
 
 	reqLogger := logger.With(
 		"request_id", requestID,
@@ -617,17 +649,17 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	reqLogger.Info("upload request received")
 
-	if r.Method != http.MethodPost {
-		reqLogger.Warn("invalid method", "method", r.Method)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
+	// Cap total request body to 100MB to prevent disk exhaustion.
+	// ParseMultipartForm's maxMemory only limits RAM; excess spills to temp files
+	// with no size bound unless we cap the body reader itself.
+	const maxUploadSize = 100 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
 	reqLogger.Debug("parsing multipart form", "max_memory", "100MB")
-	if err := r.ParseMultipartForm(100 * 1024 * 1024); err != nil {
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		reqLogger.Error("failed to parse multipart form", "error", err)
 		http.Error(w, "Failed to parse form", http.StatusBadRequest)
 		return
@@ -1400,7 +1432,9 @@ func litmusHealthLoop() {
 			litmusReady.Store(false)
 			return false
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			logger.Debug("health check response body close failed", "error", err)
+		}
 		if resp.StatusCode == http.StatusOK {
 			if !litmusReady.Load() {
 				logger.Info("litmus server is now reachable", "url", healthURL)
@@ -1607,7 +1641,9 @@ func runLitmus(
 				"attempt", attempt,
 			)
 
-			body, err := io.ReadAll(resp.Body)
+			// Cap response read to 64MB to prevent OOM from a misbehaving litmus server.
+			const maxResponseSize = 64 * 1024 * 1024
+			body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 			if err != nil {
 				return fmt.Errorf("failed to read response: %w", err)
 			}
