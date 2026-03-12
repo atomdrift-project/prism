@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{.Title}} - litmus</title>
+    <style nonce="{{.Nonce}}">
+    {{template "fonts" .}}
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --slate: #6b7280;
+            --silver: #9ca3af;
+            --mist: #f3f4f6;
+            --white: #ffffff;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --hostile: #ef4444;
+            --suspicious: #eab308;
+            --notable: #3b82f6;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        header {
+            margin-bottom: 48px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-accent {
+            color: var(--isotope);
+        }
+        .alpha-tag {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--hostile);
+            background: rgba(239, 68, 68, 0.12);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: super;
+            letter-spacing: 0.5px;
+        }
+        .error-box {
+            border: 1px solid var(--mist);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            margin: 32px 0;
+        }
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+        .error-title {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .error-message {
+            font-size: 16px;
+            color: var(--slate);
+            margin-bottom: 24px;
+            max-width: 520px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .error-message a {
+            color: var(--isotope);
+            text-decoration: underline;
+        }
+        .error-detail {
+            font-size: 13px;
+            color: var(--silver);
+            font-family: monospace;
+            margin-bottom: 24px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-family: inherit;
+            text-decoration: none;
+        }
+        .btn-primary {
+            background: var(--carbon);
+            color: var(--white);
+        }
+        .btn-primary:hover {
+            background: var(--graphite);
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            font-size: 14px;
+            color: var(--silver);
+            display: flex;
+            justify-content: space-between;
+        }
+        footer a {
+            color: var(--slate);
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    <div class="container">
+        <header>
+            <a href="/" class="logo">{{template "wordmark" .}}</a>
+        </header>
+
+        <div class="error-box">
+            <div class="error-icon">{{.Icon}}</div>
+            <div class="error-title">{{.Title}}</div>
+            <div class="error-message">{{.Message}}</div>
+            {{if .Detail}}<div class="error-detail">{{.Detail}}</div>{{end}}
+            <a href="/" class="btn btn-primary">{{.Action}}</a>
+        </div>
+
+        {{template "footer" .}}
+    </div>
+</body>
+</html>

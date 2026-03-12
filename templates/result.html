@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{.Filename}} - litmus</title>
-    <style>
+    <style nonce="{{.Nonce}}">
     {{template "fonts" .}}
     </style>
-    <style>
+    <style nonce="{{.Nonce}}">
         :root {
             --carbon: #0a0a0a;
             --graphite: #404040;
@@ -531,6 +531,20 @@
             color: var(--silver);
             font-size: 14px;
         }
+        .limited-info-notice {
+            background: var(--isotope-dim);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 8px;
+            padding: 16px 20px;
+            font-size: 14px;
+            color: var(--graphite);
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        .limited-info-notice a {
+            color: var(--isotope);
+            text-decoration: underline;
+        }
 
         /* Strings Tab */
         .strings-table {
@@ -770,6 +784,12 @@
                 </div>
             </div>
         </section>
+
+        {{if .LimitedInfo}}
+        <div class="limited-info-notice">
+            This file type is not yet fully supported, so analysis is limited. For best results, try a binary (Mach-O, ELF, PE) or an archive. You can also analyze locally with <a href="https://codeberg.org/atomdrift/litmus">litmus</a>.
+        </div>
+        {{end}}
 
         <section class="tabs-section">
             <div class="tabs">

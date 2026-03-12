@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -192,8 +193,8 @@ type GalaxyData struct {
 // FindingForFormula is a simplified finding for formula generation.
 type FindingForFormula struct {
 	ID        string
+	TraitRefs []string
 	Severity  Severity
-	TraitRefs []string // component trait IDs for composite findings
 }
 
 // critToSeverity converts cleave's criticality string to Severity.
@@ -458,7 +459,7 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	// already present as notable+ findings in the molecule.
 	traitIDToAtomIdx := make(map[string]int, len(atoms))
 	for i, a := range atoms {
-		for _, tid := range strings.Split(a.TraitID, ", ") {
+		for tid := range strings.SplitSeq(a.TraitID, ", ") {
 			if tid != "" {
 				traitIDToAtomIdx[tid] = i
 			}
@@ -485,13 +486,7 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 				refPool[ref] = &refEntry{}
 			}
 			re := refPool[ref]
-			seen := false
-			for _, existing := range re.composites {
-				if existing == ci {
-					seen = true
-					break
-				}
-			}
+			seen := slices.Contains(re.composites, ci)
 			if !seen {
 				re.composites = append(re.composites, ci)
 			}
@@ -501,13 +496,13 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	if len(refPool) > 0 {
 		// Group refs by primary composite for arc positioning.
 		type refPos struct {
-			id   string
 			entry *refEntry
+			id    string
 		}
 		compositeRefs := make(map[int][]refPos)
 		for ref, re := range refPool {
 			primary := re.composites[0]
-			compositeRefs[primary] = append(compositeRefs[primary], refPos{ref, re})
+			compositeRefs[primary] = append(compositeRefs[primary], refPos{entry: re, id: ref})
 		}
 
 		// refAtomIdx maps ref ID → atom index (for refs already in the molecule).

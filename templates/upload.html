@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>litmus - Molecular Decomposition</title>
-    <style>
+    <style nonce="{{.Nonce}}">
     {{template "fonts" .}}
         :root {
             --carbon: #0a0a0a;
@@ -189,6 +189,7 @@
         </header>
 
         <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
             <div class="upload-zone" id="upload-zone">
                 <input type="file" name="file" id="file-input" required />
                 <label for="file-input">

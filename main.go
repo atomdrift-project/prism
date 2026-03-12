@@ -4,8 +4,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -46,6 +49,7 @@ var staticFS embed.FS
 var (
 	uploadTemplate *template.Template
 	resultTemplate *template.Template
+	errorTemplate  *template.Template
 	gcsBucket      string
 	litmusAddr     string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient   *http.Client // HTTP client for litmus server
@@ -54,6 +58,131 @@ var (
 	cache          *fido.TieredCache[string, storedResult]
 	logger         *slog.Logger
 )
+
+// csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
+// Tokens are stateless: HMAC(timestamp) verified on POST. Key rotates on restart,
+// which is fine — an in-flight form simply needs resubmission after a deploy.
+var csrfKey = func() [32]byte {
+	var k [32]byte
+	if _, err := rand.Read(k[:]); err != nil {
+		panic("csrf: failed to generate key: " + err.Error())
+	}
+	return k
+}()
+
+// csrfToken generates a signed, timestamped CSRF token.
+func csrfToken() string {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, csrfKey[:])
+	mac.Write([]byte(ts))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return ts + "." + sig
+}
+
+// csrfValid checks that the token is well-formed, correctly signed, and not older than maxAge.
+func csrfValid(token string, maxAge time.Duration) bool {
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return false
+	}
+	if time.Since(time.Unix(ts, 0)) > maxAge {
+		return false
+	}
+	mac := hmac.New(sha256.New, csrfKey[:])
+	mac.Write([]byte(parts[0]))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(parts[1]), []byte(expected))
+}
+
+// uploadLimiter implements a per-IP token bucket rate limiter for the upload endpoint.
+// Each IP gets a bucket that refills at 1 token per minute, with a burst of 5.
+type uploadLimiter struct {
+	buckets map[string]*bucket
+	mu      sync.Mutex
+}
+
+type bucket struct {
+	lastSeen time.Time
+	tokens   float64
+}
+
+const (
+	uploadBurst    = 5                // max uploads before throttling
+	uploadRate     = 1.0 / 60.0       // tokens per second (1 per minute)
+	bucketLifetime = 10 * time.Minute // evict idle entries
+)
+
+func newUploadLimiter() *uploadLimiter {
+	ul := &uploadLimiter{buckets: make(map[string]*bucket)}
+	go ul.reap()
+	return ul
+}
+
+// allow checks whether the given IP may proceed with an upload.
+func (ul *uploadLimiter) allow(ip string) bool {
+	ul.mu.Lock()
+	defer ul.mu.Unlock()
+
+	now := time.Now()
+	b, ok := ul.buckets[ip]
+	if !ok {
+		ul.buckets[ip] = &bucket{tokens: float64(uploadBurst) - 1, lastSeen: now}
+		return true
+	}
+
+	// Refill tokens based on elapsed time.
+	elapsed := now.Sub(b.lastSeen).Seconds()
+	b.tokens += elapsed * uploadRate
+	if b.tokens > float64(uploadBurst) {
+		b.tokens = float64(uploadBurst)
+	}
+	b.lastSeen = now
+
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// reap periodically removes stale entries to prevent memory growth.
+func (ul *uploadLimiter) reap() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		ul.mu.Lock()
+		now := time.Now()
+		for ip, b := range ul.buckets {
+			if now.Sub(b.lastSeen) > bucketLifetime {
+				delete(ul.buckets, ip)
+			}
+		}
+		ul.mu.Unlock()
+	}
+}
+
+var rateLimiter = newUploadLimiter()
+
+// clientIP extracts the client IP from the request, preferring X-Forwarded-For
+// (set by Cloudflare / reverse proxies) and falling back to RemoteAddr.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First entry is the original client.
+		if ip, _, ok := strings.Cut(xff, ","); ok {
+			return strings.TrimSpace(ip)
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 // FindingDisplay represents a single finding for table display.
 type FindingDisplay struct {
@@ -137,24 +266,25 @@ type FileMetricsDisplay struct {
 }
 
 type resultData struct {
-	Filename     string
+	RiskLabel    string
+	Size         string
 	SHA256       string
-	SHA256Short  string
+	Verdict      string
 	Formula      template.HTML
 	FileType     string
-	RiskLevel    string // "hostile", "suspicious", "notable", or ""
-	RiskLabel    string
-	Verdict      string // "HOSTILE", "SUSPICIOUS", "BENIGN", or "UNKNOWN"
-	Size         string
+	MoleculeJSON template.JS
+	RiskLevel    string
+	Filename     string
+	Nonce        string
+	SHA256Short  string
 	FindingCount string
 	Duration     string
-	MoleculeJSON template.JS
-	// Structured data for table display
 	FileFindings []FileFindingsDisplay
 	FileStrings  []FileStringsDisplay
 	FileSymbols  []FileSymbolsDisplay
 	FileSections []FileSectionsDisplay
 	FileMetrics  []FileMetricsDisplay
+	LimitedInfo  bool
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -369,6 +499,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	errorTemplate, tmplErr = template.New("error.html").ParseFS(templatesFS, "templates/base.html", "templates/error.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -381,7 +516,7 @@ func main() {
 		logger.Error("failed to sub static fs", "error", err)
 		os.Exit(1)
 	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
@@ -389,7 +524,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           securityHeaders(mux),
+		Handler:           requestLogger(securityHeaders(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
@@ -480,6 +615,42 @@ func loadConfig() error {
 	return nil
 }
 
+// statusRecorder wraps http.ResponseWriter to capture the status code.
+type statusRecorder struct {
+	http.ResponseWriter
+
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// requestLogger logs every HTTP request with method, path, status, and duration.
+// Health checks are logged at Debug to avoid noise.
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sr, r)
+		duration := time.Since(start)
+
+		// Health checks and static assets at debug to reduce noise.
+		level := slog.LevelInfo
+		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/_/health" {
+			level = slog.LevelDebug
+		}
+		logger.Log(r.Context(), level, "http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sr.status,
+			"duration_ms", duration.Milliseconds(),
+			"client_ip", clientIP(r),
+		)
+	})
+}
+
 // securityHeaders wraps a handler with standard security response headers.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -488,22 +659,94 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		// CSP: allow self, inline styles (templates), Three.js from unpkg
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+
+		// Generate a per-request nonce for inline <style> blocks.
+		var nonceBuf [16]byte
+		if _, err := rand.Read(nonceBuf[:]); err != nil {
+			logger.Error("failed to generate CSP nonce", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		nonce := base64.RawStdEncoding.EncodeToString(nonceBuf[:])
+
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self'; "+
-				"style-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'nonce-"+nonce+"'; "+
 				"font-src 'self'; "+
-				"img-src 'self' data:; "+
+				"img-src 'self'; "+
 				"connect-src 'self'; "+
-				"frame-ancestors 'none'")
+				"frame-ancestors 'none'; "+
+				"object-src 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'")
+
+		// HSTS: safe for self-hosters behind any TLS termination.
+		// Browsers ignore this header on plain HTTP, so no harm when running locally.
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+
+		// Stash nonce in context for templates.
+		ctx := context.WithValue(r.Context(), nonceCtxKey{}, nonce)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type nonceCtxKey struct{}
+
+func getNonce(r *http.Request) string {
+	if v, ok := r.Context().Value(nonceCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// cacheStatic adds immutable cache headers for embedded static assets.
+// These are baked into the binary at build time and only change on redeploy.
+func cacheStatic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
 		next.ServeHTTP(w, r)
 	})
 }
 
-func handleIndex(w http.ResponseWriter, _ *http.Request) {
+type errorData struct {
+	Nonce   string
+	Icon    string
+	Title   string
+	Message template.HTML
+	Detail  string
+	Action  string
+}
+
+func renderError(w http.ResponseWriter, r *http.Request, status int, data errorData) {
+	logger.Debug("rendering error page",
+		"status", status,
+		"title", data.Title,
+		"path", r.URL.Path,
+		"client_ip", clientIP(r),
+	)
+	data.Nonce = getNonce(r)
+	if data.Action == "" {
+		data.Action = "Try again"
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := uploadTemplate.Execute(w, nil); err != nil {
+	w.WriteHeader(status)
+	if err := errorTemplate.Execute(w, data); err != nil {
+		logger.Error("error template execution failed", "error", err)
+	}
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct {
+		CSRFToken string
+		Nonce     string
+	}{
+		CSRFToken: csrfToken(),
+		Nonce:     getNonce(r),
+	}
+	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "upload",
 			"error", err,
@@ -512,6 +755,7 @@ func handleIndex(w http.ResponseWriter, _ *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte("OK\n")); err != nil {
 		logger.Debug("health check write failed", "error", err)
@@ -532,14 +776,26 @@ func validSHA256(s string) bool {
 }
 
 func handleFile(w http.ResponseWriter, r *http.Request) {
+	requestStart := time.Now()
 	sha := r.PathValue("sha256")
+	ip := clientIP(r)
+
 	if !validSHA256(sha) {
-		http.Error(w, "Invalid SHA256", http.StatusBadRequest)
+		logger.Warn("invalid SHA256 in file request",
+			"input", sha,
+			"client_ip", ip,
+			"user_agent", r.UserAgent(),
+		)
+		renderError(w, r, http.StatusBadRequest, errorData{
+			Icon:    "⚠",
+			Title:   "Invalid hash",
+			Message: "That doesn't look like a valid SHA256 hash.",
+		})
 		return
 	}
 
-	reqLogger := logger.With("sha256", sha)
-	reqLogger.Debug("file request received")
+	reqLogger := logger.With("sha256", sha, "client_ip", ip)
+	reqLogger.Info("file request received")
 
 	// Use Fetch to deduplicate concurrent loads and provide a potential fallback
 	cacheHit := true
@@ -617,15 +873,29 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		reqLogger.Warn("failed to retrieve or regenerate result", "error", err)
 		if strings.Contains(err.Error(), "not found") {
-			http.Error(w, "Result not found", http.StatusNotFound)
+			renderError(w, r, http.StatusNotFound, errorData{
+				Icon:    "🔍",
+				Title:   "Result not found",
+				Message: "This analysis result doesn't exist or has expired. Upload the file again to re-analyze it.",
+				Action:  "Upload a file",
+			})
 		} else {
-			http.Error(w, "Failed to retrieve result", http.StatusInternalServerError)
+			renderError(w, r, http.StatusInternalServerError, errorData{
+				Icon:    "⚠",
+				Title:   "Something went wrong",
+				Message: "We couldn't retrieve this result. Please try again.",
+			})
 		}
 		return
 	}
 
-	reqLogger.Debug("rendering result", "filename", res.Filename, "cache_hit", cacheHit)
+	reqLogger.Info("rendering result",
+		"filename", res.Filename,
+		"cache_hit", cacheHit,
+		"duration_ms", time.Since(requestStart).Milliseconds(),
+	)
 	data := prepareResultData(res.Filename, sha, &res)
+	data.Nonce = getNonce(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := resultTemplate.Execute(w, data); err != nil {
@@ -636,16 +906,30 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+//nolint:revive,maintidx // renderError calls are more verbose than http.Error but worth it for UX
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
 	h := sha256.Sum256(fmt.Appendf(nil, "%d-%p", time.Now().UnixNano(), r))
 	requestID := hex.EncodeToString(h[:])
 
+	ip := clientIP(r)
 	reqLogger := logger.With(
 		"request_id", requestID,
 		"remote_addr", r.RemoteAddr,
+		"client_ip", ip,
 		"user_agent", r.UserAgent(),
 	)
+
+	// Rate limit per IP.
+	if !rateLimiter.allow(ip) {
+		reqLogger.Warn("upload rate limited")
+		renderError(w, r, http.StatusTooManyRequests, errorData{
+			Icon:    "⏳",
+			Title:   "Rate limit reached",
+			Message: "Too many uploads. Please wait a minute before trying again.",
+		})
+		return
+	}
 
 	reqLogger.Info("upload request received")
 
@@ -660,15 +944,45 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	reqLogger.Debug("parsing multipart form", "max_memory", "100MB")
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-		reqLogger.Error("failed to parse multipart form", "error", err)
-		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		if err.Error() == "http: request body too large" {
+			reqLogger.Warn("upload rejected: file too large", "error", err, "max_bytes", maxUploadSize)
+			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
+				Icon:  "⚖",
+				Title: "File too large",
+				Message: "The web interface accepts files up to 100 MB. For larger files, use " +
+					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+			})
+		} else {
+			reqLogger.Error("failed to parse multipart form", "error", err)
+			renderError(w, r, http.StatusBadRequest, errorData{
+				Icon:    "⚠",
+				Title:   "Upload failed",
+				Message: "Something went wrong reading your file. Please try again.",
+			})
+		}
+		return
+	}
+
+	// Validate CSRF token (30-minute window). Must come after ParseMultipartForm
+	// so that form values from multipart bodies are accessible.
+	if !csrfValid(r.FormValue("csrf_token"), 30*time.Minute) {
+		reqLogger.Warn("invalid or missing CSRF token")
+		renderError(w, r, http.StatusForbidden, errorData{
+			Icon:    "🔒",
+			Title:   "Session expired",
+			Message: "Your form session has expired. Please reload the page and try again.",
+		})
 		return
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		reqLogger.Error("failed to read uploaded file", "error", err)
-		http.Error(w, "Failed to read file", http.StatusBadRequest)
+		renderError(w, r, http.StatusBadRequest, errorData{
+			Icon:    "⚠",
+			Title:   "No file received",
+			Message: "We didn't receive a file. Please select a file and try again.",
+		})
 		return
 	}
 	defer func() {
@@ -678,10 +992,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	filename := filepath.Base(fileHeader.Filename)
-	reqLogger = reqLogger.With("filename", filename, "size", fileHeader.Size)
+	ext := filepath.Ext(filename)
+	reqLogger = reqLogger.With("filename", filename, "size", fileHeader.Size, "ext", ext)
 	reqLogger.Info("file received")
 
-	ext := filepath.Ext(filename)
 	tempPattern := "litmus-*"
 	if ext != "" {
 		tempPattern = "litmus-*" + ext
@@ -689,7 +1003,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	tempFile, err := os.CreateTemp("", tempPattern)
 	if err != nil {
 		reqLogger.Error("failed to create temp file", "error", err)
-		http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
+		renderError(w, r, http.StatusInternalServerError, errorData{
+			Icon:    "⚠",
+			Title:   "Server error",
+			Message: "Something went wrong on our end. Please try again shortly.",
+		})
 		return
 	}
 	tempPath := tempFile.Name()
@@ -716,7 +1034,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			reqLogger.Debug("failed to close temp file", "error", cerr)
 		}
 		reqLogger.Error("failed to write temp file", "error", err, "bytes_written", written)
-		http.Error(w, "Failed to write file", http.StatusInternalServerError)
+		renderError(w, r, http.StatusInternalServerError, errorData{
+			Icon:    "⚠",
+			Title:   "Server error",
+			Message: "Something went wrong on our end. Please try again shortly.",
+		})
 		return
 	}
 	if err := tempFile.Close(); err != nil {
@@ -760,7 +1082,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	if !litmusReady.Load() {
 		reqLogger.Warn("litmus server not reachable, rejecting request", "filename", filename)
-		http.Error(w, "Analysis backend is not available, please try again shortly", http.StatusServiceUnavailable)
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "🔧",
+			Title:   "Analysis engine unavailable",
+			Message: "The analysis backend is temporarily offline. Please try again in a few moments.",
+		})
 		return
 	}
 
@@ -797,7 +1123,12 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	fetchDuration := time.Since(fetchStart)
 	if err != nil {
 		reqLogger.Error("analysis fetch failed", "error", err, "fetch_duration_ms", fetchDuration.Milliseconds())
-		http.Error(w, "Analysis failed", http.StatusInternalServerError)
+		renderError(w, r, http.StatusInternalServerError, errorData{
+			Icon:  "⚠",
+			Title: "Analysis failed",
+			Message: "Something went wrong analyzing this file. Please try again, or use " +
+				`<a href="https://codeberg.org/atomdrift/litmus">litmus</a> for local analysis.`,
+		})
 		return
 	}
 
@@ -947,6 +1278,17 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Verdict = "UNKNOWN"
 		data.RiskLevel = "unknown"
 		data.RiskLabel = "Unknown"
+	}
+
+	// Flag when we have limited analysis info (unknown file type, no findings)
+	if data.FileType == "UNKNOWN" || (data.FileType == "" && totalFindings == 0) {
+		data.LimitedInfo = true
+		logger.Info("limited analysis info for file",
+			"filename", filename,
+			"sha256", sha256Hex,
+			"file_type", data.FileType,
+			"finding_count", totalFindings,
+		)
 	}
 
 	// Build structured data for table display

@@ -1,12 +1,12 @@
-module github.com/chainguard-dev/cleave/tools/prism
+module codeberg.org/atomdrift/prism
 
 go 1.25.4
 
 require (
 	cloud.google.com/go/storage v1.45.0
-	github.com/buildkite/terminal-to-html v3.2.0+incompatible
 	github.com/codeGROOVE-dev/fido v1.10.0
 	github.com/codeGROOVE-dev/fido/pkg/store/cloudrun v1.10.0
+	github.com/codeGROOVE-dev/fido/pkg/store/null v1.10.0
 	github.com/codeGROOVE-dev/retry v1.2.0
 )
 
@@ -28,7 +28,6 @@ require (
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.10.0 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/datastore v1.10.0 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.10.0 // indirect
-	github.com/codeGROOVE-dev/fido/pkg/store/null v1.10.0 // indirect
 	github.com/envoyproxy/go-control-plane v0.13.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
