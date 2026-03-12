@@ -1,6 +1,6 @@
-import * as THREE from 'three';
-import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from '/static/js/three.module.js';
+import { CSS2DRenderer, CSS2DObject } from '/static/js/CSS2DRenderer.js';
+import { OrbitControls } from '/static/js/OrbitControls.js';
 
 // Molecule data injected by Go template into a JSON script tag
 const moleculeData = JSON.parse(document.getElementById('molecule-data').textContent);
