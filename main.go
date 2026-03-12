@@ -1383,7 +1383,7 @@ func formatBytes(b int64) string {
 // updates litmusReady. It runs for the lifetime of the process so that prism
 // notices both initial availability and later recoveries.
 func litmusHealthLoop() {
-	healthURL := fmt.Sprintf("http://%s/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
+	healthURL := fmt.Sprintf("http://%s/_/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -1392,19 +1392,19 @@ func litmusHealthLoop() {
 	check := func() {
 		resp, err := client.Get(healthURL) //nolint:noctx // polling loop uses short-timeout client instead of context
 		if err != nil {
-			logger.Warn("litmus health check failed", "addr", litmusAddr, "error", err)
+			logger.Warn("litmus health check failed", "url", healthURL, "error", err)
 			litmusReady.Store(false)
 			return
 		}
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			if !litmusReady.Load() {
-				logger.Info("litmus server is now reachable", "addr", litmusAddr)
+				logger.Info("litmus server is now reachable", "url", healthURL)
 			}
 			litmusReady.Store(true)
-			logger.Debug("litmus health check OK", "addr", litmusAddr)
+			logger.Debug("litmus health check OK", "url", healthURL)
 		} else {
-			logger.Warn("litmus health check returned non-OK status", "addr", litmusAddr, "status", resp.StatusCode)
+			logger.Warn("litmus health check returned non-OK status", "url", healthURL, "status", resp.StatusCode)
 			litmusReady.Store(false)
 		}
 	}
