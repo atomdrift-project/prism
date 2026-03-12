@@ -553,8 +553,8 @@ func main() {
 		}
 	} else {
 		// Use Cloud Run auto-detection for production
-		logger.Debug("initializing fido store", "cache_id", "divine-v2")
-		store, storeErr := cloudrun.New[string, storedResult](ctx, "divine-v2")
+		logger.Debug("initializing fido store", "cache_id", "prism")
+		store, storeErr := cloudrun.New[string, storedResult](ctx, "prism")
 		if storeErr != nil {
 			logger.Error("failed to initialize fido store", "error", storeErr)
 			os.Exit(1)
