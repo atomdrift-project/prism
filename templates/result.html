@@ -545,6 +545,19 @@
             color: var(--isotope);
             text-decoration: underline;
         }
+        .feedback-prompt {
+            text-align: center;
+            font-size: 14px;
+            color: var(--silver);
+            margin-top: 48px;
+        }
+        .feedback-prompt a {
+            color: var(--slate);
+            text-decoration: underline;
+        }
+        .feedback-prompt a:hover {
+            color: var(--carbon);
+        }
 
         /* Strings Tab */
         .strings-table {
@@ -1017,6 +1030,10 @@
                 {{end}}
             </div>
         </section>
+
+        <div class="feedback-prompt">
+            Not seeing what you expected? <a href="https://codeberg.org/atomdrift/lab/issues" target="_blank">Let us know</a>
+        </div>
 
         {{template "footer" .}}
     </div>
