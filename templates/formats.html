@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Supported Formats - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <style nonce="{{.Nonce}}">
+    {{template "fonts" .}}
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --slate: #6b7280;
+            --silver: #9ca3af;
+            --mist: #f3f4f6;
+            --white: #ffffff;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --hostile: #ef4444;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--white);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        header {
+            margin-bottom: 48px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-accent {
+            color: var(--isotope);
+        }
+        .alpha-tag {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--hostile);
+            background: rgba(239, 68, 68, 0.12);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: super;
+            letter-spacing: 0.5px;
+        }
+        .page-title {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .page-desc {
+            font-size: 16px;
+            color: var(--slate);
+            margin-bottom: 36px;
+        }
+        .page-desc a {
+            color: var(--isotope);
+            text-decoration: underline;
+        }
+        .format-section {
+            margin-bottom: 36px;
+        }
+        .format-section h2 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .format-section .section-desc {
+            font-size: 14px;
+            color: var(--slate);
+            margin-bottom: 12px;
+        }
+        .format-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .format-table th {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 2px solid var(--mist);
+            color: var(--slate);
+            font-weight: 500;
+            font-size: 13px;
+        }
+        .format-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .format-table tr:last-child td {
+            border-bottom: none;
+        }
+        .format-table code {
+            font-size: 13px;
+            color: var(--graphite);
+            background: var(--mist);
+            padding: 1px 5px;
+            border-radius: 3px;
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            font-size: 14px;
+            color: var(--silver);
+            display: flex;
+            justify-content: space-between;
+        }
+        footer a {
+            color: var(--slate);
+            text-decoration: none;
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    <div class="container">
+        <header>
+            <a href="/" class="logo">{{template "wordmark" .}}</a>
+        </header>
+
+        <div class="page-title">Supported Formats</div>
+        <p class="page-desc">
+            File formats supported by <a href="https://codeberg.org/atomdrift/cleave">cleave</a>, the analysis engine behind {{if isPublic}}atomdrift lab{{else}}litmus{{end}}.
+        </p>
+
+        <div class="format-section">
+            <h2>Binary Formats</h2>
+            <p class="section-desc">Native executables analyzed via header parsing and optional disassembly (Rizin/Radare2).</p>
+            <table class="format-table">
+                <thead><tr><th>Format</th><th>Extensions</th><th>Details</th></tr></thead>
+                <tbody>
+                    <tr><td>Mach-O</td><td><code>.dylib</code> <code>.kext</code> <code>.app</code></td><td>macOS/iOS executables and libraries, including universal binaries</td></tr>
+                    <tr><td>ELF</td><td><code>.so</code> <code>.ko</code></td><td>Linux/Unix executables and shared libraries</td></tr>
+                    <tr><td>PE</td><td><code>.exe</code> <code>.dll</code></td><td>Windows executables and DLLs</td></tr>
+                    <tr><td>Java .class</td><td><code>.class</code></td><td>Java bytecode with constant pool analysis</td></tr>
+                    <tr><td>Python bytecode</td><td><code>.pyc</code></td><td>Compiled Python bytecode</td></tr>
+                    <tr><td>AppleScript</td><td><code>.scpt</code></td><td>Compiled AppleScript binary format</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="format-section">
+            <h2>AST-Based Source Code</h2>
+            <p class="section-desc">Source code analyzed with tree-sitter for language-aware AST traversal, extracting function structure, imports, and semantic intent.</p>
+            <table class="format-table">
+                <thead><tr><th>Language</th><th>Extensions</th></tr></thead>
+                <tbody>
+                    <tr><td>Python</td><td><code>.py</code></td></tr>
+                    <tr><td>JavaScript</td><td><code>.js</code> <code>.mjs</code> <code>.cjs</code> <code>.jsx</code></td></tr>
+                    <tr><td>TypeScript</td><td><code>.ts</code> <code>.tsx</code> <code>.mts</code> <code>.cts</code></td></tr>
+                    <tr><td>Go</td><td><code>.go</code></td></tr>
+                    <tr><td>Rust</td><td><code>.rs</code></td></tr>
+                    <tr><td>C / C++</td><td><code>.c</code> <code>.h</code> <code>.cpp</code> <code>.hpp</code> <code>.cc</code> <code>.cxx</code></td></tr>
+                    <tr><td>Java</td><td><code>.java</code></td></tr>
+                    <tr><td>C#</td><td><code>.cs</code></td></tr>
+                    <tr><td>Swift</td><td><code>.swift</code></td></tr>
+                    <tr><td>Objective-C</td><td><code>.m</code> <code>.mm</code></td></tr>
+                    <tr><td>Ruby</td><td><code>.rb</code></td></tr>
+                    <tr><td>PHP</td><td><code>.php</code></td></tr>
+                    <tr><td>Perl</td><td><code>.pl</code> <code>.pm</code></td></tr>
+                    <tr><td>Lua</td><td><code>.lua</code></td></tr>
+                    <tr><td>Shell</td><td><code>.sh</code> (+ shebang detection)</td></tr>
+                    <tr><td>PowerShell</td><td><code>.ps1</code> <code>.psm1</code> <code>.psd1</code></td></tr>
+                    <tr><td>Groovy</td><td><code>.groovy</code> <code>.gradle</code></td></tr>
+                    <tr><td>Scala</td><td><code>.scala</code> <code>.sc</code></td></tr>
+                    <tr><td>Zig</td><td><code>.zig</code></td></tr>
+                    <tr><td>Elixir</td><td><code>.ex</code> <code>.exs</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="format-section">
+            <h2>Archive Formats</h2>
+            <p class="section-desc">Archives are recursively unpacked and each contained file is analyzed individually.</p>
+            <table class="format-table">
+                <thead><tr><th>Format</th><th>Extensions</th></tr></thead>
+                <tbody>
+                    <tr><td>ZIP</td><td><code>.zip</code></td></tr>
+                    <tr><td>TAR</td><td><code>.tar</code> <code>.tar.gz</code> <code>.tgz</code> <code>.tar.bz2</code> <code>.tbz2</code> <code>.tar.xz</code> <code>.txz</code> <code>.tar.zst</code></td></tr>
+                    <tr><td>7-Zip</td><td><code>.7z</code></td></tr>
+                    <tr><td>RAR</td><td><code>.rar</code></td></tr>
+                    <tr><td>Java archives</td><td><code>.jar</code> <code>.war</code> <code>.ear</code> <code>.aar</code></td></tr>
+                    <tr><td>Package formats</td><td><code>.deb</code> <code>.rpm</code> <code>.apk</code> <code>.pkg</code> <code>.gem</code> <code>.crate</code> <code>.xbps</code></td></tr>
+                    <tr><td>Language packages</td><td><code>.egg</code> <code>.whl</code> <code>.phar</code> <code>.nupkg</code></td></tr>
+                    <tr><td>Browser extensions</td><td><code>.vsix</code> <code>.xpi</code> <code>.crx</code></td></tr>
+                    <tr><td>Other</td><td><code>.ipa</code> <code>.epub</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="format-section">
+            <h2>Document &amp; Data Formats</h2>
+            <p class="section-desc">Analyzed with format-specific parsers or generic string/pattern extraction.</p>
+            <table class="format-table">
+                <thead><tr><th>Format</th><th>Extensions</th><th>Details</th></tr></thead>
+                <tbody>
+                    <tr><td>RTF</td><td><code>.rtf</code></td><td>Parsed for embedded OLE objects</td></tr>
+                    <tr><td>Windows Shortcut</td><td><code>.lnk</code></td><td>Parsed for target paths and arguments</td></tr>
+                    <tr><td>PNG</td><td><code>.png</code></td><td>Steganography detection</td></tr>
+                    <tr><td>PDF</td><td><code>.pdf</code></td><td>Exploit and embedded content detection</td></tr>
+                    <tr><td>Property List</td><td><code>.plist</code></td><td>Apple plist (binary and XML)</td></tr>
+                    <tr><td>VBScript</td><td><code>.vbs</code> <code>.vbe</code> <code>.wsf</code> <code>.wsc</code></td><td>Pattern-based analysis</td></tr>
+                    <tr><td>Batch</td><td><code>.bat</code> <code>.cmd</code></td><td>Pattern-based analysis</td></tr>
+                    <tr><td>Package manifests</td><td><code>package.json</code> <code>manifest.json</code> <code>.vsixmanifest</code> <code>Cargo.toml</code> <code>pyproject.toml</code> <code>composer.json</code></td><td>Structured manifest parsers</td></tr>
+                    <tr><td>GitHub Actions</td><td><code>.yml</code> <code>.yaml</code></td><td>Workflow files under <code>.github/workflows/</code></td></tr>
+                    <tr><td>HTML</td><td><code>.html</code> <code>.htm</code></td><td>Generic analysis</td></tr>
+                    <tr><td>Markdown</td><td><code>.md</code></td><td>Generic analysis</td></tr>
+                    <tr><td>Plain text</td><td><code>.txt</code> <code>.rst</code> <code>.csv</code> <code>.log</code></td><td>Generic analysis</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        {{template "footer" .}}
+    </div>
+</body>
+</html>

@@ -47,17 +47,18 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var (
-	uploadTemplate *template.Template
-	resultTemplate *template.Template
-	errorTemplate  *template.Template
-	gcsBucket      string
-	litmusAddr     string       // Address of litmus server (e.g., "127.0.0.1:8080")
-	litmusClient   *http.Client // HTTP client for litmus server
-	litmusReady    atomic.Bool  // true once litmus health check has succeeded at least once
-	gcsClient      *storage.Client
-	cache          *fido.TieredCache[string, storedResult]
-	logger         *slog.Logger
-	publicMode     bool // true when --public flag is set; changes branding and shows data-sharing notice
+	uploadTemplate  *template.Template
+	resultTemplate  *template.Template
+	errorTemplate   *template.Template
+	formatsTemplate *template.Template
+	gcsBucket       string
+	litmusAddr      string       // Address of litmus server (e.g., "127.0.0.1:8080")
+	litmusClient    *http.Client // HTTP client for litmus server
+	litmusReady     atomic.Bool  // true once litmus health check has succeeded at least once
+	gcsClient       *storage.Client
+	cache           *fido.TieredCache[string, storedResult]
+	logger          *slog.Logger
+	publicMode      bool // true when --public flag is set; changes branding and shows data-sharing notice
 )
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
@@ -517,6 +518,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	formatsTemplate, tmplErr = template.New("formats.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/formats.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -533,6 +539,7 @@ func main() {
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
+	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /_/health", handleHealth)
 
 	server := &http.Server{
@@ -762,6 +769,17 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "upload",
+			"error", err,
+		)
+	}
+}
+
+func handleFormats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	if err := formatsTemplate.Execute(w, data); err != nil {
+		logger.Error("template execution failed",
+			"template", "formats",
 			"error", err,
 		)
 	}
