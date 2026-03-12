@@ -29,7 +29,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,7 +53,6 @@ var (
 	gcsBucket       string
 	litmusAddr      string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient    *http.Client // HTTP client for litmus server
-	litmusReady     atomic.Bool  // true once litmus health check has succeeded at least once
 	gcsClient       *storage.Client
 	cache           *fido.TieredCache[string, storedResult]
 	logger          *slog.Logger
@@ -622,9 +620,6 @@ func loadConfig() error {
 		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
 
-	// Start background health-check loop for litmus. Prism stays up even if
-	// litmus is temporarily unreachable; requests will get 503 until it's ready.
-	go litmusHealthLoop()
 
 	logger.Debug("configuration loaded",
 		"LITMUS_ADDR", litmusAddr,
@@ -1111,15 +1106,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Debug("skipping GCS upload (not configured)")
 	}
 
-	if !litmusReady.Load() {
-		reqLogger.Warn("litmus server not reachable, rejecting request", "filename", filename)
-		renderError(w, r, http.StatusServiceUnavailable, errorData{
-			Icon:    "🔧",
-			Title:   "Analysis engine unavailable",
-			Message: "The analysis backend is temporarily offline. Please try again in a few moments.",
-		})
-		return
-	}
 
 	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
 	// With --no-cache, uses null store which doesn't persist but still deduplicates
@@ -1785,52 +1771,6 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// litmusHealthLoop polls the litmus /health endpoint with exponential backoff
-// (100ms → 10s) while unhealthy, resetting to 100ms on recovery. It runs for
-// the lifetime of the process so that prism notices both initial availability
-// and later recoveries.
-func litmusHealthLoop() {
-	const (
-		minInterval = 100 * time.Millisecond
-		maxInterval = 10 * time.Second
-	)
-
-	healthURL := fmt.Sprintf("http://%s/_/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
-	client := &http.Client{Timeout: 5 * time.Second}
-	interval := minInterval
-
-	check := func() bool {
-		resp, err := client.Get(healthURL) //nolint:noctx // polling loop uses short-timeout client instead of context
-		if err != nil {
-			logger.Warn("litmus health check failed", "url", healthURL, "error", err)
-			litmusReady.Store(false)
-			return false
-		}
-		if err := resp.Body.Close(); err != nil {
-			logger.Debug("health check response body close failed", "error", err)
-		}
-		if resp.StatusCode == http.StatusOK {
-			if !litmusReady.Load() {
-				logger.Info("litmus server is now reachable", "url", healthURL)
-			}
-			litmusReady.Store(true)
-			logger.Debug("litmus health check OK", "url", healthURL)
-			return true
-		}
-		logger.Warn("litmus health check returned non-OK status", "url", healthURL, "status", resp.StatusCode)
-		litmusReady.Store(false)
-		return false
-	}
-
-	for {
-		if check() {
-			interval = minInterval
-		} else {
-			interval = min(interval*2, maxInterval)
-		}
-		time.Sleep(interval)
-	}
-}
 
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
