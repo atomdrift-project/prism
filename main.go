@@ -533,20 +533,7 @@ func main() {
 		port = "8080"
 	}
 
-	mux := http.NewServeMux()
-	staticContent, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		logger.Error("failed to sub static fs", "error", err)
-		os.Exit(1)
-	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
-	mux.HandleFunc("GET /{$}", handleIndex)
-	mux.HandleFunc("POST /upload", handleUpload)
-	mux.HandleFunc("GET /file/{sha256}", handleFile)
-	mux.HandleFunc("GET /file/{sha256}.json", handleFileJSON)
-	mux.HandleFunc("GET /formats", handleFormats)
-	mux.HandleFunc("GET /powered-by", handlePoweredBy)
-	mux.HandleFunc("GET /_/health", handleHealth)
+	mux := newMux()
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -609,6 +596,22 @@ func main() {
 
 	<-done
 	logger.Info("server stopped")
+}
+
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	staticContent, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		panic(err) // impossible: embedded FS is always valid
+	}
+	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
+	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("POST /upload", handleUpload)
+	mux.HandleFunc("GET /file/{sha256}", handleFile)
+	mux.HandleFunc("GET /formats", handleFormats)
+	mux.HandleFunc("GET /powered-by", handlePoweredBy)
+	mux.HandleFunc("GET /_/health", handleHealth)
+	return mux
 }
 
 // loadConfig loads configuration from environment variables.
@@ -825,6 +828,13 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	sha := r.PathValue("sha256")
 	ip := clientIP(r)
 
+	// GET /file/{sha256} also matches /file/<hash>.json because the wildcard
+	// captures the full path segment including any extension.
+	if strings.HasSuffix(sha, ".json") {
+		serveFileJSON(w, r, strings.TrimSuffix(sha, ".json"), ip)
+		return
+	}
+
 	if !validSHA256(sha) {
 		logger.Warn("invalid SHA256 in file request",
 			"input", sha,
@@ -953,10 +963,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 	return cacheHit, res, err
 }
 
-func handleFileJSON(w http.ResponseWriter, r *http.Request) {
-	sha := r.PathValue("sha256")
-	ip := clientIP(r)
-
+func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	if !validSHA256(sha) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
 		return

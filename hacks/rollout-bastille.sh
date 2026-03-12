@@ -43,6 +43,9 @@ doas bastille cmd "$BUILD" chown -R prism:prism /home/prism/prism
 log "Building prism binary"
 doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake build"
 
+log "Running tests"
+doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake test"
+
 # --- Transfer binary via jail filesystem ---
 
 BASTILLE_DIR="/usr/local/bastille/jails"

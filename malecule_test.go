@@ -12,6 +12,18 @@ import (
 	"testing"
 )
 
+// TestRouteSetup ensures all route patterns are valid.
+// http.ServeMux.HandleFunc panics on a bad pattern (e.g. wildcards with a suffix
+// like "{sha256}.json"), so calling newMux() here catches that before production.
+func TestRouteSetup(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("route registration panicked: %v", r)
+		}
+	}()
+	newMux()
+}
+
 func TestBuildGalaxy_DropperDetection(t *testing.T) {
 	// Simulate files from midd.zip
 	// update.html contains "https://img.spoolsv.cc/seed.php" -> references seed.php
