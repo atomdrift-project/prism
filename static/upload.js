@@ -3,6 +3,7 @@ const input = document.getElementById('file-input');
 const btn = document.getElementById('submit-btn');
 const uploadText = zone.querySelector('.upload-text');
 const uploadHint = zone.querySelector('.upload-hint');
+const uploadStatus = document.getElementById('upload-status');
 const maxSize = 100 * 1024 * 1024; // 100 MB
 
 ['dragenter', 'dragover'].forEach(e => {
@@ -25,6 +26,17 @@ zone.addEventListener('drop', e => {
 });
 
 input.addEventListener('change', updateUI);
+
+document.getElementById('upload-form').addEventListener('submit', function() {
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    setTimeout(function() {
+        uploadStatus.textContent = 'Waiting for analysis server to start up\u2026';
+    }, 3000);
+    setTimeout(function() {
+        uploadStatus.textContent = 'Analysis server is starting up \u2014 this may take up to a minute.';
+    }, 15000);
+});
 
 function updateUI() {
     if (input.files.length === 0) return;

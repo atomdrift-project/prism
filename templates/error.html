@@ -63,22 +63,48 @@
             letter-spacing: 0.5px;
         }
         .error-box {
-            border: 1px solid var(--mist);
-            border-radius: 12px;
-            padding: 40px;
+            border-radius: 16px;
+            padding: 48px 40px;
             text-align: center;
             margin: 32px 0;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.04) 0%, rgba(59, 130, 246, 0.06) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+        .error-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--hostile), var(--isotope));
         }
         .error-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-            opacity: 0.5;
+            font-size: 56px;
+            margin-bottom: 20px;
+            filter: saturate(1.2);
+        }
+        .error-beaker {
+            margin-bottom: 24px;
+        }
+        .error-beaker img {
+            width: 200px;
+            border-radius: 12px;
+            opacity: 0.9;
         }
         .error-title {
             font-family: 'Oxanium', sans-serif;
-            font-size: 22px;
+            font-size: 24px;
             font-weight: 700;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
+        }
+        .error-quip {
+            font-size: 14px;
+            color: var(--silver);
+            font-style: italic;
+            margin-bottom: 20px;
         }
         .error-message {
             font-size: 16px;
@@ -87,6 +113,7 @@
             max-width: 520px;
             margin-left: auto;
             margin-right: auto;
+            line-height: 1.6;
         }
         .error-message a {
             color: var(--isotope);
@@ -95,8 +122,26 @@
         .error-detail {
             font-size: 13px;
             color: var(--silver);
-            font-family: monospace;
+            font-family: 'SF Mono', Consolas, monospace;
             margin-bottom: 24px;
+            background: rgba(0, 0, 0, 0.03);
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 6px;
+        }
+        .alpha-banner {
+            background: var(--isotope);
+            color: var(--white);
+            text-align: center;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.2px;
+        }
+        .alpha-banner a {
+            color: var(--white);
+            text-decoration: underline;
+            font-weight: 600;
         }
         .btn {
             display: inline-block;
@@ -143,7 +188,7 @@
         </header>
 
         <div class="error-box">
-            <div class="error-icon">{{.Icon}}</div>
+            {{if .ShowBeaker}}<div class="error-beaker"><img src="/static/beaker.webp" alt="Beaker panicking" /></div>{{else}}<div class="error-icon">{{.Icon}}</div>{{end}}
             <div class="error-title">{{.Title}}</div>
             <div class="error-message">{{.Message}}</div>
             {{if .Detail}}<div class="error-detail">{{.Detail}}</div>{{end}}

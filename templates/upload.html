@@ -66,7 +66,8 @@
             font-weight: 300;
         }
         .upload-zone {
-            border: 2px dashed var(--silver);
+            border: 2px dashed rgba(59, 130, 246, 0.4);
+            background: rgba(59, 130, 246, 0.03);
             border-radius: 12px;
             padding: 48px;
             text-align: center;
@@ -122,6 +123,12 @@
         .btn-primary:disabled {
             background: var(--silver);
             cursor: not-allowed;
+        }
+        .upload-status {
+            margin-top: 12px;
+            font-size: 14px;
+            color: var(--slate);
+            min-height: 20px;
         }
         .features {
             display: grid;
@@ -202,6 +209,7 @@
                 </label>
             </div>
             <button type="submit" class="btn btn-primary" id="submit-btn" disabled>Analyze</button>
+            <div id="upload-status" class="upload-status"></div>
         </form>
 
         <div class="features">

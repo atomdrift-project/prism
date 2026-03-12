@@ -102,12 +102,12 @@
         }
         .file-name {
             display: inline-block;
-            font-size: 14px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
             font-weight: 500;
-            padding: 4px 10px;
-            border-radius: 4px;
-            background: var(--isotope-dim);
-            color: var(--isotope);
+            color: var(--carbon);
+            border-left: 3px solid var(--isotope);
+            padding-left: 10px;
             word-break: break-all;
         }
         .verdict {
@@ -601,6 +601,16 @@
             border-radius: 3px;
             margin-left: 8px;
         }
+        .filetype-tag {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            background: rgba(107, 114, 128, 0.12);
+            color: var(--slate);
+            border-radius: 3px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
 
         /* Symbols Tab */
         .symbols-section {
@@ -769,7 +779,9 @@
         <section class="hero">
             <div class="molecule-info">
                 <div class="hero-header">
-                    <div class="file-name">{{.Filename}}</div>
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <div class="file-name">{{.Filename}}</div>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                    </div>
                     <div class="verdict">
                         <span class="verdict-label">Verdict:</span>
                         <span class="verdict-value {{if eq .Verdict "HOSTILE"}}hostile{{else if eq .Verdict "SUSPICIOUS"}}suspicious{{else if eq .Verdict "NOTABLE"}}notable{{else}}baseline{{end}}">{{.Verdict}}</span>
@@ -814,7 +826,7 @@
                 <button class="tab active" data-tab="traits">Traits</button>
                 <button class="tab" data-tab="strings">Strings</button>
                 <button class="tab" data-tab="symbols">Symbols</button>
-                <button class="tab" data-tab="sections">Sections</button>
+                {{if .FileSections}}<button class="tab" data-tab="sections">Sections</button>{{end}}
                 <button class="tab" data-tab="metrics">Metrics</button>
             </div>
 
@@ -834,6 +846,7 @@
                             <div class="file-header">
                                 <span class="file-risk-dot {{.Risk}}"></span>
                                 <span class="file-name-header">{{.Basename}}</span>
+                                {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                                 {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
                             </div>
                             <div class="file-meta">
@@ -1009,30 +1022,19 @@
                         <div class="file-meta">
                             <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
                         </div>
-                        <div class="metrics-grid">
-                            <div class="metric-card">
-                                <div class="metric-label">File Size</div>
-                                <div class="metric-value">{{.FileSize}} B</div>
+                        {{range .Groups}}
+                        <div class="metrics-group">
+                            <div class="metrics-group-title">{{.Name}}</div>
+                            <div class="metrics-grid">
+                                {{range .Fields}}
+                                <div class="metric-card">
+                                    <div class="metric-label">{{.Label}}</div>
+                                    <div class="metric-value">{{.Value}}</div>
+                                </div>
+                                {{end}}
                             </div>
-                            {{if .CodeSize}}
-                            <div class="metric-card">
-                                <div class="metric-label">Code Size</div>
-                                <div class="metric-value">{{.CodeSize}} B</div>
-                            </div>
-                            {{end}}
-                            {{if .OverallEntropy}}
-                            <div class="metric-card">
-                                <div class="metric-label">Overall Entropy</div>
-                                <div class="metric-value">{{printf "%.2f" .OverallEntropy}}</div>
-                            </div>
-                            {{end}}
-                            {{if .CodeEntropy}}
-                            <div class="metric-card">
-                                <div class="metric-label">Code Entropy</div>
-                                <div class="metric-value">{{printf "%.2f" .CodeEntropy}}</div>
-                            </div>
-                            {{end}}
                         </div>
+                        {{end}}
                     </div>
                     {{end}}
                 {{else}}

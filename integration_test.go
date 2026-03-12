@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -57,7 +58,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	if !waitReady(fmt.Sprintf("http://%s/health", litmusAddr), 30*time.Second) {
+	if !waitReady(fmt.Sprintf("http://%s/_/health", litmusAddr), 30*time.Second) {
 		fmt.Fprintln(os.Stderr, "skip: litmus did not become ready (models may not be installed)")
 		litmusCmd.Process.Kill() //nolint:errcheck
 		os.Exit(0)
@@ -103,10 +104,157 @@ func TestIntegrationBenign(t *testing.T) {
 	assertClassification(t, "/bin/ls", "ls", "benign")
 }
 
+func TestIntegrationRustSource(t *testing.T) {
+	const testFile = "testdata/ort_lib.rs"
+	if _, err := os.Stat(testFile); err != nil {
+		t.Skipf("testdata/ort_lib.rs not found")
+	}
+
+	sha, htmlBody := uploadFile(t, testFile, "lib.rs")
+	page := string(htmlBody)
+
+	// Should not show the "unsupported format" banner.
+	if strings.Contains(page, "not yet supported") {
+		t.Error("result page shows 'not yet supported' banner for Rust source file")
+	}
+
+	// Formula must be present (may be baseline for clean source).
+	formula := extractDivContent(page, "formula")
+	if formula == "" {
+		t.Error("expected non-empty mal-ecule formula, got empty")
+	}
+	t.Logf("formula: %s", formula)
+
+	// Strings tab must be populated.
+	if strings.Contains(page, "No strings extracted") {
+		t.Error("result page shows 'No strings extracted' for Rust source file")
+	}
+
+	// Symbols tab must be populated.
+	if strings.Contains(page, "No symbols found") {
+		t.Error("result page shows 'No symbols found' for Rust source file")
+	}
+
+	// Metrics tab: source files have no binary metrics; verify it degrades gracefully.
+	if strings.Contains(page, "No metrics available") {
+		t.Log("metrics: none (expected for source files)")
+	}
+
+	// Fetch the JSON report and check structured data.
+	jsonResp, err := http.Get(prismBase + "/file/" + sha + ".json") //nolint:noctx
+	if err != nil {
+		t.Fatalf("GET /file/%s.json: %v", sha, err)
+	}
+	defer jsonResp.Body.Close()
+	if jsonResp.StatusCode != http.StatusOK {
+		t.Fatalf("JSON endpoint returned %d", jsonResp.StatusCode)
+	}
+
+	rawBody, err := io.ReadAll(jsonResp.Body)
+	if err != nil {
+		t.Fatalf("read JSON body: %v", err)
+	}
+	t.Logf("raw JSON:\n%s", rawBody)
+
+	type symbolEntry struct {
+		Symbol string `json:"symbol"`
+		Name   string `json:"name"`
+	}
+	var report struct {
+		Path           string `json:"path"`
+		Classification string `json:"classification"`
+		Formula        string `json:"formula"`
+		FileType       string `json:"file_type"`
+		Cleave         struct {
+			Imports []symbolEntry `json:"imports"`
+			Exports []symbolEntry `json:"exports"`
+			Files   []struct {
+				FileType string `json:"file_type"`
+				Strings  []struct {
+					Value string `json:"value"`
+				} `json:"strings"`
+				Imports []symbolEntry `json:"imports"`
+				Exports []symbolEntry `json:"exports"`
+				Metrics *struct{}     `json:"metrics"`
+			} `json:"files"`
+		} `json:"cleave"`
+	}
+	if err := json.Unmarshal(rawBody, &report); err != nil {
+		t.Fatalf("decode JSON report: %v", err)
+	}
+
+	t.Logf("path: %s", report.Path)
+	t.Logf("classification: %s", report.Classification)
+	t.Logf("formula: %s", report.Formula)
+	t.Logf("file_type: %s", report.FileType)
+	t.Logf("cleave top-level imports: %d, exports: %d", len(report.Cleave.Imports), len(report.Cleave.Exports))
+
+	if len(report.Cleave.Files) == 0 {
+		t.Fatal("JSON report contains no files")
+	}
+	f := report.Cleave.Files[0]
+
+	// Symbols may be at top-level of cleave or inside the file entry.
+	allImports := append(f.Imports, report.Cleave.Imports...)
+	allExports := append(f.Exports, report.Cleave.Exports...)
+
+	t.Logf("file_type: %s", f.FileType)
+	t.Logf("strings: %d", len(f.Strings))
+	t.Logf("imports: %d (file), %d (top-level), exports: %d (file), %d (top-level)",
+		len(f.Imports), len(report.Cleave.Imports), len(f.Exports), len(report.Cleave.Exports))
+
+	if len(f.Strings) == 0 {
+		t.Error("JSON report: no strings extracted from Rust source file")
+	}
+	if len(allImports)+len(allExports) == 0 {
+		t.Error("JSON report: no symbols (imports or exports) found in Rust source file")
+	}
+	// Metrics are binary-only; source files are expected to have none.
+	if f.Metrics != nil {
+		t.Logf("metrics present (unexpected for source file)")
+	} else {
+		t.Log("metrics: none (expected for source files)")
+	}
+}
+
 // assertClassification uploads a file to prism and asserts the result page
 // contains the expected classification and a non-empty malecule formula.
 func assertClassification(t *testing.T, filePath, filename, wantClass string) {
 	t.Helper()
+	_, body := uploadFile(t, filePath, filename)
+	page := strings.ToLower(string(body))
+
+	if !strings.Contains(page, wantClass) {
+		t.Errorf("expected classification %q in result page", wantClass)
+	}
+	t.Logf("classification: %s", wantClass)
+
+	formula := extractDivContent(string(body), "formula")
+	if formula == "" || formula == "∅" {
+		t.Errorf("expected non-empty malecule formula in div.formula, got %q", formula)
+	}
+	t.Logf("formula: %s", formula)
+}
+
+// uploadFile uploads a file to prism and returns the SHA256 from the redirect
+// and the HTML body of the result page.
+func uploadFile(t *testing.T, filePath, filename string) (sha string, body []byte) {
+	t.Helper()
+
+	// Fetch the index page to get a fresh CSRF token.
+	indexResp, err := http.Get(prismBase + "/") //nolint:noctx
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	indexBody, err := io.ReadAll(indexResp.Body)
+	indexResp.Body.Close()
+	if err != nil {
+		t.Fatalf("read index body: %v", err)
+	}
+	csrfToken := extractInputValue(string(indexBody), "csrf_token")
+	if csrfToken == "" {
+		t.Fatal("could not extract csrf_token from index page")
+	}
 
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -116,6 +264,9 @@ func assertClassification(t *testing.T, filePath, filename, wantClass string) {
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("csrf_token", csrfToken); err != nil {
+		t.Fatalf("write csrf_token field: %v", err)
+	}
 	fw, err := mw.CreateFormFile("file", filename)
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
@@ -145,6 +296,7 @@ func assertClassification(t *testing.T, filePath, filename, wantClass string) {
 	if !strings.HasPrefix(loc, "/file/") {
 		t.Fatalf("unexpected redirect location: %q", loc)
 	}
+	sha = strings.TrimPrefix(loc, "/file/")
 
 	resultResp, err := http.Get(prismBase + loc) //nolint:noctx
 	if err != nil {
@@ -155,22 +307,41 @@ func assertClassification(t *testing.T, filePath, filename, wantClass string) {
 	if resultResp.StatusCode != http.StatusOK {
 		t.Fatalf("result page returned %d", resultResp.StatusCode)
 	}
-	body, err := io.ReadAll(resultResp.Body)
+	body, err = io.ReadAll(resultResp.Body)
 	if err != nil {
 		t.Fatalf("read result body: %v", err)
 	}
-	page := strings.ToLower(string(body))
+	return sha, body
+}
 
-	if !strings.Contains(page, wantClass) {
-		t.Errorf("expected classification %q in result page", wantClass)
+// extractInputValue returns the value attribute of the first <input name="NAME"> element.
+func extractInputValue(html, name string) string {
+	needle := `name="` + name + `"`
+	idx := strings.Index(html, needle)
+	if idx == -1 {
+		return ""
 	}
-	t.Logf("classification: %s", wantClass)
-
-	formula := extractDivContent(string(body), "formula")
-	if formula == "" || formula == "∅" {
-		t.Errorf("expected non-empty malecule formula in div.formula, got %q", formula)
+	// Search backwards and forwards within the same tag for value="..."
+	tagStart := strings.LastIndex(html[:idx], "<input")
+	if tagStart == -1 {
+		return ""
 	}
-	t.Logf("formula: %s", formula)
+	tagEnd := strings.Index(html[tagStart:], ">")
+	if tagEnd == -1 {
+		return ""
+	}
+	tag := html[tagStart : tagStart+tagEnd]
+	const valAttr = `value="`
+	vi := strings.Index(tag, valAttr)
+	if vi == -1 {
+		return ""
+	}
+	vi += len(valAttr)
+	end := strings.Index(tag[vi:], `"`)
+	if end == -1 {
+		return ""
+	}
+	return tag[vi : vi+end]
 }
 
 // extractDivContent returns the text content of the first <div class="CLASS"> element.

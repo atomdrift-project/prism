@@ -216,7 +216,7 @@ func critToSeverity(crit string) Severity {
 // Single-child chains are collapsed into their parent (e.g. well-known/malware/mirai
 // becomes a single well-known atom). Only notable or higher severity is shown.
 //
-//nolint:maintidx // complex but necessary molecule layout algorithm
+//nolint:maintidx,gocognit,revive // complex but necessary molecule layout algorithm
 func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	mol := MaleculeData{Formula: formula}
 	if len(findings) == 0 {
@@ -426,6 +426,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 				atomRadius = 0.42
 			case sev >= SeverityNotable:
 				atomRadius = 0.35
+			default:
+				// atomRadius stays at 0.22
 			}
 		}
 

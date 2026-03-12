@@ -46,18 +46,18 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 var (
-	uploadTemplate  *template.Template
-	resultTemplate  *template.Template
-	errorTemplate   *template.Template
+	uploadTemplate    *template.Template
+	resultTemplate    *template.Template
+	errorTemplate     *template.Template
 	formatsTemplate   *template.Template
 	poweredByTemplate *template.Template
-	gcsBucket       string
-	litmusAddr      string       // Address of litmus server (e.g., "127.0.0.1:8080")
-	litmusClient    *http.Client // HTTP client for litmus server
-	gcsClient       *storage.Client
-	cache           *fido.TieredCache[string, storedResult]
-	logger          *slog.Logger
-	publicMode      bool // true when --public flag is set; changes branding and shows data-sharing notice
+	gcsBucket         string
+	litmusAddr        string       // Address of litmus server (e.g., "127.0.0.1:8080")
+	litmusClient      *http.Client // HTTP client for litmus server
+	gcsClient         *storage.Client
+	cache             *fido.TieredCache[string, storedResult]
+	logger            *slog.Logger
+	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
 )
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
@@ -211,6 +211,7 @@ type FileFindingsDisplay struct {
 	Risk       string
 	SHA256     string
 	Formula    string
+	FileType   string
 	Categories []CategoryGroup
 }
 
@@ -220,6 +221,7 @@ type FileStringsDisplay struct {
 	Risk     string
 	SHA256   string
 	Formula  string
+	FileType string
 	Strings  []StringDisplay
 }
 
@@ -234,6 +236,7 @@ type FileSymbolsDisplay struct {
 	Risk     string
 	SHA256   string
 	Formula  string
+	FileType string
 	Imports  []SymbolDisplay
 	Exports  []SymbolDisplay
 }
@@ -249,6 +252,7 @@ type FileSectionsDisplay struct {
 	Risk     string
 	SHA256   string
 	Formula  string
+	FileType string
 	Sections []SectionDisplay
 }
 
@@ -259,16 +263,26 @@ type SectionDisplay struct {
 	Size    int64
 }
 
+// MetricField is a single labelled metric value for display.
+type metricField struct {
+	Label string
+	Value string
+}
+
+// MetricGroup is a named collection of metric fields for display.
+type metricGroup struct {
+	Name   string
+	Fields []metricField
+}
+
 // FileMetricsDisplay represents metrics for a single file.
 type FileMetricsDisplay struct {
-	Basename       string
-	Risk           string
-	SHA256         string
-	Formula        string
-	FileSize       int64
-	CodeSize       int64
-	OverallEntropy float64
-	CodeEntropy    float64
+	Basename string
+	Risk     string
+	SHA256   string
+	Formula  string
+	FileType string
+	Groups   []metricGroup
 }
 
 type resultData struct {
@@ -296,7 +310,7 @@ type resultData struct {
 // storedResult is what we persist in fido/datastore.
 type storedResult struct {
 	Filename       string
-	JSON           string
+	RawLitmus      string // raw JSON body from the litmus /analyze response
 	Traits         string
 	Strings        string
 	Symbols        string
@@ -364,22 +378,96 @@ type sectionInfo struct {
 }
 
 type metricsInfo struct {
-	Binary *binaryMetrics `json:"binary,omitempty"`
+	Binary      *binaryMetrics     `json:"binary,omitempty"`
+	Comments    *commentMetrics    `json:"comments,omitempty"`
+	Functions   *functionMetrics   `json:"functions,omitempty"`
+	Identifiers *identifierMetrics `json:"identifiers,omitempty"`
+	Imports     *importMetrics     `json:"imports,omitempty"`
+	Strings     *stringMetrics     `json:"strings,omitempty"`
+	Text        *textMetrics       `json:"text,omitempty"`
 }
 
 type binaryMetrics struct {
-	FileSize        int64   `json:"file_size"`
-	CodeSize        int64   `json:"code_size,omitempty"`
-	OverallEntropy  float64 `json:"overall_entropy,omitempty"`
-	CodeEntropy     float64 `json:"code_entropy,omitempty"`
-	SectionCount    int     `json:"section_count,omitempty"`
-	ImportCount     int     `json:"import_count,omitempty"`
-	ExportCount     int     `json:"export_count,omitempty"`
-	StringCount     int     `json:"string_count,omitempty"`
-	FunctionCount   int     `json:"function_count,omitempty"`
-	AvgComplexity   float64 `json:"avg_complexity,omitempty"`
-	IsPIE           bool    `json:"is_pie,omitempty"`
-	CodeToDataRatio float64 `json:"code_to_data_ratio,omitempty"`
+	FileSize         int64   `json:"file_size"`
+	CodeSize         int64   `json:"code_size,omitempty"`
+	OverallEntropy   float64 `json:"overall_entropy,omitempty"`
+	CodeEntropy      float64 `json:"code_entropy,omitempty"`
+	SectionCount     int     `json:"section_count,omitempty"`
+	ImportCount      int     `json:"import_count,omitempty"`
+	ExportCount      int     `json:"export_count,omitempty"`
+	StringCount      int     `json:"string_count,omitempty"`
+	FunctionCount    int     `json:"function_count,omitempty"`
+	AvgComplexity    float64 `json:"avg_complexity,omitempty"`
+	IsPIE            bool    `json:"is_pie,omitempty"`
+	CodeToDataRatio  float64 `json:"code_to_data_ratio,omitempty"`
+	AvgFunctionSize  float64 `json:"avg_function_size,omitempty"`
+	AvgStringEntropy float64 `json:"avg_string_entropy,omitempty"`
+	AvgStringLength  float64 `json:"avg_string_length,omitempty"`
+	MaxStringLength  int     `json:"max_string_length,omitempty"`
+}
+
+type commentMetrics struct {
+	Lines               int     `json:"lines"`
+	Chars               int     `json:"chars,omitempty"`
+	Total               int     `json:"total,omitempty"`
+	ToCodeRatio         float64 `json:"to_code_ratio,omitempty"`
+	URLInComments       int     `json:"url_in_comments,omitempty"`
+	HighEntropyComments int     `json:"high_entropy_comments,omitempty"`
+}
+
+type functionMetrics struct {
+	Total                int     `json:"total"`
+	AvgLengthLines       float64 `json:"avg_length_lines,omitempty"`
+	MaxLengthLines       int     `json:"max_length_lines,omitempty"`
+	MinLengthLines       int     `json:"min_length_lines,omitempty"`
+	DensityPer100Lines   float64 `json:"density_per_100_lines,omitempty"`
+	CodeInFunctionsRatio float64 `json:"code_in_functions_ratio,omitempty"`
+	AvgNameLength        float64 `json:"avg_name_length,omitempty"`
+	HighEntropyNames     int     `json:"high_entropy_names,omitempty"`
+	NoParamsCount        int     `json:"no_params_count,omitempty"`
+}
+
+type identifierMetrics struct {
+	Total                 int     `json:"total"`
+	UniqueCount           int     `json:"unique_count,omitempty"`
+	AvgLength             float64 `json:"avg_length,omitempty"`
+	AvgEntropy            float64 `json:"avg_entropy,omitempty"`
+	HighEntropyCount      int     `json:"high_entropy_count,omitempty"`
+	HighEntropyRatio      float64 `json:"high_entropy_ratio,omitempty"`
+	AllUppercaseRatio     float64 `json:"all_uppercase_ratio,omitempty"`
+	AllLowercaseRatio     float64 `json:"all_lowercase_ratio,omitempty"`
+	SingleCharCount       int     `json:"single_char_count,omitempty"`
+	UnderscorePrefixCount int     `json:"underscore_prefix_count,omitempty"`
+}
+
+type importMetrics struct {
+	Total           int     `json:"total"`
+	UniqueModules   int     `json:"unique_modules,omitempty"`
+	ThirdPartyCount int     `json:"third_party_count,omitempty"`
+	ThirdPartyRatio float64 `json:"third_party_ratio,omitempty"`
+}
+
+type stringMetrics struct {
+	Total                  int     `json:"total"`
+	TotalBytes             int     `json:"total_bytes,omitempty"`
+	AvgLength              float64 `json:"avg_length,omitempty"`
+	MaxLength              int     `json:"max_length,omitempty"`
+	AvgEntropy             float64 `json:"avg_entropy,omitempty"`
+	URLCount               int     `json:"url_count,omitempty"`
+	ShellCommandStrings    int     `json:"shell_command_strings,omitempty"`
+	EmbeddedCodeCandidates int     `json:"embedded_code_candidates,omitempty"`
+}
+
+type textMetrics struct {
+	TotalLines             int     `json:"total_lines"`
+	AvgLineLength          float64 `json:"avg_line_length,omitempty"`
+	MaxLineLength          int     `json:"max_line_length,omitempty"`
+	CharEntropy            float64 `json:"char_entropy,omitempty"`
+	EmptyLineRatio         float64 `json:"empty_line_ratio,omitempty"`
+	TabCount               int     `json:"tab_count,omitempty"`
+	SuspiciousStringRatio  float64 `json:"suspicious_string_ratio,omitempty"`
+	SuspiciousCommentRatio float64 `json:"suspicious_comment_ratio,omitempty"`
+	SuspiciousIdentRatio   float64 `json:"suspicious_identifier_ratio,omitempty"`
 }
 
 type findingCounts struct {
@@ -631,7 +719,6 @@ func loadConfig() error {
 		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
 
-
 	logger.Debug("configuration loaded",
 		"LITMUS_ADDR", litmusAddr,
 		"GCS_BUCKET", gcsBucket,
@@ -641,16 +728,23 @@ func loadConfig() error {
 	return nil
 }
 
-// statusRecorder wraps http.ResponseWriter to capture the status code.
+// statusRecorder wraps http.ResponseWriter to capture the status code and bytes written.
 type statusRecorder struct {
 	http.ResponseWriter
 
 	status int
+	bytes  int
 }
 
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
 	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Write(b []byte) (int, error) {
+	n, err := sr.ResponseWriter.Write(b)
+	sr.bytes += n
+	return n, err
 }
 
 // requestLogger logs every HTTP request with method, path, status, and duration.
@@ -669,10 +763,16 @@ func requestLogger(next http.Handler) http.Handler {
 		}
 		logger.Log(r.Context(), level, "http request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", r.URL.RequestURI(),
 			"status", sr.status,
 			"duration_ms", duration.Milliseconds(),
+			"bytes_in", r.ContentLength,
+			"bytes_out", sr.bytes,
 			"client_ip", clientIP(r),
+			"host", r.Host,
+			"proto", r.Proto,
+			"referer", r.Referer(),
+			"user_agent", r.UserAgent(),
 		)
 	})
 }
@@ -737,12 +837,13 @@ func cacheStatic(next http.Handler) http.Handler {
 }
 
 type errorData struct {
-	Nonce   string
-	Icon    string
-	Title   string
-	Message template.HTML
-	Detail  string
-	Action  string
+	Nonce      string
+	Icon       string
+	Title      string
+	Message    template.HTML
+	Detail     string
+	Action     string
+	ShowBeaker bool
 }
 
 func renderError(w http.ResponseWriter, r *http.Request, status int, data errorData) {
@@ -755,6 +856,9 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 	data.Nonce = getNonce(r)
 	if data.Action == "" {
 		data.Action = "Try again"
+	}
+	if status >= 500 {
+		data.ShowBeaker = true
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
@@ -830,8 +934,8 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 	// GET /file/{sha256} also matches /file/<hash>.json because the wildcard
 	// captures the full path segment including any extension.
-	if strings.HasSuffix(sha, ".json") {
-		serveFileJSON(w, r, strings.TrimSuffix(sha, ".json"), ip)
+	if bare, ok := strings.CutSuffix(sha, ".json"); ok {
+		serveFileJSON(w, r, bare, ip)
 		return
 	}
 
@@ -953,12 +1057,18 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		}
 
 		reqLogger.Debug("starting fallback analysis")
-		jsonl, classification, formula, fileType, err := runLitmus(lctx, tempPath, filename, reqLogger)
+		lr, err := runLitmus(lctx, tempPath, filename, reqLogger)
 		if err != nil {
 			return storedResult{}, fmt.Errorf("litmus failed: %w", err)
 		}
 
-		return storedResult{Filename: filename, JSON: jsonl, Classification: classification, Formula: formula, FileType: fileType}, nil
+		return storedResult{
+			Filename:       filename,
+			RawLitmus:      lr.RawLitmus,
+			Classification: lr.Classification,
+			Formula:        lr.Formula,
+			FileType:       lr.FileType,
+		}, nil
 	})
 	return cacheHit, res, err
 }
@@ -981,29 +1091,26 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		return
 	}
 
-	report := parseJSONL(res.JSON)
-	// Replace server-side temp path with the real filename for the top-level file.
-	for i := range report.Files {
-		if report.Files[i].Depth == 0 && !strings.Contains(report.Files[i].Path, "!!") {
-			report.Files[i].Path = res.Filename
-		}
+	if res.RawLitmus == "" {
+		http.Error(w, "raw report not available for this result", http.StatusNotFound)
+		return
 	}
 
-	out := struct {
-		Filename       string        `json:"filename"`
-		SHA256         string        `json:"sha256"`
-		Classification string        `json:"classification"`
-		Formula        string        `json:"formula,omitempty"`
-		Report         *cleaveReport `json:"report"`
-	}{
-		Filename:       res.Filename,
-		SHA256:         sha,
-		Classification: res.Classification,
-		Formula:        res.Formula,
-		Report:         report,
+	// Pass the raw litmus response through with minimal intervention: only
+	// normalise the server-side temp path to the original uploaded filename.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(res.RawLitmus), &raw); err != nil {
+		http.Error(w, "failed to parse stored report", http.StatusInternalServerError)
+		return
 	}
+	filenameJSON, err := json.Marshal(res.Filename)
+	if err != nil {
+		http.Error(w, "failed to encode filename", http.StatusInternalServerError)
+		return
+	}
+	raw["path"] = filenameJSON
 
-	b, err := json.MarshalIndent(out, "", "  ")
+	b, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		http.Error(w, "failed to encode result", http.StatusInternalServerError)
 		return
@@ -1189,7 +1296,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Debug("skipping GCS upload (not configured)")
 	}
 
-
 	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
 	// With --no-cache, uses null store which doesn't persist but still deduplicates
 	reqLogger.Info("starting/joining analysis fetch", "sha256", sha256Hex, "filename", filename)
@@ -1201,7 +1307,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 		analysisStart := time.Now()
 		//nolint:contextcheck // analysis uses its own timeout independent of request context
-		jsonl, classification, formula, fileType, runErr := runLitmus(lctx, tempPath, filename, reqLogger)
+		lr, runErr := runLitmus(lctx, tempPath, filename, reqLogger)
 		analysisDuration := time.Since(analysisStart)
 
 		if runErr != nil {
@@ -1214,10 +1320,16 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 		reqLogger.Info("litmus analysis completed",
 			"duration_ms", analysisDuration.Milliseconds(),
-			"classification", classification,
+			"classification", lr.Classification,
 		)
 
-		return storedResult{Filename: filename, JSON: jsonl, Classification: classification, Formula: formula, FileType: fileType}, nil
+		return storedResult{
+			Filename:       filename,
+			RawLitmus:      lr.RawLitmus,
+			Classification: lr.Classification,
+			Formula:        lr.Formula,
+			FileType:       lr.FileType,
+		}, nil
 	})
 
 	fetchDuration := time.Since(fetchStart)
@@ -1236,44 +1348,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"total_duration_ms", time.Since(requestStart).Milliseconds(),
 		"fetch_duration_ms", fetchDuration.Milliseconds(),
 		"cached_filename", res.Filename,
-		"json_bytes", len(res.JSON),
+		"raw_bytes", len(res.RawLitmus),
 	)
 
 	http.Redirect(w, r, "/file/"+sha256Hex, http.StatusSeeOther)
-}
-
-// parseJSONL parses cleave's JSONL output into a cleaveReport.
-func parseJSONL(rawJSON string) *cleaveReport {
-	report := &cleaveReport{}
-
-	for line := range strings.SplitSeq(rawJSON, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var entry cleaveFile
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			logger.Debug("failed to parse JSONL line", "error", err, "line", line[:min(len(line), 100)])
-			continue
-		}
-
-		switch entry.Type {
-		case "file":
-			report.Files = append(report.Files, entry)
-		case "summary":
-			report.Summary = &cleaveSummary{
-				FilesAnalyzed:      entry.FilesAnalyzed,
-				Hostile:            entry.Hostile,
-				Suspicious:         entry.Suspicious,
-				Notable:            entry.Notable,
-				AnalysisDurationMs: entry.AnalysisDurationMs,
-			}
-		default:
-		}
-	}
-
-	return report
 }
 
 // prepareResultData converts raw cleave output to template data.
@@ -1297,8 +1375,20 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.SHA256Short = sha256Hex[:12] + "..."
 	}
 
-	// Parse JSONL to extract metadata and findings
-	report := parseJSONL(res.JSON)
+	// Parse raw litmus response to extract cleave analysis data.
+	var litmusResp litmusAPIResponse
+	if err := json.Unmarshal([]byte(res.RawLitmus), &litmusResp); err != nil {
+		logger.Debug("failed to parse raw litmus response", "sha256", sha256Hex, "error", err)
+		data.Formula = template.HTML("?")
+		return data
+	}
+	var cleaveResp cleaveAPIResponse
+	if len(litmusResp.Cleave) > 0 {
+		if err := json.Unmarshal(litmusResp.Cleave, &cleaveResp); err != nil {
+			logger.Debug("failed to parse cleave data", "sha256", sha256Hex, "error", err)
+		}
+	}
+	report := parseAPIResponse(&cleaveResp)
 
 	// Normalize paths: replace the temp file path with the real uploaded filename
 	// for any top-level file (depth=0, no archive separator). Cleave reports the
@@ -1310,11 +1400,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	if len(report.Files) == 0 && report.Summary == nil {
-		preview := res.JSON
-		if len(preview) > 200 {
-			preview = preview[:200]
-		}
-		logger.Debug("failed to parse cleave JSONL", "json_preview", preview)
+		logger.Debug("empty cleave report", "sha256", sha256Hex)
 		data.Formula = template.HTML("?")
 		return data
 	}
@@ -1404,18 +1490,18 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	for i := range report.Files {
 		file := &report.Files[i]
 		if file.Depth == 0 {
-			formula = formatFormula(file.FileType, file.Formula)
+			formula = file.Formula
 			break
 		}
 	}
 	// Fallback to first file if no depth=0 found.
 	if formula == "" && len(report.Files) > 0 {
-		formula = formatFormula(report.Files[0].FileType, report.Files[0].Formula)
+		formula = report.Files[0].Formula
 	}
 	// Fallback to the top-level formula returned directly by litmus, which is
 	// computed before finalize() and may not be present in per-file JSON.
 	if formula == "" && res.Formula != "" {
-		formula = formatFormula(res.FileType, res.Formula)
+		formula = res.Formula
 	}
 	if formula == "" {
 		formula = "∅"
@@ -1670,7 +1756,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				Basename:   basename,
 				Risk:       file.Risk,
 				SHA256:     file.SHA256,
-				Formula:    formatFormula(file.FileType, file.Formula),
+				Formula:    file.Formula,
+				FileType:   strings.ToUpper(file.FileType),
 				Categories: categories,
 			})
 		}
@@ -1702,7 +1789,8 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 			Basename: basename,
 			Risk:     file.Risk,
 			SHA256:   file.SHA256,
-			Formula:  formatFormula(file.FileType, file.Formula),
+			Formula:  file.Formula,
+			FileType: strings.ToUpper(file.FileType),
 			Strings:  strs,
 		})
 	}
@@ -1749,7 +1837,8 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 			Basename: basename,
 			Risk:     file.Risk,
 			SHA256:   file.SHA256,
-			Formula:  formatFormula(file.FileType, file.Formula),
+			Formula:  file.Formula,
+			FileType: strings.ToUpper(file.FileType),
 			Imports:  imports,
 			Exports:  exports,
 		})
@@ -1784,7 +1873,8 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 			Basename: basename,
 			Risk:     file.Risk,
 			SHA256:   file.SHA256,
-			Formula:  formatFormula(file.FileType, file.Formula),
+			Formula:  file.Formula,
+			FileType: strings.ToUpper(file.FileType),
 			Sections: sections,
 		})
 	}
@@ -1792,28 +1882,180 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 	return result
 }
 
+// convertMetrics maps a cleaveAPIMetrics to the internal metricsInfo type.
+func convertMetrics(m *cleaveAPIMetrics) *metricsInfo {
+	if m == nil {
+		return nil
+	}
+	info := &metricsInfo{
+		Comments:    m.Comments,
+		Functions:   m.Functions,
+		Identifiers: m.Identifiers,
+		Imports:     m.Imports,
+		Strings:     m.Strings,
+		Text:        m.Text,
+	}
+	if m.Binary != nil {
+		info.Binary = &binaryMetrics{
+			FileSize:         m.Binary.FileSize,
+			CodeSize:         m.Binary.CodeSize,
+			OverallEntropy:   m.Binary.OverallEntropy,
+			CodeEntropy:      m.Binary.CodeEntropy,
+			SectionCount:     m.Binary.SectionCount,
+			ImportCount:      m.Binary.ImportCount,
+			ExportCount:      m.Binary.ExportCount,
+			StringCount:      m.Binary.StringCount,
+			AvgFunctionSize:  m.Binary.AvgFunctionSize,
+			AvgStringEntropy: m.Binary.AvgStringEntropy,
+			AvgStringLength:  m.Binary.AvgStringLength,
+			MaxStringLength:  m.Binary.MaxStringLength,
+		}
+	}
+	return info
+}
+
 // buildStructuredMetrics extracts metrics data for table display.
+//
+//nolint:gocognit // inherently branchy: many independent optional blocks
 func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 	var result []FileMetricsDisplay
 
 	for i := range files {
 		file := &files[i]
-		if file.Metrics == nil || file.Metrics.Binary == nil {
+		if file.Metrics == nil {
+			continue
+		}
+		met := file.Metrics
+		var groups []metricGroup
+
+		if b := met.Binary; b != nil {
+			var fields []metricField
+			fields = append(fields, metricField{"File Size", strconv.FormatInt(b.FileSize, 10) + " B"})
+			if b.ImportCount > 0 {
+				fields = append(fields, metricField{"Imports", strconv.Itoa(b.ImportCount)})
+			}
+			if b.ExportCount > 0 {
+				fields = append(fields, metricField{"Exports", strconv.Itoa(b.ExportCount)})
+			}
+			if b.StringCount > 0 {
+				fields = append(fields, metricField{"Strings", strconv.Itoa(b.StringCount)})
+			}
+			if b.OverallEntropy > 0 {
+				fields = append(fields, metricField{"Entropy", fmt.Sprintf("%.2f", b.OverallEntropy)})
+			}
+			if b.AvgFunctionSize > 0 {
+				fields = append(fields, metricField{"Avg Function Size", fmt.Sprintf("%.1f B", b.AvgFunctionSize)})
+			}
+			if b.SectionCount > 0 {
+				fields = append(fields, metricField{"Sections", strconv.Itoa(b.SectionCount)})
+			}
+			if b.CodeSize > 0 {
+				fields = append(fields, metricField{"Code Size", strconv.FormatInt(b.CodeSize, 10) + " B"})
+			}
+			if b.CodeEntropy > 0 {
+				fields = append(fields, metricField{"Code Entropy", fmt.Sprintf("%.2f", b.CodeEntropy)})
+			}
+			if len(fields) > 0 {
+				groups = append(groups, metricGroup{"Binary", fields})
+			}
+		}
+
+		if t := met.Text; t != nil {
+			fields := []metricField{
+				{"Lines", strconv.Itoa(t.TotalLines)},
+				{"Avg Line Length", fmt.Sprintf("%.1f", t.AvgLineLength)},
+				{"Max Line Length", strconv.Itoa(t.MaxLineLength)},
+				{"Char Entropy", fmt.Sprintf("%.2f", t.CharEntropy)},
+				{"Empty Line Ratio", fmt.Sprintf("%.2f", t.EmptyLineRatio)},
+			}
+			if t.SuspiciousStringRatio > 0 {
+				fields = append(fields, metricField{"Suspicious Strings", fmt.Sprintf("%.0f%%", t.SuspiciousStringRatio*100)})
+			}
+			if t.SuspiciousCommentRatio > 0 {
+				fields = append(fields, metricField{"Suspicious Comments", fmt.Sprintf("%.0f%%", t.SuspiciousCommentRatio*100)})
+			}
+			groups = append(groups, metricGroup{"Text", fields})
+		}
+
+		if f := met.Functions; f != nil {
+			fields := []metricField{
+				{"Total", strconv.Itoa(f.Total)},
+				{"Avg Length", fmt.Sprintf("%.1f lines", f.AvgLengthLines)},
+				{"Max Length", fmt.Sprintf("%d lines", f.MaxLengthLines)},
+				{"Density / 100 lines", fmt.Sprintf("%.2f", f.DensityPer100Lines)},
+				{"Code in Functions", fmt.Sprintf("%.0f%%", f.CodeInFunctionsRatio*100)},
+			}
+			if f.HighEntropyNames > 0 {
+				fields = append(fields, metricField{"High-entropy Names", strconv.Itoa(f.HighEntropyNames)})
+			}
+			groups = append(groups, metricGroup{"Functions", fields})
+		}
+
+		if c := met.Comments; c != nil {
+			fields := []metricField{
+				{"Lines", strconv.Itoa(c.Lines)},
+				{"To Code Ratio", fmt.Sprintf("%.2f", c.ToCodeRatio)},
+			}
+			if c.URLInComments > 0 {
+				fields = append(fields, metricField{"URLs", strconv.Itoa(c.URLInComments)})
+			}
+			if c.HighEntropyComments > 0 {
+				fields = append(fields, metricField{"High-entropy", strconv.Itoa(c.HighEntropyComments)})
+			}
+			groups = append(groups, metricGroup{"Comments", fields})
+		}
+
+		if imp := met.Imports; imp != nil {
+			fields := []metricField{
+				{"Total", strconv.Itoa(imp.Total)},
+				{"Unique Modules", strconv.Itoa(imp.UniqueModules)},
+				{"Third-party", fmt.Sprintf("%d (%.0f%%)", imp.ThirdPartyCount, imp.ThirdPartyRatio*100)},
+			}
+			groups = append(groups, metricGroup{"Imports", fields})
+		}
+
+		if s := met.Strings; s != nil {
+			fields := []metricField{
+				{"Total", strconv.Itoa(s.Total)},
+				{"Avg Length", fmt.Sprintf("%.1f", s.AvgLength)},
+				{"Avg Entropy", fmt.Sprintf("%.2f", s.AvgEntropy)},
+			}
+			if s.URLCount > 0 {
+				fields = append(fields, metricField{"URLs", strconv.Itoa(s.URLCount)})
+			}
+			if s.ShellCommandStrings > 0 {
+				fields = append(fields, metricField{"Shell Commands", strconv.Itoa(s.ShellCommandStrings)})
+			}
+			if s.EmbeddedCodeCandidates > 0 {
+				fields = append(fields, metricField{"Embedded Code", strconv.Itoa(s.EmbeddedCodeCandidates)})
+			}
+			groups = append(groups, metricGroup{"Strings", fields})
+		}
+
+		if id := met.Identifiers; id != nil {
+			fields := []metricField{
+				{"Total", strconv.Itoa(id.Total)},
+				{"Unique", strconv.Itoa(id.UniqueCount)},
+				{"Avg Length", fmt.Sprintf("%.1f", id.AvgLength)},
+				{"Avg Entropy", fmt.Sprintf("%.2f", id.AvgEntropy)},
+			}
+			if id.HighEntropyCount > 0 {
+				fields = append(fields, metricField{"High-entropy", fmt.Sprintf("%d (%.0f%%)", id.HighEntropyCount, id.HighEntropyRatio*100)})
+			}
+			groups = append(groups, metricGroup{"Identifiers", fields})
+		}
+
+		if len(groups) == 0 {
 			continue
 		}
 
-		basename := extractBasename(file.Path)
-		m := file.Metrics.Binary
-
 		result = append(result, FileMetricsDisplay{
-			Basename:       basename,
-			Risk:           file.Risk,
-			SHA256:         file.SHA256,
-			Formula:        formatFormula(file.FileType, file.Formula),
-			FileSize:       m.FileSize,
-			CodeSize:       m.CodeSize,
-			OverallEntropy: m.OverallEntropy,
-			CodeEntropy:    m.CodeEntropy,
+			Basename: extractBasename(file.Path),
+			Risk:     file.Risk,
+			SHA256:   file.SHA256,
+			Formula:  file.Formula,
+			FileType: strings.ToUpper(file.FileType),
+			Groups:   groups,
 		})
 	}
 
@@ -1832,14 +2074,6 @@ func extractBasename(path string) string {
 	return path
 }
 
-// formatFormula returns "FILETYPE:formula" format, e.g. "GO:H₂O".
-func formatFormula(fileType, formula string) string {
-	if formula == "" {
-		return ""
-	}
-	return strings.ToUpper(fileType) + ":" + formula
-}
-
 // formatBytes formats bytes into human-readable format.
 func formatBytes(b int64) string {
 	const unit = 1024
@@ -1853,7 +2087,6 @@ func formatBytes(b int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
-
 
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
@@ -1919,18 +2152,28 @@ type cleaveAPISection struct {
 }
 
 type cleaveAPIMetrics struct {
-	Binary *cleaveAPIBinaryMetrics `json:"binary,omitempty"`
+	Binary      *cleaveAPIBinaryMetrics `json:"binary,omitempty"`
+	Comments    *commentMetrics         `json:"comments,omitempty"`
+	Functions   *functionMetrics        `json:"functions,omitempty"`
+	Identifiers *identifierMetrics      `json:"identifiers,omitempty"`
+	Imports     *importMetrics          `json:"imports,omitempty"`
+	Strings     *stringMetrics          `json:"strings,omitempty"`
+	Text        *textMetrics            `json:"text,omitempty"`
 }
 
 type cleaveAPIBinaryMetrics struct {
-	FileSize       int64   `json:"file_size,omitempty"`
-	CodeSize       int64   `json:"code_size,omitempty"`
-	OverallEntropy float64 `json:"overall_entropy,omitempty"`
-	CodeEntropy    float64 `json:"code_entropy,omitempty"`
-	SectionCount   int     `json:"section_count,omitempty"`
-	ImportCount    int     `json:"import_count,omitempty"`
-	ExportCount    int     `json:"export_count,omitempty"`
-	StringCount    int     `json:"string_count,omitempty"`
+	FileSize         int64   `json:"file_size,omitempty"`
+	CodeSize         int64   `json:"code_size,omitempty"`
+	OverallEntropy   float64 `json:"overall_entropy,omitempty"`
+	CodeEntropy      float64 `json:"code_entropy,omitempty"`
+	SectionCount     int     `json:"section_count,omitempty"`
+	ImportCount      int     `json:"import_count,omitempty"`
+	ExportCount      int     `json:"export_count,omitempty"`
+	StringCount      int     `json:"string_count,omitempty"`
+	AvgFunctionSize  float64 `json:"avg_function_size,omitempty"`
+	AvgStringEntropy float64 `json:"avg_string_entropy,omitempty"`
+	AvgStringLength  float64 `json:"avg_string_length,omitempty"`
+	MaxStringLength  int     `json:"max_string_length,omitempty"`
 }
 
 type cleaveAPISummary struct {
@@ -1940,20 +2183,25 @@ type cleaveAPISummary struct {
 	DurationMs    int64          `json:"duration_ms,omitempty"`
 }
 
+// litmusResult holds the output of a runLitmus call.
+type litmusResult struct {
+	RawLitmus      string // raw JSON body from litmus /analyze, served as-is from the .json endpoint
+	Classification string
+	Formula        string
+	FileType       string
+}
+
 // runLitmus sends a file to the litmus server for analysis.
-// Returns the JSONL-formatted cleave data, litmus classification, formula, and file type.
-//
-//nolint:revive // function-result-limit: multiple return values required to avoid struct allocation
 func runLitmus(
 	ctx context.Context,
 	filePath, originalFilename string,
 	reqLogger *slog.Logger,
-) (jsonl, classification, formula, fileType string, err error) {
+) (litmusResult, error) {
 	startTime := time.Now()
 
 	fileInfo, err := os.Stat(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to stat file: %w", err)
+		return litmusResult{}, fmt.Errorf("failed to stat file: %w", err)
 	}
 
 	reqLogger.Info("sending file to litmus server",
@@ -1964,7 +2212,7 @@ func runLitmus(
 
 	file, err := os.Open(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to open file: %w", err)
+		return litmusResult{}, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -1977,16 +2225,16 @@ func runLitmus(
 
 	part, err := writer.CreateFormFile("file", originalFilename)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to create form file: %w", err)
+		return litmusResult{}, fmt.Errorf("failed to create form file: %w", err)
 	}
 
 	written, err := io.Copy(part, file)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("failed to copy file to form: %w", err)
+		return litmusResult{}, fmt.Errorf("failed to copy file to form: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return "", "", "", "", fmt.Errorf("failed to close multipart writer: %w", err)
+		return litmusResult{}, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
 	bodyBytes := buf.Bytes()
@@ -1999,8 +2247,14 @@ func runLitmus(
 
 	analyzeURL := fmt.Sprintf("http://%s/analyze", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
 
+	// retryCtx bounds how long we will keep retrying when litmus is unreachable.
+	// Individual HTTP requests still use ctx so an in-flight analysis is not cut short.
+	retryCtx, retryCancel := context.WithTimeout(ctx, time.Minute)
+	defer retryCancel()
+
 	var litmusResp litmusAPIResponse
 	var attempt int
+	var rawBody []byte
 	if retryErr := retry.Do(
 		func() error {
 			attempt++
@@ -2066,25 +2320,16 @@ func runLitmus(
 			if err := json.Unmarshal(body, &litmusResp); err != nil {
 				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus response: %w", err))
 			}
+			rawBody = body
 			return nil
 		},
-		retry.Context(ctx),
-		retry.Attempts(5),
-		retry.MaxDelay(2*time.Minute),
+		retry.Context(retryCtx),
+		retry.Attempts(20),
+		retry.Delay(200*time.Millisecond),
+		retry.MaxDelay(10*time.Second),
 		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
 	); retryErr != nil {
-		return "", "", "", "", fmt.Errorf("failed to send request to litmus server: %w", retryErr)
-	}
-
-	// Extract nested cleave report and convert to JSONL for display.
-	var jsonlOut string
-	if len(litmusResp.Cleave) > 0 {
-		var cleaveResp cleaveAPIResponse
-		if err := json.Unmarshal(litmusResp.Cleave, &cleaveResp); err == nil {
-			jsonlOut = convertToJSONL(&cleaveResp)
-		} else {
-			reqLogger.Warn("failed to parse nested cleave data", "error", err)
-		}
+		return litmusResult{}, fmt.Errorf("failed to send request to litmus server: %w", retryErr)
 	}
 
 	reqLogger.Info("litmus analysis complete",
@@ -2093,23 +2338,29 @@ func runLitmus(
 		"probability", litmusResp.Probability,
 		"formula", litmusResp.Formula,
 		"file_type", litmusResp.FileType,
-		"json_bytes", len(jsonlOut),
+		"raw_bytes", len(rawBody),
 	)
 
-	return jsonlOut, litmusResp.Classification, litmusResp.Formula, litmusResp.FileType, nil
+	return litmusResult{
+		RawLitmus:      string(rawBody),
+		Classification: litmusResp.Classification,
+		Formula:        litmusResp.Formula,
+		FileType:       litmusResp.FileType,
+	}, nil
 }
 
-// convertToJSONL converts a cleave API response to JSONL format for parseJSONL compatibility.
+// parseAPIResponse converts a cleaveAPIResponse into a cleaveReport for HTML rendering.
+// It applies the same fallback logic as the old JSONL pipeline: depth-0 files inherit
+// top-level imports, exports, strings, sections, and metrics when the per-file fields
+// are absent.
 //
-//nolint:maintidx // complex but necessary JSONL conversion function
-func convertToJSONL(resp *cleaveAPIResponse) string {
-	var lines []string
+//nolint:gocognit // inherently branchy: many independent optional blocks
+func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
+	report := &cleaveReport{}
 
-	// If files array is empty, create a single file entry from top-level data
+	// If the files array is empty, synthesize a single entry from the top-level data.
 	if len(resp.Files) == 0 && resp.Target.Path != "" {
 		entry := cleaveFile{
-			Type:     "file",
-			ID:       0,
 			Path:     resp.Target.Path,
 			Depth:    0,
 			FileType: resp.Target.FileType,
@@ -2117,9 +2368,9 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 			Size:     resp.Target.Size,
 			Findings: resp.Findings,
 			Strings:  resp.Strings,
+			Imports:  resp.Imports,
+			Exports:  resp.Exports,
 		}
-
-		// Determine risk level from findings
 		for _, f := range resp.Findings {
 			switch f.Crit {
 			case "hostile":
@@ -2135,8 +2386,6 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 			default:
 			}
 		}
-
-		// Count findings by criticality
 		counts := &findingCounts{}
 		for _, f := range resp.Findings {
 			switch f.Crit {
@@ -2152,48 +2401,20 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 		if counts.Hostile > 0 || counts.Suspicious > 0 || counts.Notable > 0 {
 			entry.Counts = counts
 		}
-
-		entry.Imports = resp.Imports
-		entry.Exports = resp.Exports
-
-		// Convert sections
 		for _, sec := range resp.Sections {
 			entry.Sections = append(entry.Sections, sectionInfo{
-				Name:    sec.Name,
-				Address: sec.Address,
-				Size:    sec.Size,
-				Entropy: sec.Entropy,
-				Flags:   sec.Flags,
+				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
-
-		// Convert metrics
-		if resp.Metrics != nil && resp.Metrics.Binary != nil {
-			entry.Metrics = &metricsInfo{
-				Binary: &binaryMetrics{
-					FileSize:       resp.Metrics.Binary.FileSize,
-					CodeSize:       resp.Metrics.Binary.CodeSize,
-					OverallEntropy: resp.Metrics.Binary.OverallEntropy,
-					CodeEntropy:    resp.Metrics.Binary.CodeEntropy,
-					SectionCount:   resp.Metrics.Binary.SectionCount,
-					ImportCount:    resp.Metrics.Binary.ImportCount,
-					ExportCount:    resp.Metrics.Binary.ExportCount,
-					StringCount:    resp.Metrics.Binary.StringCount,
-				},
-			}
+		if resp.Metrics != nil {
+			entry.Metrics = convertMetrics(resp.Metrics)
 		}
-
-		line, err := json.Marshal(entry)
-		if err == nil {
-			lines = append(lines, string(line))
-		}
+		report.Files = append(report.Files, entry)
 	}
 
-	// Convert each file to a JSONL entry
 	for i := range resp.Files {
 		f := &resp.Files[i]
 		entry := cleaveFile{
-			Type:     "file",
 			ID:       f.ID,
 			Path:     f.Path,
 			Depth:    f.Depth,
@@ -2207,70 +2428,63 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 			Formula:  f.Formula,
 		}
 
-		entry.Imports = f.Imports
-		entry.Exports = f.Exports
+		if f.Depth == 0 {
+			if entry.FileType == "" || entry.FileType == "unknown" {
+				if resp.Target.FileType != "" && resp.Target.FileType != "unknown" {
+					entry.FileType = resp.Target.FileType
+				}
+			}
+			if len(f.Imports) == 0 {
+				entry.Imports = resp.Imports
+			} else {
+				entry.Imports = f.Imports
+			}
+			if len(f.Exports) == 0 {
+				entry.Exports = resp.Exports
+			} else {
+				entry.Exports = f.Exports
+			}
+			if len(f.Strings) == 0 {
+				entry.Strings = resp.Strings
+			}
+			if f.Metrics == nil && resp.Metrics != nil {
+				entry.Metrics = convertMetrics(resp.Metrics)
+			}
+		} else {
+			entry.Imports = f.Imports
+			entry.Exports = f.Exports
+		}
 
-		// Convert sections
-		for _, sec := range f.Sections {
+		sections := f.Sections
+		if f.Depth == 0 && len(sections) == 0 {
+			sections = resp.Sections
+		}
+		for _, sec := range sections {
 			entry.Sections = append(entry.Sections, sectionInfo{
-				Name:    sec.Name,
-				Address: sec.Address,
-				Size:    sec.Size,
-				Entropy: sec.Entropy,
-				Flags:   sec.Flags,
+				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
-
-		// Convert metrics
-		if f.Metrics != nil && f.Metrics.Binary != nil {
-			entry.Metrics = &metricsInfo{
-				Binary: &binaryMetrics{
-					FileSize:       f.Metrics.Binary.FileSize,
-					CodeSize:       f.Metrics.Binary.CodeSize,
-					OverallEntropy: f.Metrics.Binary.OverallEntropy,
-					CodeEntropy:    f.Metrics.Binary.CodeEntropy,
-					SectionCount:   f.Metrics.Binary.SectionCount,
-					ImportCount:    f.Metrics.Binary.ImportCount,
-					ExportCount:    f.Metrics.Binary.ExportCount,
-					StringCount:    f.Metrics.Binary.StringCount,
-				},
-			}
+		if f.Metrics != nil && entry.Metrics == nil {
+			entry.Metrics = convertMetrics(f.Metrics)
 		}
 
-		line, err := json.Marshal(entry)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, string(line))
+		report.Files = append(report.Files, entry)
 	}
 
-	// Add summary entry
 	if resp.Summary != nil {
-		summary := cleaveFile{
-			Type:               "summary",
+		report.Summary = &cleaveSummary{
 			FilesAnalyzed:      resp.Summary.FilesAnalyzed,
 			AnalysisDurationMs: resp.Summary.DurationMs,
 		}
 		if resp.Summary.Counts != nil {
-			summary.Hostile = resp.Summary.Counts.Hostile
-			summary.Suspicious = resp.Summary.Counts.Suspicious
-			summary.Notable = resp.Summary.Counts.Notable
-		}
-		line, err := json.Marshal(summary)
-		if err == nil {
-			lines = append(lines, string(line))
+			report.Summary.Hostile = resp.Summary.Counts.Hostile
+			report.Summary.Suspicious = resp.Summary.Counts.Suspicious
+			report.Summary.Notable = resp.Summary.Counts.Notable
 		}
 	} else {
-		// Generate summary from analysis data
-		summary := cleaveFile{
-			Type:          "summary",
-			FilesAnalyzed: max(len(resp.Files), 1), // At least 1 file analyzed
-		}
-
-		// Count risk levels from files array
+		summary := &cleaveSummary{FilesAnalyzed: max(len(resp.Files), 1)}
 		for i := range resp.Files {
-			f := &resp.Files[i]
-			switch f.Risk {
+			switch resp.Files[i].Risk {
 			case "hostile":
 				summary.Hostile++
 			case "suspicious":
@@ -2280,8 +2494,6 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 			default:
 			}
 		}
-
-		// If no files array, count from top-level findings
 		if len(resp.Files) == 0 {
 			for _, f := range resp.Findings {
 				switch f.Crit {
@@ -2295,14 +2507,10 @@ func convertToJSONL(resp *cleaveAPIResponse) string {
 				}
 			}
 		}
-
-		line, err := json.Marshal(summary)
-		if err == nil {
-			lines = append(lines, string(line))
-		}
+		report.Summary = summary
 	}
 
-	return strings.Join(lines, "\n")
+	return report
 }
 
 // uploadToGCS uploads data to GCS with exponential backoff retry.

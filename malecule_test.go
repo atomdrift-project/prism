@@ -506,10 +506,18 @@ func TestRenderHTMLPage(t *testing.T) {
 	hash := sha256.Sum256(data)
 	sha256Hex := hex.EncodeToString(hash[:])
 
-	// No Classification set — verdict will render as UNKNOWN (no litmus result).
+	// Wrap the raw cleave output in a synthetic litmus response so prepareResultData
+	// can parse it via the new RawLitmus path. No Classification set — verdict will
+	// render as UNKNOWN since no litmus classification is provided.
+	syntheticLitmus, err := json.Marshal(map[string]json.RawMessage{
+		"cleave": json.RawMessage(stdout.Bytes()),
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal synthetic litmus response: %v", err)
+	}
 	res := &storedResult{
-		Filename: "midd.zip",
-		JSON:     stdout.String(),
+		Filename:  "midd.zip",
+		RawLitmus: string(syntheticLitmus),
 	}
 
 	// Prepare template data
