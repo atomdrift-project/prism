@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,6 +49,7 @@ var (
 	gcsBucket      string
 	litmusAddr     string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient   *http.Client // HTTP client for litmus server
+	litmusReady    atomic.Bool  // true once litmus health check has succeeded at least once
 	gcsClient      *storage.Client
 	cache          *fido.TieredCache[string, storedResult]
 	logger         *slog.Logger
@@ -383,7 +385,7 @@ func main() {
 	mux.HandleFunc("/", handleIndex)
 	mux.HandleFunc("/upload", handleUpload)
 	mux.HandleFunc("/file/", handleFile)
-	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/_/health", handleHealth)
 
 	server := &http.Server{
 		Addr:         ":" + port,
@@ -463,12 +465,9 @@ func loadConfig() error {
 		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
 
-	// Verify litmus server is reachable
-	if err := waitForLitmusServer(30 * time.Second); err != nil {
-		return fmt.Errorf("failed to connect to litmus server at %s: %w", litmusAddr, err)
-	}
-
-	logger.Info("connected to litmus server", "addr", litmusAddr)
+	// Start background health-check loop for litmus. Prism stays up even if
+	// litmus is temporarily unreachable; requests will get 503 until it's ready.
+	go litmusHealthLoop()
 
 	logger.Debug("configuration loaded",
 		"LITMUS_ADDR", litmusAddr,
@@ -725,6 +724,12 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		}()
 	} else {
 		reqLogger.Debug("skipping GCS upload (not configured)")
+	}
+
+	if !litmusReady.Load() {
+		reqLogger.Warn("litmus server not reachable, rejecting request", "filename", filename)
+		http.Error(w, "Analysis backend is not available, please try again shortly", http.StatusServiceUnavailable)
+		return
 	}
 
 	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
@@ -1374,26 +1379,41 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// waitForLitmusServer polls the health endpoint until the server is ready.
-func waitForLitmusServer(timeout time.Duration) error {
+// litmusHealthLoop polls the litmus /health endpoint every 10 seconds and
+// updates litmusReady. It runs for the lifetime of the process so that prism
+// notices both initial availability and later recoveries.
+func litmusHealthLoop() {
 	healthURL := fmt.Sprintf("http://%s/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
-	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	check := func() {
 		resp, err := client.Get(healthURL) //nolint:noctx // polling loop uses short-timeout client instead of context
-		if err == nil {
-			if err := resp.Body.Close(); err != nil {
-				logger.Debug("failed to close health check response body", "error", err)
-			}
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
+		if err != nil {
+			logger.Warn("litmus health check failed", "addr", litmusAddr, "error", err)
+			litmusReady.Store(false)
+			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			if !litmusReady.Load() {
+				logger.Info("litmus server is now reachable", "addr", litmusAddr)
+			}
+			litmusReady.Store(true)
+			logger.Debug("litmus health check OK", "addr", litmusAddr)
+		} else {
+			logger.Warn("litmus health check returned non-OK status", "addr", litmusAddr, "status", resp.StatusCode)
+			litmusReady.Store(false)
+		}
 	}
 
-	return fmt.Errorf("timeout waiting for litmus server at %s", litmusAddr)
+	// Run immediately on startup, then every tick.
+	check()
+	for range ticker.C {
+		check()
+	}
 }
 
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.

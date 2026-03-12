@@ -77,7 +77,7 @@ func TestMain(m *testing.M) {
 	}
 
 	prismBase = fmt.Sprintf("http://127.0.0.1:%d", prismPort)
-	if !waitReady(prismBase+"/health", 30*time.Second) {
+	if !waitReady(prismBase+"/_/health", 30*time.Second) {
 		litmusCmd.Process.Kill() //nolint:errcheck
 		prismCmd.Process.Kill()  //nolint:errcheck
 		fmt.Fprintln(os.Stderr, "FATAL: prism did not become ready")
