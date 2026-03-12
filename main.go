@@ -544,7 +544,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           requestLogger(redirectOldHost(securityHeaders(mux))),
+		Handler:           requestLogger(securityHeaders(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
@@ -719,34 +719,6 @@ func getNonce(r *http.Request) string {
 		return v
 	}
 	return ""
-}
-
-// redirectOldHost permanently redirects scan.atomdrift.org to lab.atomdrift.org
-// when running in public mode. Health checks are excluded so load balancers
-// continue to work during the transition.
-func redirectOldHost(next http.Handler) http.Handler {
-	if !publicMode {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
-			host = h
-		}
-		// Strip port if present.
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		if host == "scan.atomdrift.org" && r.URL.Path != "/_/health" {
-			target := "https://lab.atomdrift.org" + r.URL.Path
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // cacheStatic adds immutable cache headers for embedded static assets.
