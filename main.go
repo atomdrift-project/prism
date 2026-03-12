@@ -1379,22 +1379,26 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// litmusHealthLoop polls the litmus /health endpoint every 10 seconds and
-// updates litmusReady. It runs for the lifetime of the process so that prism
-// notices both initial availability and later recoveries.
+// litmusHealthLoop polls the litmus /health endpoint with exponential backoff
+// (100ms → 10s) while unhealthy, resetting to 100ms on recovery. It runs for
+// the lifetime of the process so that prism notices both initial availability
+// and later recoveries.
 func litmusHealthLoop() {
+	const (
+		minInterval = 100 * time.Millisecond
+		maxInterval = 10 * time.Second
+	)
+
 	healthURL := fmt.Sprintf("http://%s/_/health", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
 	client := &http.Client{Timeout: 5 * time.Second}
+	interval := minInterval
 
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	check := func() {
+	check := func() bool {
 		resp, err := client.Get(healthURL) //nolint:noctx // polling loop uses short-timeout client instead of context
 		if err != nil {
 			logger.Warn("litmus health check failed", "url", healthURL, "error", err)
 			litmusReady.Store(false)
-			return
+			return false
 		}
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
@@ -1403,16 +1407,20 @@ func litmusHealthLoop() {
 			}
 			litmusReady.Store(true)
 			logger.Debug("litmus health check OK", "url", healthURL)
-		} else {
-			logger.Warn("litmus health check returned non-OK status", "url", healthURL, "status", resp.StatusCode)
-			litmusReady.Store(false)
+			return true
 		}
+		logger.Warn("litmus health check returned non-OK status", "url", healthURL, "status", resp.StatusCode)
+		litmusReady.Store(false)
+		return false
 	}
 
-	// Run immediately on startup, then every tick.
-	check()
-	for range ticker.C {
-		check()
+	for {
+		if check() {
+			interval = minInterval
+		} else {
+			interval = min(interval*2, maxInterval)
+		}
+		time.Sleep(interval)
 	}
 }
 
