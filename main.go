@@ -49,7 +49,8 @@ var (
 	uploadTemplate  *template.Template
 	resultTemplate  *template.Template
 	errorTemplate   *template.Template
-	formatsTemplate *template.Template
+	formatsTemplate   *template.Template
+	poweredByTemplate *template.Template
 	gcsBucket       string
 	litmusAddr      string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient    *http.Client // HTTP client for litmus server
@@ -308,8 +309,8 @@ type storedResult struct {
 
 // cleaveReport is constructed from JSONL output (multiple lines).
 type cleaveReport struct {
-	Summary *cleaveSummary
-	Files   []cleaveFile
+	Summary *cleaveSummary `json:"summary,omitempty"`
+	Files   []cleaveFile   `json:"files"`
 }
 
 // cleaveFile represents a file entry in cleave output.
@@ -521,6 +522,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	poweredByTemplate, tmplErr = template.New("powered-by.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/powered-by.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -537,7 +543,9 @@ func main() {
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
+	mux.HandleFunc("GET /file/{sha256}.json", handleFileJSON)
 	mux.HandleFunc("GET /formats", handleFormats)
+	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /_/health", handleHealth)
 
 	server := &http.Server{
@@ -780,6 +788,17 @@ func handleFormats(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handlePoweredBy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	if err := poweredByTemplate.Execute(w, data); err != nil {
+		logger.Error("template execution failed",
+			"template", "powered-by",
+			"error", err,
+		)
+	}
+}
+
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -823,11 +842,49 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 	reqLogger.Info("file request received")
 
-	// Use Fetch to deduplicate concurrent loads and provide a potential fallback
+	cacheHit, res, err := lookupResult(r.Context(), sha, reqLogger)
+	if err != nil {
+		reqLogger.Warn("failed to retrieve or regenerate result", "error", err)
+		if strings.Contains(err.Error(), "not found") {
+			renderError(w, r, http.StatusNotFound, errorData{
+				Icon:    "🔍",
+				Title:   "Result not found",
+				Message: "This analysis result doesn't exist or has expired. Upload the file again to re-analyze it.",
+				Action:  "Upload a file",
+			})
+		} else {
+			renderError(w, r, http.StatusInternalServerError, errorData{
+				Icon:    "⚠",
+				Title:   "Something went wrong",
+				Message: "We couldn't retrieve this result. Please try again.",
+			})
+		}
+		return
+	}
+
+	reqLogger.Info("rendering result",
+		"filename", res.Filename,
+		"cache_hit", cacheHit,
+		"duration_ms", time.Since(requestStart).Milliseconds(),
+	)
+	data := prepareResultData(res.Filename, sha, &res)
+	data.Nonce = getNonce(r)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := resultTemplate.Execute(w, data); err != nil {
+		reqLogger.Error("template execution failed",
+			"template", "result",
+			"error", err,
+		)
+	}
+}
+
+// lookupResult retrieves a stored result from cache, falling back to GCS if configured.
+// Returns (cacheHit, result, error).
+func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool, storedResult, error) {
 	cacheHit := true
-	res, err := cache.Fetch(r.Context(), sha, func(lctx context.Context) (storedResult, error) {
+	res, err := cache.Fetch(ctx, sha, func(lctx context.Context) (storedResult, error) {
 		cacheHit = false
-		// Fallback: If not in cache, check GCS if configured
 		if gcsBucket == "" || gcsClient == nil {
 			reqLogger.Debug("cache miss, GCS not configured for fallback")
 			return storedResult{}, errors.New("result not in cache and GCS not configured")
@@ -835,7 +892,6 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 		reqLogger.Info("cache miss, attempting fallback to GCS")
 
-		// Find the file in GCS. Since filename is part of path, we need to list or know it.
 		it := gcsClient.Bucket(gcsBucket).Objects(lctx, &storage.Query{Prefix: sha + "/"})
 		attrs, err := it.Next()
 		if err != nil {
@@ -850,7 +906,6 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		filename := filepath.Base(attrs.Name)
 		reqLogger.Info("found file in GCS, re-analyzing", "filename", filename, "gcs_path", attrs.Name)
 
-		// Download from GCS to temp file
 		tempFile, err := os.CreateTemp("", "litmus-fallback-*")
 		if err != nil {
 			return storedResult{}, fmt.Errorf("failed to create temp file: %w", err)
@@ -887,7 +942,6 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			reqLogger.Debug("failed to close temp file after download", "error", err)
 		}
 
-		// Run analysis
 		reqLogger.Debug("starting fallback analysis")
 		jsonl, classification, formula, fileType, err := runLitmus(lctx, tempPath, filename, reqLogger)
 		if err != nil {
@@ -896,39 +950,61 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 		return storedResult{Filename: filename, JSON: jsonl, Classification: classification, Formula: formula, FileType: fileType}, nil
 	})
+	return cacheHit, res, err
+}
+
+func handleFileJSON(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha256")
+	ip := clientIP(r)
+
+	if !validSHA256(sha) {
+		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		return
+	}
+
+	reqLogger := logger.With("sha256", sha, "client_ip", ip)
+
+	_, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
-		reqLogger.Warn("failed to retrieve or regenerate result", "error", err)
 		if strings.Contains(err.Error(), "not found") {
-			renderError(w, r, http.StatusNotFound, errorData{
-				Icon:    "🔍",
-				Title:   "Result not found",
-				Message: "This analysis result doesn't exist or has expired. Upload the file again to re-analyze it.",
-				Action:  "Upload a file",
-			})
+			http.Error(w, "not found", http.StatusNotFound)
 		} else {
-			renderError(w, r, http.StatusInternalServerError, errorData{
-				Icon:    "⚠",
-				Title:   "Something went wrong",
-				Message: "We couldn't retrieve this result. Please try again.",
-			})
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return
 	}
 
-	reqLogger.Info("rendering result",
-		"filename", res.Filename,
-		"cache_hit", cacheHit,
-		"duration_ms", time.Since(requestStart).Milliseconds(),
-	)
-	data := prepareResultData(res.Filename, sha, &res)
-	data.Nonce = getNonce(r)
+	report := parseJSONL(res.JSON)
+	// Replace server-side temp path with the real filename for the top-level file.
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 && !strings.Contains(report.Files[i].Path, "!!") {
+			report.Files[i].Path = res.Filename
+		}
+	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := resultTemplate.Execute(w, data); err != nil {
-		reqLogger.Error("template execution failed",
-			"template", "result",
-			"error", err,
-		)
+	out := struct {
+		Filename       string        `json:"filename"`
+		SHA256         string        `json:"sha256"`
+		Classification string        `json:"classification"`
+		Formula        string        `json:"formula,omitempty"`
+		Report         *cleaveReport `json:"report"`
+	}{
+		Filename:       res.Filename,
+		SHA256:         sha,
+		Classification: res.Classification,
+		Formula:        res.Formula,
+		Report:         report,
+	}
+
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		http.Error(w, "failed to encode result", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if _, err := w.Write(b); err != nil {
+		reqLogger.Debug("json write failed", "error", err)
 	}
 }
 
