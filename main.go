@@ -206,23 +206,27 @@ type CategoryGroup struct {
 
 // FileFindingsDisplay represents all findings for a single file.
 type FileFindingsDisplay struct {
-	Path       string
-	Basename   string
-	Risk       string
-	SHA256     string
-	Formula    string
-	FileType   string
-	Categories []CategoryGroup
+	Path           string
+	Basename       string
+	Risk           string
+	Classification string  // litmus ML classification: "hostile", "suspicious", "benign"
+	SHA256         string
+	Formula        string
+	FileType       string
+	Probability    float64 // litmus ML probability [0.0, 1.0]
+	Categories     []CategoryGroup
 }
 
 // FileStringsDisplay represents strings for a single file.
 type FileStringsDisplay struct {
-	Basename string
-	Risk     string
-	SHA256   string
-	Formula  string
-	FileType string
-	Strings  []StringDisplay
+	Basename       string
+	Risk           string
+	Classification string
+	SHA256         string
+	Formula        string
+	FileType       string
+	Probability    float64
+	Strings        []StringDisplay
 }
 
 type StringDisplay struct {
@@ -232,13 +236,15 @@ type StringDisplay struct {
 
 // FileSymbolsDisplay represents symbols for a single file.
 type FileSymbolsDisplay struct {
-	Basename string
-	Risk     string
-	SHA256   string
-	Formula  string
-	FileType string
-	Imports  []SymbolDisplay
-	Exports  []SymbolDisplay
+	Basename       string
+	Risk           string
+	Classification string
+	SHA256         string
+	Formula        string
+	FileType       string
+	Probability    float64
+	Imports        []SymbolDisplay
+	Exports        []SymbolDisplay
 }
 
 type SymbolDisplay struct {
@@ -248,12 +254,14 @@ type SymbolDisplay struct {
 
 // FileSectionsDisplay represents sections for a single file.
 type FileSectionsDisplay struct {
-	Basename string
-	Risk     string
-	SHA256   string
-	Formula  string
-	FileType string
-	Sections []SectionDisplay
+	Basename       string
+	Risk           string
+	Classification string
+	SHA256         string
+	Formula        string
+	FileType       string
+	Probability    float64
+	Sections       []SectionDisplay
 }
 
 type SectionDisplay struct {
@@ -277,12 +285,14 @@ type metricGroup struct {
 
 // FileMetricsDisplay represents metrics for a single file.
 type FileMetricsDisplay struct {
-	Basename string
-	Risk     string
-	SHA256   string
-	Formula  string
-	FileType string
-	Groups   []metricGroup
+	Basename       string
+	Risk           string
+	Classification string
+	SHA256         string
+	Formula        string
+	FileType       string
+	Probability    float64
+	Groups         []metricGroup
 }
 
 type resultData struct {
@@ -334,6 +344,7 @@ type cleaveFile struct {
 	FileType           string         `json:"file_type"`
 	SHA256             string         `json:"sha256"`
 	Risk               string         `json:"risk,omitempty"`
+	Classification     string         `json:"-"` // litmus ML classification, injected from embedded_files
 	Formula            string         `json:"formula,omitempty"`
 	Counts             *findingCounts `json:"counts,omitempty"`
 	Metrics            *metricsInfo   `json:"metrics,omitempty"`
@@ -344,6 +355,7 @@ type cleaveFile struct {
 	Sections           []sectionInfo  `json:"sections,omitempty"`
 	Size               int64          `json:"size"`
 	AnalysisDurationMs int64          `json:"analysis_duration_ms,omitempty"`
+	Probability        float64        `json:"-"` // litmus ML probability, injected from embedded_files
 	ID                 int            `json:"id"`
 	Depth              int            `json:"depth"`
 	// Summary fields (only present when Type == "summary")
@@ -1399,6 +1411,29 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 	}
 
+	// Ascribe litmus ML evaluations to individual files. The top-level file gets
+	// the archive-level classification; embedded files are matched by path suffix.
+	if len(litmusResp.EmbeddedFiles) > 0 {
+		evalByPath := make(map[string]*litmusEmbeddedFile, len(litmusResp.EmbeddedFiles))
+		for i := range litmusResp.EmbeddedFiles {
+			evalByPath[litmusResp.EmbeddedFiles[i].Path] = &litmusResp.EmbeddedFiles[i]
+		}
+		for i := range report.Files {
+			if ef, ok := evalByPath[report.Files[i].Path]; ok {
+				report.Files[i].Classification = strings.ToLower(ef.Classification)
+				report.Files[i].Probability = ef.Probability
+			}
+		}
+	}
+	// Top-level file inherits the archive-level litmus classification.
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 {
+			report.Files[i].Classification = strings.ToLower(litmusResp.Classification)
+			report.Files[i].Probability = float64(litmusResp.Probability)
+			break
+		}
+	}
+
 	if len(report.Files) == 0 && report.Summary == nil {
 		logger.Debug("empty cleave report", "sha256", sha256Hex)
 		data.Formula = template.HTML("?")
@@ -1541,11 +1576,13 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 			if len(ff) > 0 {
 				fileFindings = append(fileFindings, FileFindings{
-					Path:     file.Path,
-					Risk:     file.Risk,
-					Formula:  file.Formula,
-					Findings: ff,
-					Strings:  strs,
+					Path:           file.Path,
+					Risk:           file.Risk,
+					Classification: file.Classification,
+					Probability:    file.Probability,
+					Formula:        file.Formula,
+					Findings:       ff,
+					Strings:        strs,
 				})
 			}
 		}
@@ -1752,13 +1789,15 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			}
 
 			result = append(result, FileFindingsDisplay{
-				Path:       file.Path,
-				Basename:   basename,
-				Risk:       file.Risk,
-				SHA256:     file.SHA256,
-				Formula:    file.Formula,
-				FileType:   strings.ToUpper(file.FileType),
-				Categories: categories,
+				Path:           file.Path,
+				Basename:       basename,
+				Risk:           file.Risk,
+				Classification: file.Classification,
+				Probability:    file.Probability,
+				SHA256:         file.SHA256,
+				Formula:        file.Formula,
+				FileType:       strings.ToUpper(file.FileType),
+				Categories:     categories,
 			})
 		}
 	}
@@ -1786,12 +1825,14 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 		}
 
 		result = append(result, FileStringsDisplay{
-			Basename: basename,
-			Risk:     file.Risk,
-			SHA256:   file.SHA256,
-			Formula:  file.Formula,
-			FileType: strings.ToUpper(file.FileType),
-			Strings:  strs,
+			Basename:       basename,
+			Risk:           file.Risk,
+			Classification: file.Classification,
+			Probability:    file.Probability,
+			SHA256:         file.SHA256,
+			Formula:        file.Formula,
+			FileType:       strings.ToUpper(file.FileType),
+			Strings:        strs,
 		})
 	}
 
@@ -1834,13 +1875,15 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 		}
 
 		result = append(result, FileSymbolsDisplay{
-			Basename: basename,
-			Risk:     file.Risk,
-			SHA256:   file.SHA256,
-			Formula:  file.Formula,
-			FileType: strings.ToUpper(file.FileType),
-			Imports:  imports,
-			Exports:  exports,
+			Basename:       basename,
+			Risk:           file.Risk,
+			Classification: file.Classification,
+			Probability:    file.Probability,
+			SHA256:         file.SHA256,
+			Formula:        file.Formula,
+			FileType:       strings.ToUpper(file.FileType),
+			Imports:        imports,
+			Exports:        exports,
 		})
 	}
 
@@ -1870,12 +1913,14 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 		}
 
 		result = append(result, FileSectionsDisplay{
-			Basename: basename,
-			Risk:     file.Risk,
-			SHA256:   file.SHA256,
-			Formula:  file.Formula,
-			FileType: strings.ToUpper(file.FileType),
-			Sections: sections,
+			Basename:       basename,
+			Risk:           file.Risk,
+			Classification: file.Classification,
+			Probability:    file.Probability,
+			SHA256:         file.SHA256,
+			Formula:        file.Formula,
+			FileType:       strings.ToUpper(file.FileType),
+			Sections:       sections,
 		})
 	}
 
@@ -2050,12 +2095,14 @@ func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 		}
 
 		result = append(result, FileMetricsDisplay{
-			Basename: extractBasename(file.Path),
-			Risk:     file.Risk,
-			SHA256:   file.SHA256,
-			Formula:  file.Formula,
-			FileType: strings.ToUpper(file.FileType),
-			Groups:   groups,
+			Basename:       extractBasename(file.Path),
+			Risk:           file.Risk,
+			Classification: file.Classification,
+			Probability:    file.Probability,
+			SHA256:         file.SHA256,
+			Formula:        file.Formula,
+			FileType:       strings.ToUpper(file.FileType),
+			Groups:         groups,
 		})
 	}
 
@@ -2091,14 +2138,33 @@ func formatBytes(b int64) string {
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
 type litmusAPIResponse struct {
-	Path           string          `json:"path"`
-	Classification string          `json:"classification"`
-	Formula        string          `json:"formula"`
-	FileType       string          `json:"file_type"`
-	SHA256         string          `json:"sha256"`
-	Cleave         json.RawMessage `json:"cleave,omitempty"`
-	SizeBytes      int64           `json:"size_bytes"`
-	Probability    float32         `json:"probability"`
+	Path           string              `json:"path"`
+	Classification string              `json:"classification"`
+	Formula        string              `json:"formula"`
+	FileType       string              `json:"file_type"`
+	SHA256         string              `json:"sha256"`
+	Cleave         json.RawMessage     `json:"cleave,omitempty"`
+	EmbeddedFiles  []litmusEmbeddedFile `json:"embedded_files,omitempty"`
+	TopFindings    []litmusTopFinding   `json:"top_findings,omitempty"`
+	SizeBytes      int64               `json:"size_bytes"`
+	Probability    float64             `json:"probability"`
+}
+
+// litmusEmbeddedFile is a per-file ML evaluation from litmus for archive members.
+type litmusEmbeddedFile struct {
+	Path           string             `json:"path"`
+	FileType       string             `json:"file_type"`
+	Classification string             `json:"classification"`
+	Formula        string             `json:"formula,omitempty"`
+	TopFindings    []litmusTopFinding `json:"top_findings,omitempty"`
+	Probability    float64            `json:"probability"`
+}
+
+// litmusTopFinding is a representative finding surfaced by litmus ML evaluation.
+type litmusTopFinding struct {
+	ID   string `json:"id"`
+	Crit string `json:"crit"`
+	Desc string `json:"desc"`
 }
 
 // cleaveAPIResponse represents the JSON response from cleave's AnalysisReport.

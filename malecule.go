@@ -166,15 +166,17 @@ type MaleculeData struct {
 
 // FileMolecule represents a single file's molecule in a galaxy.
 type FileMolecule struct {
-	Path     string         `json:"path"`
-	Formula  string         `json:"formula"`
-	Risk     string         `json:"risk"`
-	Findings []string       `json:"findings"` // Trait IDs for display on click
-	Atoms    []MaleculeAtom `json:"atoms"`
-	Bonds    [][2]int       `json:"bonds"`
-	CenterX  float64        `json:"centerX"`
-	CenterY  float64        `json:"centerY"`
-	CenterZ  float64        `json:"centerZ"`
+	Path           string         `json:"path"`
+	Formula        string         `json:"formula"`
+	Risk           string         `json:"risk"`
+	Classification string         `json:"classification,omitempty"` // litmus ML classification
+	Findings       []string       `json:"findings"`                // Trait IDs for display on click
+	Atoms          []MaleculeAtom `json:"atoms"`
+	Bonds          [][2]int       `json:"bonds"`
+	CenterX        float64        `json:"centerX"`
+	CenterY        float64        `json:"centerY"`
+	CenterZ        float64        `json:"centerZ"`
+	Probability    float64        `json:"probability,omitempty"` // litmus ML probability
 }
 
 // GalaxyLink represents a dropper relationship between files.
@@ -587,11 +589,13 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 
 // FileFindings represents findings for a single file in an archive.
 type FileFindings struct {
-	Path     string
-	Risk     string
-	Formula  string // Formula from cleave
-	Findings []FindingForFormula
-	Strings  []string // Extracted strings for dropper detection
+	Path           string
+	Risk           string
+	Classification string  // litmus ML classification
+	Formula        string  // Formula from cleave
+	Findings       []FindingForFormula
+	Strings        []string  // Extracted strings for dropper detection
+	Probability    float64 // litmus ML probability
 }
 
 // BuildGalaxy creates a galaxy of molecules from multiple files.
@@ -765,15 +769,17 @@ func BuildGalaxy(files []FileFindings) GalaxyData {
 			}
 
 			galaxy.Molecules = append(galaxy.Molecules, FileMolecule{
-				Path:     file.Path,
-				Formula:  mol.Formula,
-				Risk:     file.Risk,
-				Findings: traitIDs,
-				Atoms:    mol.Atoms,
-				Bonds:    mol.Bonds,
-				CenterX:  centerX,
-				CenterY:  centerY,
-				CenterZ:  centerZ,
+				Path:           file.Path,
+				Formula:        mol.Formula,
+				Risk:           file.Risk,
+				Classification: file.Classification,
+				Probability:    file.Probability,
+				Findings:       traitIDs,
+				Atoms:          mol.Atoms,
+				Bonds:          mol.Bonds,
+				CenterX:        centerX,
+				CenterY:        centerY,
+				CenterZ:        centerZ,
 			})
 		}
 	}
