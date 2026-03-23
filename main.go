@@ -1629,6 +1629,20 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FileSections = buildStructuredSections(report.Files)
 	data.FileMetrics = buildStructuredMetrics(report.Files)
 
+	// Compute trait column width from longest trait ID across all files.
+	maxTraitLen := 0
+	for _, ff := range data.FileFindings {
+		for _, cat := range ff.Categories {
+			for _, f := range cat.Findings {
+				if len(f.ID) > maxTraitLen {
+					maxTraitLen = len(f.ID)
+				}
+			}
+		}
+	}
+	// ~0.65em per character in monospace at 12px, with 2em padding
+	data.TraitColWidth = fmt.Sprintf("%.1fem", float64(maxTraitLen)*0.65+2)
+
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
 	var formula string
