@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="build" content="{{.BuildCommit}}" />
+    <meta name="layout" content="{{.Layout}}" />
     <title>{{.Filename}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
     <style nonce="{{.Nonce}}">
     {{template "fonts" .}}

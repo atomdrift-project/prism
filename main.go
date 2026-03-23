@@ -1057,6 +1057,8 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Build", buildCommit)
+	w.Header().Set("X-Layout", data.Layout)
 	if err := resultTemplate.Execute(w, data); err != nil {
 		reqLogger.Error("template execution failed",
 			"template", "result",
