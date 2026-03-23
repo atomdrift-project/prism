@@ -121,6 +121,12 @@
             padding-left: 10px;
             word-break: break-all;
         }
+        .header-sha256 {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--slate);
+            word-break: break-all;
+        }
         .verdict {
             display: flex;
             align-items: center;
@@ -423,6 +429,24 @@
             padding: 12px 16px;
             background: var(--mist);
             border-bottom: 1px solid #e5e7eb;
+        }
+        .file-header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .file-header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            flex-shrink: 0;
+        }
+        .file-header-sha256 {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--slate);
         }
         .file-risk-dot {
             width: 10px;
@@ -795,6 +819,7 @@
             <div class="verdict-bar">
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <div class="file-name">{{.Filename}}</div>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                    <span class="header-sha256">{{.SHA256}}</span>
                 </div>
                 <div class="verdict">
                     <span class="band" style="background: {{bandGradient .Probability}}"></span>
@@ -819,10 +844,6 @@
                 <div class="formula-label">Mal-ecule</div>
                 <div class="formula">{{.Formula}}</div>
                 <div class="meta-table">
-                    <div class="meta-row">
-                        <span class="meta-label">SHA256</span>
-                        <span class="meta-value">{{.SHA256}}</span>
-                    </div>
                     <div class="meta-row">
                         <span class="meta-label">Size</span>
                         <span class="meta-value">{{.Size}}</span>
@@ -853,11 +874,14 @@
                         {{range .FileFindings}}
                         <div class="file-findings">
                             <div class="file-header">
-                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                <span class="file-name-header">{{.Basename}}</span>
-                                {{if .Classification}}<span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span>{{end}}
-                                {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                <div class="file-header-left">
+                                    <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
+                                    <span class="file-name-header">{{.Basename}}</span>
+                                    <span class="file-header-sha256">{{.SHA256}}</span>
+                                    {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                                    {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                </div>
+                                {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
                             </div>
                             {{range .Categories}}
                             <div class="category-section">
@@ -901,10 +925,13 @@
                     {{range .FileStrings}}
                     <div class="file-findings">
                         <div class="file-header">
-                            <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                            <span class="file-name-header">{{.Basename}}</span>
-                            {{if .Classification}}<span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span>{{end}}
-                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            <div class="file-header-left">
+                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
+                                <span class="file-name-header">{{.Basename}}</span>
+                                <span class="file-header-sha256">{{.SHA256}}</span>
+                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            </div>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
                         </div>
                         <div class="file-meta">
                             <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
@@ -935,10 +962,13 @@
                     {{range .FileSymbols}}
                     <div class="file-findings">
                         <div class="file-header">
-                            <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                            <span class="file-name-header">{{.Basename}}</span>
-                            {{if .Classification}}<span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span>{{end}}
-                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            <div class="file-header-left">
+                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
+                                <span class="file-name-header">{{.Basename}}</span>
+                                <span class="file-header-sha256">{{.SHA256}}</span>
+                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            </div>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
                         </div>
                         <div class="file-meta">
                             <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
@@ -975,10 +1005,13 @@
                     {{range .FileSections}}
                     <div class="file-findings">
                         <div class="file-header">
-                            <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                            <span class="file-name-header">{{.Basename}}</span>
-                            {{if .Classification}}<span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span>{{end}}
-                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            <div class="file-header-left">
+                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
+                                <span class="file-name-header">{{.Basename}}</span>
+                                <span class="file-header-sha256">{{.SHA256}}</span>
+                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            </div>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
                         </div>
                         <div class="file-meta">
                             <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
@@ -1018,10 +1051,13 @@
                     {{range .FileMetrics}}
                     <div class="file-findings">
                         <div class="file-header">
-                            <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                            <span class="file-name-header">{{.Basename}}</span>
-                            {{if .Classification}}<span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span>{{end}}
-                            {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            <div class="file-header-left">
+                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
+                                <span class="file-name-header">{{.Basename}}</span>
+                                <span class="file-header-sha256">{{.SHA256}}</span>
+                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                            </div>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
                         </div>
                         <div class="file-meta">
                             <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
