@@ -9,12 +9,15 @@
         :root {
             --carbon: #0a0a0a;
             --graphite: #404040;
+            --iron: #52525b;
             --slate: #6b7280;
-            --silver: #9ca3af;
             --mist: #f3f4f6;
             --white: #ffffff;
+            --cream: #fafaf9;
             --isotope: #3b82f6;
             --isotope-dim: rgba(59, 130, 246, 0.1);
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
             --hostile: #ef4444;
         }
         * {
@@ -24,7 +27,7 @@
         }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--white);
+            background: var(--cream);
             color: var(--carbon);
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
@@ -47,7 +50,7 @@
             color: inherit;
         }
         .logo-accent {
-            color: var(--isotope);
+            color: var(--toxic-muted);
         }
         .alpha-tag {
             font-size: 10px;
@@ -136,9 +139,19 @@
             padding-top: 24px;
             border-top: 1px solid var(--mist);
             font-size: 14px;
-            color: var(--silver);
+            color: var(--iron);
             display: flex;
             justify-content: space-between;
+            position: relative;
+        }
+        footer::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 0;
+            width: 80px;
+            height: 2px;
+            background: var(--toxic);
         }
         footer a {
             color: var(--slate);

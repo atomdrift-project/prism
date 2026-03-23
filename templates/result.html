@@ -11,12 +11,15 @@
         :root {
             --carbon: #0a0a0a;
             --graphite: #404040;
+            --iron: #52525b;
             --slate: #6b7280;
-            --silver: #9ca3af;
             --mist: #f3f4f6;
             --white: #ffffff;
+            --cream: #fafaf9;
             --isotope: #3b82f6;
             --isotope-dim: rgba(59, 130, 246, 0.1);
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
             --hostile: #ef4444;
             --suspicious: #eab308;
             --notable: #3b82f6;
@@ -28,7 +31,7 @@
         }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--white);
+            background: var(--cream);
             color: var(--carbon);
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
@@ -55,7 +58,7 @@
             letter-spacing: -0.5px;
         }
         .logo-accent {
-            color: var(--isotope);
+            color: var(--toxic-muted);
         }
         .alpha-tag {
             font-size: 10px;
@@ -70,8 +73,8 @@
         }
         .tagline {
             font-size: 14px;
-            color: var(--slate);
-            font-weight: 300;
+            color: var(--iron);
+            font-weight: 400;
         }
         .back-link {
             font-size: 14px;
@@ -106,7 +109,7 @@
             font-size: 13px;
             font-weight: 500;
             color: var(--carbon);
-            border-left: 3px solid var(--isotope);
+            border-left: 3px solid var(--toxic);
             padding-left: 10px;
             word-break: break-all;
         }
@@ -117,7 +120,7 @@
         }
         .verdict-label {
             font-size: 12px;
-            color: var(--silver);
+            color: var(--iron);
         }
         .verdict-value {
             font-family: 'Oxanium', sans-serif;
@@ -162,7 +165,7 @@
         }
         .meta-label {
             display: table-cell;
-            color: var(--silver);
+            color: var(--iron);
             padding-right: 12px;
             padding-bottom: 6px;
             text-transform: uppercase;
@@ -222,7 +225,7 @@
         }
         .tab.active {
             color: var(--carbon);
-            border-bottom-color: var(--isotope);
+            border-bottom-color: var(--toxic);
         }
         .tab-content {
             display: none;
@@ -300,7 +303,17 @@
             display: flex;
             justify-content: space-between;
             font-size: 14px;
-            color: var(--silver);
+            color: var(--iron);
+            position: relative;
+        }
+        footer::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 0;
+            width: 80px;
+            height: 2px;
+            background: var(--toxic);
         }
         footer a {
             color: var(--slate);
@@ -374,7 +387,7 @@
         }
         .galaxy-info-close {
             cursor: pointer;
-            color: var(--silver);
+            color: var(--iron);
             font-size: 16px;
             line-height: 1;
         }
@@ -556,7 +569,7 @@
         .no-findings {
             padding: 40px;
             text-align: center;
-            color: var(--silver);
+            color: var(--iron);
             font-size: 14px;
         }
         .limited-info-notice {
@@ -576,7 +589,7 @@
         .feedback-prompt {
             text-align: center;
             font-size: 14px;
-            color: var(--silver);
+            color: var(--iron);
             margin-top: 48px;
         }
         .feedback-prompt a {
@@ -663,7 +676,7 @@
         }
         .symbol-library {
             font-size: 10px;
-            color: var(--silver);
+            color: var(--iron);
             margin-left: 8px;
         }
 
@@ -725,7 +738,7 @@
         .section-flags {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 11px;
-            color: var(--silver);
+            color: var(--iron);
         }
 
         /* Metrics Tab */
