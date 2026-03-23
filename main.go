@@ -45,6 +45,9 @@ var templatesFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
+// buildCommit is set via -ldflags at build time (see Makefile).
+var buildCommit = "dev"
+
 var (
 	uploadTemplate    *template.Template
 	resultTemplate    *template.Template
@@ -316,7 +319,8 @@ type resultData struct {
 	FileMetrics  []FileMetricsDisplay
 	LimitedInfo  bool
 	Probability  float64 // top-level litmus ML probability [0.0, 1.0]
-	Layout       string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
+	Layout       string // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
+	BuildCommit  string // git commit short hash, set at build time
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -1044,6 +1048,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	)
 	data := prepareResultData(res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
+	data.BuildCommit = buildCommit
 	switch r.URL.Query().Get("layout") {
 	case "helix", "organic":
 		data.Layout = r.URL.Query().Get("layout")

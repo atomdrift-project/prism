@@ -17,8 +17,10 @@ help:
 	@echo "  GCP_PROJECT     GCP project ID (required for deploy)"
 	@echo "  GCS_BUCKET      GCS bucket name for file storage (required for deploy)"
 
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
 build:
-	CGO_ENABLED=0 go build -o prism -ldflags="-s -w" .
+	CGO_ENABLED=0 go build -o prism -ldflags="-s -w -X main.buildCommit=$(GIT_COMMIT)" .
 
 test:
 	go test -v ./...
