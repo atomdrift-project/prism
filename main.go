@@ -315,6 +315,7 @@ type resultData struct {
 	FileSections []FileSectionsDisplay
 	FileMetrics  []FileMetricsDisplay
 	LimitedInfo  bool
+	Probability  float64 // top-level litmus ML probability [0.0, 1.0]
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -600,6 +601,53 @@ func main() {
 	funcs := template.FuncMap{
 		"isPublic": func() bool { return publicMode },
 		"mul":      func(a, b float64) float64 { return a * b },
+		// bandGradient returns a CSS linear-gradient matching litmus's
+		// two-block confidence indicator. Each classification band has its
+		// own color ramp, and the two gradient stops represent left/right
+		// block colors at the current band progress — identical to the
+		// indicator_colors logic in litmus/src/output.rs (dark theme).
+		"bandGradient": func(p float64) template.CSS {
+			const suspT = 0.975
+			const hostT = 0.99
+
+			type rgb struct{ r, g, b float64 }
+			mix := func(a, b rgb, t float64) rgb {
+				return rgb{a.r + t*(b.r-a.r), a.g + t*(b.g-a.g), a.b + t*(b.b-a.b)}
+			}
+			css := func(c rgb) string {
+				return fmt.Sprintf("rgb(%d,%d,%d)", int(c.r), int(c.g), int(c.b))
+			}
+
+			var t float64 // band progress [0, 1]
+			var left, right rgb
+
+			switch {
+			case p >= hostT:
+				t = (p - hostT) / (1.0 - hostT)
+				if t > 1 {
+					t = 1
+				}
+				// Hostile: orange-red → saturated red
+				left = mix(rgb{255, 135, 40}, rgb{255, 50, 65}, t)
+				right = mix(rgb{255, 95, 35}, rgb{255, 35, 35}, t)
+			case p >= suspT:
+				t = (p - suspT) / (hostT - suspT)
+				// Suspicious: greenish-yellow → orange
+				left = mix(rgb{170, 190, 45}, rgb{255, 180, 40}, t)
+				right = mix(rgb{235, 220, 65}, rgb{255, 125, 20}, t)
+			default:
+				if suspT > 0 {
+					t = p / suspT
+				}
+				// Benign: teal-green → yellow-green
+				left = mix(rgb{25, 170, 120}, rgb{120, 190, 40}, t)
+				right = mix(rgb{70, 215, 135}, rgb{195, 210, 60}, t)
+			}
+
+			return template.CSS(fmt.Sprintf(
+				"linear-gradient(90deg, %s, %s)", css(left), css(right),
+			))
+		},
 	}
 	var tmplErr error
 	uploadTemplate, tmplErr = template.New("upload.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
@@ -1499,6 +1547,14 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Verdict = "UNKNOWN"
 		data.RiskLevel = "unknown"
 		data.RiskLabel = "Unknown"
+	}
+
+	// Set top-level probability from the depth-0 file.
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 {
+			data.Probability = report.Files[i].Probability
+			break
+		}
 	}
 
 	// Flag when we have limited analysis info (unknown file type AND no findings)

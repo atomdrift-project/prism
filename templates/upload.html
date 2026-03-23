@@ -54,11 +54,12 @@
         .logo-accent {
             color: var(--toxic-muted);
         }
-        .alpha-tag {
+        .beta-tag {
             font-size: 10px;
             font-weight: 600;
-            color: var(--hostile);
-            background: rgba(239, 68, 68, 0.12);
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid rgba(208, 255, 0, 0.2);
             padding: 1px 5px;
             border-radius: 3px;
             margin-left: 6px;
@@ -71,18 +72,19 @@
             font-weight: 400;
         }
         .upload-zone {
-            border: 2px dashed rgba(59, 130, 246, 0.4);
-            background: rgba(59, 130, 246, 0.03);
+            border: 2px dashed #e5e7eb;
+            background: var(--white);
             border-radius: 12px;
             padding: 48px;
             text-align: center;
             margin: 32px 0;
             transition: all 0.2s;
             cursor: pointer;
+            position: relative;
         }
         .upload-zone:hover, .upload-zone.dragover {
-            border-color: var(--isotope);
-            background: var(--isotope-dim);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
         }
         .upload-zone input[type="file"] {
             display: none;
@@ -96,13 +98,16 @@
             margin-bottom: 16px;
             opacity: 0.5;
         }
+        .upload-zone:hover .upload-icon, .upload-zone.dragover .upload-icon {
+            opacity: 0.8;
+        }
         .upload-text {
             font-size: 16px;
-            color: rgba(59, 130, 246, 0.6);
+            color: var(--iron);
             margin-bottom: 8px;
         }
         .upload-zone:hover .upload-text, .upload-zone.dragover .upload-text {
-            color: var(--isotope);
+            color: var(--carbon);
         }
         .upload-hint {
             font-size: 14px;
@@ -135,26 +140,46 @@
             color: var(--iron);
             min-height: 20px;
         }
-        .features {
+        .capabilities {
+            margin-top: 48px;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 24px;
+        }
+        .capabilities-heading {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--iron);
+            margin-bottom: 16px;
+        }
+        .cap-list {
+            list-style: none;
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 24px;
-            margin-top: 48px;
+            gap: 0;
         }
-        .feature {
-            padding: 24px;
-            border: 1px solid var(--mist);
-            border-radius: 12px;
-        }
-        .feature h3 {
-            font-family: 'Oxanium', sans-serif;
-            font-size: 16px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .feature p {
+        .cap-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid var(--mist);
             font-size: 14px;
-            color: var(--iron);
+            color: var(--graphite);
+            line-height: 1.5;
+        }
+        .cap-list li:nth-child(odd) {
+            padding-right: 20px;
+            border-right: 1px solid var(--mist);
+        }
+        .cap-list li:nth-child(even) {
+            padding-left: 20px;
+        }
+        .cap-list strong {
+            color: var(--carbon);
+            font-weight: 600;
+        }
+        .cap-list .accent {
+            color: var(--toxic-dark);
         }
         footer {
             margin-top: 60px;
@@ -183,23 +208,19 @@
             color: var(--carbon);
         }
         @media (max-width: 600px) {
-            .features {
+            .cap-list {
                 grid-template-columns: 1fr;
             }
+            .cap-list li:nth-child(odd) {
+                padding-right: 0;
+                border-right: none;
+            }
+            .cap-list li:nth-child(even) {
+                padding-left: 0;
+            }
         }
-        .alpha-banner {
-            background: var(--isotope);
-            color: var(--white);
-            text-align: center;
-            padding: 8px 16px;
-            font-size: 13px;
-            font-weight: 500;
-            letter-spacing: 0.2px;
-        }
-        .alpha-banner a {
-            color: var(--white);
-            text-decoration: underline;
-            font-weight: 600;
+        .beta-tag-inline {
+            display: none;
         }
     </style>
 </head>
@@ -227,23 +248,16 @@
             <div id="upload-status" class="upload-status"></div>
         </form>
 
-        <div class="features">
-            <div class="feature">
-                <h3>Molecular Analysis</h3>
-                <p>Decomposes files into atomic components, generating molecular fingerprints that reveal behavioral patterns.</p>
-            </div>
-            <div class="feature">
-                <h3>AST-Aware</h3>
-                <p>Understands code semantics across 20+ languages to detect intent, not just strings.</p>
-            </div>
-            <div class="feature">
-                <h3>Deep Inspection</h3>
-                <p>Leverages Radare2/Rizin and Goblin for deep binary analysis of Mach-O, ELF, and PE.</p>
-            </div>
-            <div class="feature">
-                <h3>Recursive Unpacking</h3>
-                <p>Automatically unpacks archives and inspects nested content at any depth.</p>
-            </div>
+        <div class="capabilities">
+            <div class="capabilities-heading">Capabilities</div>
+            <ul class="cap-list">
+                <li><strong>Molecular analysis</strong> — atomic decomposition into behavioral fingerprints</li>
+                <li><strong>AST-aware</strong> — semantic analysis across <span class="accent">20+ languages</span></li>
+                <li><strong>Deep binary inspection</strong> — Radare2/Rizin for Mach-O, ELF, and PE</li>
+                <li><strong>Recursive unpacking</strong> — archives inspected at any nesting depth</li>
+                <li><strong>YARA-X signatures</strong> — pattern matching against known threat indicators</li>
+                <li><strong>ML classification</strong> — XGBoost models trained on malware molecules</li>
+            </ul>
         </div>
 
         {{template "footer" .}}
