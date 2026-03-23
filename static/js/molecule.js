@@ -106,18 +106,17 @@ function applyLayout(atoms, bonds, layoutName) {
     if (ringArr.length === 0) return; // nothing to layout
     const ringIds = new Set(ringArr);
 
-    switch (layoutName) {
-    case 'helix':
-        layoutHelix(atoms, adj, ringArr, ringIds);
-        break;
-    case 'organic':
-        layoutOrganic(atoms, adj, ringArr, ringIds);
-        break;
-    case 'tetrahedral':
-    default:
-        layoutTetrahedral(atoms, adj, ringArr, ringIds);
-        break;
-    }
+    const layouts = {
+        tetrahedral: layoutTetrahedral,
+        tetrahedral2: layoutTetrahedral2,
+        helix: layoutHelix,
+        helix2: layoutHelix2,
+        helix3: layoutHelix3,
+        organic: layoutOrganic,
+        organic2: layoutOrganic2,
+        organic3: layoutOrganic3,
+    };
+    (layouts[layoutName] || layouts.tetrahedral)(atoms, adj, ringArr, ringIds);
 
     // Center result
     let cx = 0, cy = 0, cz = 0;
@@ -306,6 +305,280 @@ function layoutOrganic(atoms, adj, ringArr, ringIds) {
                 angle = inAngle - spread / 2 + spread * ci / (n - 1);
             }
             const zOff = -prevZ * 0.8;
+            atoms[cid].x = atoms[id].x + len * Math.cos(angle);
+            atoms[cid].y = atoms[id].y + len * Math.sin(angle);
+            atoms[cid].z = atoms[id].z + zOff;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: angle, depth: depth + 1, prevZ: zOff });
+        });
+    }
+}
+
+// ============================================================
+// Layout variants
+// ============================================================
+
+// --- Tetrahedral2: wider ring, steeper tilt, more spread ---
+function layoutTetrahedral2(atoms, adj, ringArr, ringIds) {
+    const BOND = 2.5, N = atoms.length;
+    ringArr.forEach((id, i) => {
+        const angle = (2 * Math.PI * i / ringArr.length) - Math.PI / 2;
+        atoms[id].x = 2.4 * Math.cos(angle);
+        atoms[id].y = 2.4 * Math.sin(angle);
+        atoms[id].z = 0;
+    });
+    const placed = new Set(ringArr);
+    const queue = [];
+    ringArr.forEach(id => {
+        const a = atoms[id];
+        const outAngle = Math.atan2(a.y, a.x);
+        const children = adj[id].filter(n => !placed.has(n));
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            const spread = Math.PI * 0.8;
+            const xyAngle = n === 1 ? outAngle : outAngle - spread / 2 + spread * ci / (n - 1);
+            const zSign = (ci % 2 === 0) ? 1 : -1;
+            const tilt = Math.PI / 4; // 45° — much steeper
+            atoms[cid].x = a.x + BOND * Math.cos(xyAngle) * Math.cos(tilt);
+            atoms[cid].y = a.y + BOND * Math.sin(xyAngle) * Math.cos(tilt);
+            atoms[cid].z = a.z + BOND * Math.sin(tilt) * zSign;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: xyAngle, depth: 1 });
+        });
+    });
+    while (queue.length > 0) {
+        const { id, inAngle, depth } = queue.shift();
+        const children = adj[id].filter(n => !placed.has(n));
+        if (!children.length) continue;
+        const len = BOND * Math.max(0.6, 1 - depth * 0.1);
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            let xyAngle;
+            if (n === 1) xyAngle = inAngle + ((depth % 2) ? 0.35 : -0.35);
+            else { const s = Math.PI * 0.5; xyAngle = inAngle - s / 2 + s * ci / (n - 1); }
+            const zSign = ((ci + depth) % 2 === 0) ? 1 : -1;
+            const tilt = Math.PI / 4;
+            atoms[cid].x = atoms[id].x + len * Math.cos(xyAngle) * Math.cos(tilt);
+            atoms[cid].y = atoms[id].y + len * Math.sin(xyAngle) * Math.cos(tilt);
+            atoms[cid].z = atoms[id].z + len * Math.sin(tilt) * zSign;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: xyAngle, depth: depth + 1 });
+        });
+    }
+    // Repulsion relaxation
+    const vel = atoms.map(() => ({ x: 0, y: 0, z: 0 }));
+    for (let iter = 0; iter < 80; iter++) {
+        for (let i = 0; i < N; i++) { if (ringIds.has(i)) continue;
+        for (let j = i + 1; j < N; j++) { if (ringIds.has(j)) continue;
+            const dx = atoms[i].x - atoms[j].x, dy = atoms[i].y - atoms[j].y, dz = atoms[i].z - atoms[j].z;
+            const d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 0.01;
+            if (d < 1.8) { const f = 0.25 * (1.8 - d);
+                vel[i].x += dx/d*f; vel[i].y += dy/d*f; vel[i].z += dz/d*f;
+                vel[j].x -= dx/d*f; vel[j].y -= dy/d*f; vel[j].z -= dz/d*f; }
+        }}
+        for (let i = 0; i < N; i++) { if (ringIds.has(i)) continue;
+            atoms[i].x += vel[i].x; atoms[i].y += vel[i].y; atoms[i].z += vel[i].z;
+            vel[i].x *= 0.8; vel[i].y *= 0.8; vel[i].z *= 0.8; }
+    }
+}
+
+// --- Helix2: dramatic tall spiral, full 1.5 turns, branches horizontal ---
+function layoutHelix2(atoms, adj, ringArr, ringIds) {
+    const HR = 2.2;        // helix radius
+    const HEIGHT_PER = 2.0; // vertical spacing per ring atom
+    const FULL_TURNS = 1.5; // total helix turns
+    const BR = 2.5;
+
+    const totalAngle = FULL_TURNS * 2 * Math.PI;
+    ringArr.forEach((id, i) => {
+        const t = totalAngle * i / (ringArr.length - 1 || 1);
+        atoms[id].x = HR * Math.cos(t);
+        atoms[id].z = HR * Math.sin(t);
+        atoms[id].y = i * HEIGHT_PER;
+    });
+    const midY = (ringArr.length - 1) * HEIGHT_PER / 2;
+    ringArr.forEach(id => { atoms[id].y -= midY; });
+
+    const placed = new Set(ringArr);
+    const queue = [];
+    ringArr.forEach(id => {
+        const a = atoms[id];
+        const radial = Math.atan2(a.z, a.x); // outward from helix axis
+        const children = adj[id].filter(n => !placed.has(n));
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            const spread = Math.PI * 0.8;
+            const angle = n === 1 ? radial : radial - spread / 2 + spread * ci / (n - 1);
+            // Branches go mostly outward in XZ, slight Y scatter
+            atoms[cid].x = a.x + BR * Math.cos(angle);
+            atoms[cid].z = a.z + BR * Math.sin(angle);
+            atoms[cid].y = a.y + (ci % 2 === 0 ? 0.4 : -0.4);
+            placed.add(cid);
+            queue.push({ id: cid, angle, depth: 1 });
+        });
+    });
+    while (queue.length > 0) {
+        const { id, angle, depth } = queue.shift();
+        const children = adj[id].filter(n => !placed.has(n));
+        if (!children.length) continue;
+        const len = 1.8 * Math.max(0.5, 1 - depth * 0.15);
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            let a2;
+            if (n === 1) a2 = angle + (depth % 2 ? 0.4 : -0.4);
+            else { const s = Math.PI * 0.5; a2 = angle - s / 2 + s * ci / (n - 1); }
+            atoms[cid].x = atoms[id].x + len * Math.cos(a2);
+            atoms[cid].z = atoms[id].z + len * Math.sin(a2);
+            atoms[cid].y = atoms[id].y + ((ci + depth) % 2 === 0 ? 0.5 : -0.5);
+            placed.add(cid);
+            queue.push({ id: cid, angle: a2, depth: depth + 1 });
+        });
+    }
+}
+
+// --- Helix3: tight double-helix inspired, branches tilt up/down steeply ---
+function layoutHelix3(atoms, adj, ringArr, ringIds) {
+    const HR = 1.5;
+    const HEIGHT_PER = 2.5;
+    const FULL_TURNS = 2.0; // two full turns
+    const BR = 2.0;
+
+    const totalAngle = FULL_TURNS * 2 * Math.PI;
+    ringArr.forEach((id, i) => {
+        const t = totalAngle * i / (ringArr.length - 1 || 1);
+        atoms[id].x = HR * Math.cos(t);
+        atoms[id].z = HR * Math.sin(t);
+        atoms[id].y = i * HEIGHT_PER;
+    });
+    const midY = (ringArr.length - 1) * HEIGHT_PER / 2;
+    ringArr.forEach(id => { atoms[id].y -= midY; });
+
+    const placed = new Set(ringArr);
+    const queue = [];
+    ringArr.forEach(id => {
+        const a = atoms[id];
+        const radial = Math.atan2(a.z, a.x);
+        const children = adj[id].filter(n => !placed.has(n));
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            const spread = Math.PI * 0.6;
+            const angle = n === 1 ? radial : radial - spread / 2 + spread * ci / (n - 1);
+            const tilt = Math.PI / 3; // 60° — steep
+            const zSign = (ci % 2 === 0) ? 1 : -1;
+            atoms[cid].x = a.x + BR * Math.cos(angle) * Math.cos(tilt);
+            atoms[cid].z = a.z + BR * Math.sin(angle) * Math.cos(tilt);
+            atoms[cid].y = a.y + BR * Math.sin(tilt) * zSign;
+            placed.add(cid);
+            queue.push({ id: cid, angle, depth: 1 });
+        });
+    });
+    while (queue.length > 0) {
+        const { id, angle, depth } = queue.shift();
+        const children = adj[id].filter(n => !placed.has(n));
+        if (!children.length) continue;
+        const len = 1.6 * Math.max(0.5, 1 - depth * 0.12);
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            let a2;
+            if (n === 1) a2 = angle + (depth % 2 ? 0.3 : -0.3);
+            else { const s = Math.PI * 0.4; a2 = angle - s / 2 + s * ci / (n - 1); }
+            const zSign = ((ci + depth) % 2 === 0) ? 1 : -1;
+            const tilt = Math.PI / 4;
+            atoms[cid].x = atoms[id].x + len * Math.cos(a2) * Math.cos(tilt);
+            atoms[cid].z = atoms[id].z + len * Math.sin(a2) * Math.cos(tilt);
+            atoms[cid].y = atoms[id].y + len * Math.sin(tilt) * zSign;
+            placed.add(cid);
+            queue.push({ id: cid, angle: a2, depth: depth + 1 });
+        });
+    }
+}
+
+// --- Organic2: wider spacing, flatter zigzag, longer bonds ---
+function layoutOrganic2(atoms, adj, ringArr, ringIds) {
+    const BOND = 2.4;
+    ringArr.forEach((id, i) => {
+        const angle = (2 * Math.PI * i / ringArr.length) - Math.PI / 2;
+        atoms[id].x = 2.0 * Math.cos(angle);
+        atoms[id].y = 2.0 * Math.sin(angle);
+        atoms[id].z = 0;
+    });
+    const placed = new Set(ringArr);
+    const queue = [];
+    ringArr.forEach((id, ri) => {
+        const a = atoms[id];
+        const outAngle = Math.atan2(a.y, a.x);
+        const children = adj[id].filter(n => !placed.has(n));
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            const spread = Math.PI * 0.7;
+            const xyAngle = n === 1 ? outAngle : outAngle - spread / 2 + spread * ci / (n - 1);
+            const zOff = ((ci + ri) % 2 === 0 ? 1 : -1) * 0.4; // flatter Z
+            atoms[cid].x = a.x + BOND * Math.cos(xyAngle);
+            atoms[cid].y = a.y + BOND * Math.sin(xyAngle);
+            atoms[cid].z = zOff;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: xyAngle, depth: 1, prevZ: zOff });
+        });
+    });
+    while (queue.length > 0) {
+        const { id, inAngle, depth, prevZ } = queue.shift();
+        const children = adj[id].filter(n => !placed.has(n));
+        if (!children.length) continue;
+        const len = BOND * Math.max(0.65, 1 - depth * 0.08);
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            let angle;
+            if (n === 1) angle = inAngle + (depth % 2 === 0 ? Math.PI / 5 : -Math.PI / 5);
+            else { const spread = Math.PI * 0.5; angle = inAngle - spread / 2 + spread * ci / (n - 1); }
+            const zOff = -prevZ * 0.6;
+            atoms[cid].x = atoms[id].x + len * Math.cos(angle);
+            atoms[cid].y = atoms[id].y + len * Math.sin(angle);
+            atoms[cid].z = atoms[id].z + zOff;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: angle, depth: depth + 1, prevZ: zOff });
+        });
+    }
+}
+
+// --- Organic3: compact, steep zigzag, tight 90° branching ---
+function layoutOrganic3(atoms, adj, ringArr, ringIds) {
+    const BOND = 1.8;
+    ringArr.forEach((id, i) => {
+        const angle = (2 * Math.PI * i / ringArr.length) - Math.PI / 2;
+        atoms[id].x = 1.4 * Math.cos(angle);
+        atoms[id].y = 1.4 * Math.sin(angle);
+        atoms[id].z = 0;
+    });
+    const placed = new Set(ringArr);
+    const queue = [];
+    ringArr.forEach((id, ri) => {
+        const a = atoms[id];
+        const outAngle = Math.atan2(a.y, a.x);
+        const children = adj[id].filter(n => !placed.has(n));
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            const spread = Math.PI * 0.5;
+            const xyAngle = n === 1 ? outAngle : outAngle - spread / 2 + spread * ci / (n - 1);
+            const zOff = ((ci + ri) % 2 === 0 ? 1 : -1) * 1.2; // steep Z
+            atoms[cid].x = a.x + BOND * Math.cos(xyAngle);
+            atoms[cid].y = a.y + BOND * Math.sin(xyAngle);
+            atoms[cid].z = zOff;
+            placed.add(cid);
+            queue.push({ id: cid, inAngle: xyAngle, depth: 1, prevZ: zOff });
+        });
+    });
+    while (queue.length > 0) {
+        const { id, inAngle, depth, prevZ } = queue.shift();
+        const children = adj[id].filter(n => !placed.has(n));
+        if (!children.length) continue;
+        const len = BOND * Math.max(0.6, 1 - depth * 0.12);
+        children.forEach((cid, ci) => {
+            const n = children.length;
+            let angle;
+            // Sharp 90° zigzag
+            if (n === 1) angle = inAngle + (depth % 2 === 0 ? Math.PI / 4 : -Math.PI / 4);
+            else { const spread = Math.PI * 0.4; angle = inAngle - spread / 2 + spread * ci / (n - 1); }
+            const zOff = -prevZ * 0.9; // aggressive flip
             atoms[cid].x = atoms[id].x + len * Math.cos(angle);
             atoms[cid].y = atoms[id].y + len * Math.sin(angle);
             atoms[cid].z = atoms[id].z + zOff;

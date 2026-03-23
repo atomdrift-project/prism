@@ -1050,7 +1050,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
 	switch r.URL.Query().Get("layout") {
-	case "helix", "organic":
+	case "helix", "helix2", "helix3", "organic", "organic2", "organic3", "tetrahedral2":
 		data.Layout = r.URL.Query().Get("layout")
 	default:
 		data.Layout = "tetrahedral"
