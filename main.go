@@ -316,6 +316,7 @@ type resultData struct {
 	FileMetrics  []FileMetricsDisplay
 	LimitedInfo  bool
 	Probability  float64 // top-level litmus ML probability [0.0, 1.0]
+	Layout       string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -1043,6 +1044,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	)
 	data := prepareResultData(res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
+	switch r.URL.Query().Get("layout") {
+	case "helix", "organic":
+		data.Layout = r.URL.Query().Get("layout")
+	default:
+		data.Layout = "tetrahedral"
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := resultTemplate.Execute(w, data); err != nil {
@@ -1816,7 +1823,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		}
 
 		// Build categories in display order
-		displayOrder := []string{"objectives", "micro-behaviors", "metadata", "well-known", "third_party"}
+		displayOrder := []string{"well-known", "objectives", "micro-behaviors", "metadata", "third_party"}
 		var categories []CategoryGroup
 
 		for _, cat := range displayOrder {

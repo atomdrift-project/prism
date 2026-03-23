@@ -24,6 +24,121 @@ func TestRouteSetup(t *testing.T) {
 	newMux()
 }
 
+func TestBuildMalecule_Empty(t *testing.T) {
+	mol := BuildMalecule(nil, "")
+	if len(mol.Atoms) != 0 {
+		t.Errorf("expected 0 atoms for empty findings, got %d", len(mol.Atoms))
+	}
+}
+
+func TestBuildMalecule_RingLayout(t *testing.T) {
+	findings := []FindingForFormula{
+		{ID: "objectives/payload/execute", Severity: SeverityHostile},
+		{ID: "micro-behaviors/crypto/xor-loop", Severity: SeveritySuspicious},
+	}
+	mol := BuildMalecule(findings, "PE·Ob₁H₁")
+
+	if len(mol.Atoms) < 2 {
+		t.Fatalf("expected at least 2 atoms, got %d", len(mol.Atoms))
+	}
+
+	// Ring atoms should exist
+	ringCount := 0
+	for _, a := range mol.Atoms {
+		if a.Ring {
+			ringCount++
+		}
+	}
+	if ringCount < 2 {
+		t.Errorf("expected at least 2 ring atoms, got %d", ringCount)
+	}
+
+	// All atoms should have valid coordinates (not all zero)
+	allZero := true
+	for _, a := range mol.Atoms {
+		if a.X != 0 || a.Y != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Error("all atoms have zero coordinates — layout not applied")
+	}
+
+	// Bonds should exist
+	if len(mol.Bonds) == 0 {
+		t.Error("expected bonds, got none")
+	}
+}
+
+func TestBuildMalecule_CollapsedSeverity(t *testing.T) {
+	// A single-chain finding like well-known/malware/supply-chain/x should collapse
+	// into the ring atom and preserve its severity, not be forced neutral.
+	findings := []FindingForFormula{
+		{ID: "well-known/malware/supply-chain/homabrews", Severity: SeveritySuspicious},
+		{ID: "objectives/payload/execute", Severity: SeverityHostile},
+	}
+	mol := BuildMalecule(findings, "K₁O₁")
+
+	// Find the well-known ring atom (symbol K)
+	var kAtom *MaleculeAtom
+	for i := range mol.Atoms {
+		if mol.Atoms[i].Symbol == "K" && mol.Atoms[i].Ring {
+			kAtom = &mol.Atoms[i]
+			break
+		}
+	}
+	if kAtom == nil {
+		t.Fatal("expected ring atom with symbol K for well-known category")
+	}
+
+	// K should have suspicious severity (from collapsed chain), not neutral
+	if kAtom.Severity == "neutral" {
+		t.Errorf("ring atom K has severity %q, want %q — collapsed findings should preserve severity", kAtom.Severity, "suspicious")
+	}
+
+	// K should have the trait_id from the collapsed chain
+	if kAtom.TraitID == "" {
+		t.Error("ring atom K has empty TraitID — collapsed findings should be preserved")
+	}
+}
+
+func TestBuildMalecule_NoBrokenBonds(t *testing.T) {
+	findings := []FindingForFormula{
+		{ID: "objectives/payload/execute", Severity: SeverityHostile},
+		{ID: "objectives/exfil/upload", Severity: SeverityHostile},
+		{ID: "micro-behaviors/crypto/xor-loop", Severity: SeveritySuspicious},
+		{ID: "micro-behaviors/fs/temp-write", Severity: SeverityNotable},
+		{ID: "well-known/malware/mirai", Severity: SeveritySuspicious},
+	}
+	mol := BuildMalecule(findings, "test")
+
+	atomCount := len(mol.Atoms)
+	for i, bond := range mol.Bonds {
+		if bond[0] < 0 || bond[0] >= atomCount || bond[1] < 0 || bond[1] >= atomCount {
+			t.Errorf("bond %d references out-of-range atom: [%d, %d] (atom count: %d)", i, bond[0], bond[1], atomCount)
+		}
+	}
+}
+
+func TestBuildMalecule_StructuralRingNeutral(t *testing.T) {
+	// Ring atoms that are purely structural (children but no direct traits)
+	// should remain neutral. Here, objectives and micro-behaviors each have
+	// children, so they form ring atoms without direct traitIDs.
+	findings := []FindingForFormula{
+		{ID: "objectives/payload/execute", Severity: SeverityHostile},
+		{ID: "micro-behaviors/crypto/xor-loop", Severity: SeveritySuspicious},
+	}
+	mol := BuildMalecule(findings, "O₁H₁")
+
+	for _, a := range mol.Atoms {
+		if a.Ring && a.TraitID == "" && a.Severity != "neutral" {
+			t.Errorf("structural ring atom %q (category %q) has severity %q, want %q",
+				a.Symbol, a.Category, a.Severity, "neutral")
+		}
+	}
+}
+
 func TestBuildGalaxy_DropperDetection(t *testing.T) {
 	// Simulate files from midd.zip
 	// update.html contains "https://img.spoolsv.cc/seed.php" -> references seed.php

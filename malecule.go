@@ -410,16 +410,16 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 			l1AtomIndices = append(l1AtomIndices, atomIdx)
 		}
 
-		// Ring atoms are always neutral — they are structural category groupings.
-		// Other nodes are neutral only when they have children but no direct traits.
-		sev := SeverityNeutral
-		if !item.isL1 {
-			sev = atomSeverity(n)
+		// Ring atoms with no direct traits are neutral (structural groupings).
+		// Ring atoms that absorbed findings via collapse keep their severity.
+		sev := atomSeverity(n)
+		if item.isL1 && len(n.traitIDs) == 0 {
+			sev = SeverityNeutral
 		}
 
 		atomRadius := 0.22
-		if item.isL1 {
-			atomRadius = 0.32 // uniform ring atom size
+		if item.isL1 && sev == SeverityNeutral {
+			atomRadius = 0.32 // structural ring atom
 		} else {
 			switch {
 			case sev == SeverityHostile:
@@ -428,6 +428,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 				atomRadius = 0.42
 			case sev >= SeverityNotable:
 				atomRadius = 0.35
+			case item.isL1:
+				atomRadius = 0.32
 			default:
 				// atomRadius stays at 0.22
 			}

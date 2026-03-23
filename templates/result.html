@@ -212,7 +212,7 @@
         .molecule-viz {
             flex: 1;
             min-height: 320px;
-            background: var(--carbon);
+            background: var(--white);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -328,11 +328,11 @@
 
         /* Galaxy labels */
         .molecule-label {
-            color: var(--white);
+            color: var(--carbon);
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 10px;
             padding: 2px 6px;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 255, 255, 0.85);
             border-radius: 3px;
             white-space: nowrap;
             pointer-events: none;
@@ -347,8 +347,8 @@
             font-family: 'Oxanium', sans-serif;
             font-size: 11px;
             font-weight: 700;
-            color: var(--white);
-            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            color: var(--carbon);
+            text-shadow: 0 1px 2px rgba(255,255,255,0.6);
             pointer-events: none;
             user-select: none;
             text-align: center;
@@ -365,10 +365,11 @@
             top: 8px;
             left: 8px;
             right: 8px;
-            background: rgba(10, 10, 10, 0.95);
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #e5e7eb;
             border-radius: 8px;
             padding: 12px;
-            color: var(--white);
+            color: var(--carbon);
             font-size: 12px;
             max-height: 200px;
             overflow-y: auto;
@@ -382,12 +383,12 @@
             align-items: center;
             margin-bottom: 8px;
             padding-bottom: 6px;
-            border-bottom: 1px solid var(--graphite);
+            border-bottom: 1px solid #e5e7eb;
         }
         .galaxy-info-title {
             font-family: 'SF Mono', Consolas, monospace;
             font-weight: 500;
-            color: var(--mist);
+            color: var(--carbon);
         }
         .galaxy-info-close {
             cursor: pointer;
@@ -395,21 +396,21 @@
             font-size: 16px;
             line-height: 1;
         }
-        .galaxy-info-close:hover { color: var(--white); }
+        .galaxy-info-close:hover { color: var(--carbon); }
         .galaxy-info-formula {
             font-family: 'Oxanium', sans-serif;
             font-size: 14px;
             margin-bottom: 8px;
-            color: var(--mist);
+            color: var(--graphite);
         }
         .galaxy-info-findings {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 11px;
             line-height: 1.5;
         }
-        .galaxy-info-findings .hostile { color: #f87171; }
-        .galaxy-info-findings .suspicious { color: #fbbf24; }
-        .galaxy-info-findings .notable { color: #60a5fa; }
+        .galaxy-info-findings .hostile { color: var(--hostile); }
+        .galaxy-info-findings .suspicious { color: #92400e; }
+        .galaxy-info-findings .notable { color: var(--notable); }
 
         /* Findings Tables */
         .findings-section {
@@ -1091,6 +1092,7 @@
     </div>
 
     <script id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
+    <script id="molecule-layout" type="application/json">"{{.Layout}}"</script>
     <script type="module" src="/static/js/molecule.js"></script>
 </body>
 </html>
