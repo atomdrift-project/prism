@@ -287,6 +287,41 @@ func TestBuildGalaxy_SingleFile(t *testing.T) {
 	}
 }
 
+func TestBuildGalaxy_ArchiveWithSingleInnerFile(t *testing.T) {
+	// An archive container + one inner file should NOT produce a galaxy.
+	// BuildGalaxy filters to archive contents (!! paths), leaving 1 file.
+	// The caller should fall back to BuildMalecule for the single file.
+	files := []FileFindings{
+		{
+			Path:     "/tmp/sample.zip",
+			Risk:     "suspicious",
+			Findings: []FindingForFormula{{ID: "metadata/format/zip", Severity: SeverityNotable}},
+		},
+		{
+			Path:     "/tmp/sample.zip!!malware.exe",
+			Risk:     "hostile",
+			Findings: []FindingForFormula{{ID: "objectives/payload/execute", Severity: SeverityHostile}},
+		},
+	}
+
+	galaxy := BuildGalaxy(files)
+
+	if galaxy.IsGalaxy {
+		t.Error("archive with single inner file should not be a galaxy")
+	}
+
+	// Verify that BuildMalecule produces a real molecule when the inner file
+	// has enough findings to form a structure (multiple categories).
+	multiFindings := []FindingForFormula{
+		{ID: "objectives/payload/execute", Severity: SeverityHostile},
+		{ID: "micro-behaviors/crypto/xor-loop", Severity: SeveritySuspicious},
+	}
+	mol := BuildMalecule(multiFindings, "PE·Ex₁H₁")
+	if len(mol.Atoms) == 0 {
+		t.Error("BuildMalecule should produce atoms for the inner file's findings")
+	}
+}
+
 func TestBuildGalaxy_MoleculePositioning(t *testing.T) {
 	files := []FileFindings{
 		{

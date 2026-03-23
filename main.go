@@ -230,11 +230,20 @@ type FileStringsDisplay struct {
 	FileType       string
 	Probability    float64
 	Strings        []StringDisplay
+	Sections       []StringSectionGroup // strings grouped by section (when section data available)
+	HasSections    bool                 // true when at least one string has section info
 }
 
 type StringDisplay struct {
 	Value   string
 	Section string
+	Offset  string
+}
+
+// StringSectionGroup groups strings by their binary section.
+type StringSectionGroup struct {
+	Section string
+	Strings []StringDisplay
 }
 
 // FileSymbolsDisplay represents symbols for a single file.
@@ -319,8 +328,11 @@ type resultData struct {
 	FileMetrics  []FileMetricsDisplay
 	LimitedInfo  bool
 	Probability  float64 // top-level litmus ML probability [0.0, 1.0]
-	Layout       string // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
-	BuildCommit  string // git commit short hash, set at build time
+	Layout        string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
+	BuildCommit   string  // git commit short hash, set at build time
+	SuspiciousT   float64 // litmus suspicious threshold
+	HostileT      float64 // litmus hostile threshold
+	TraitColWidth string  // CSS width for trait ID column, computed from longest trait
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -609,11 +621,9 @@ func main() {
 		// bandGradient returns a CSS linear-gradient matching litmus's
 		// two-block confidence indicator. Each classification band has its
 		// own color ramp, and the two gradient stops represent left/right
-		// block colors at the current band progress — identical to the
-		// indicator_colors logic in litmus/src/output.rs (dark theme).
-		"bandGradient": func(p float64) template.CSS {
-			const suspT = 0.975
-			const hostT = 0.99
+		// block colors at the current band progress. Thresholds come from
+		// the litmus response.
+		"bandGradient": func(p, suspT, hostT float64) template.CSS {
 
 			type rgb struct{ r, g, b float64 }
 			mix := func(a, b rgb, t float64) rgb {
@@ -776,7 +786,7 @@ func loadConfig() error {
 		litmusAddr = os.Getenv("LITMUS_ADDR")
 	}
 	if litmusAddr == "" {
-		return errors.New("LITMUS_ADDR is required (set via --litmus-addr flag or LITMUS_ADDR env var)")
+		litmusAddr = "127.0.0.1:8081"
 	}
 
 	// Initialize HTTP client for litmus server
@@ -1456,6 +1466,16 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Formula = template.HTML("?")
 		return data
 	}
+	// Use thresholds from litmus response, with sensible defaults.
+	data.SuspiciousT = litmusResp.Thresholds.Suspicious
+	data.HostileT = litmusResp.Thresholds.Hostile
+	if data.SuspiciousT == 0 {
+		data.SuspiciousT = 0.65
+	}
+	if data.HostileT == 0 {
+		data.HostileT = 0.887
+	}
+
 	var cleaveResp cleaveAPIResponse
 	if len(litmusResp.Cleave) > 0 {
 		if err := json.Unmarshal(litmusResp.Cleave, &cleaveResp); err != nil {
@@ -1543,6 +1563,26 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	data.FindingCount = strconv.Itoa(totalFindings)
+
+	// Build traits lookup for molecule info panel (trait ID → description + evidence).
+	traitDetails := make(map[string]*TraitDetail)
+	for i := range report.Files {
+		for _, f := range report.Files[i].Findings {
+			if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
+				continue
+			}
+			if _, exists := traitDetails[f.ID]; exists {
+				continue // deduplicate
+			}
+			td := &TraitDetail{Desc: f.Desc, Crit: f.Crit}
+			for _, e := range f.Evidence {
+				if e.Value != "" {
+					td.Evidence = append(td.Evidence, e.Value)
+				}
+			}
+			traitDetails[f.ID] = td
+		}
+	}
 
 	// Set verdict and risk level from litmus classification.
 	switch res.Classification {
@@ -1658,12 +1698,28 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 
 		galaxy := BuildGalaxy(fileFindings)
-		galaxyJSON, err := json.Marshal(galaxy)
-		if err != nil {
-			logger.Debug("failed to marshal galaxy data", "error", err)
-			data.MoleculeJSON = template.JS("{}")
+		if galaxy.IsGalaxy {
+			galaxy.Traits = traitDetails
+			galaxyJSON, err := json.Marshal(galaxy)
+			if err != nil {
+				logger.Debug("failed to marshal galaxy data", "error", err)
+				data.MoleculeJSON = template.JS("{}")
+			} else {
+				data.MoleculeJSON = template.JS(galaxyJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
+			}
 		} else {
-			data.MoleculeJSON = template.JS(galaxyJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
+			// Galaxy rejected (e.g. archive with single inner file) — fall through to single molecule
+			mol := BuildMalecule(findings, formula)
+			mol.Filename = filename
+			mol.FileType = data.FileType
+			mol.Traits = traitDetails
+			molJSON, err := json.Marshal(mol)
+			if err != nil {
+				logger.Debug("failed to marshal molecule data", "error", err)
+				data.MoleculeJSON = template.JS("{}")
+			} else {
+				data.MoleculeJSON = template.JS(molJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
+			}
 		}
 	} else {
 		// Single file - build single molecule
@@ -1731,8 +1787,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				continue
 			}
 
-			// Only show baseline or higher (skip component/empty)
-			if f.Crit == "" || f.Crit == "component" {
+			// Only show notable or higher (skip baseline/component/empty)
+			if f.Crit == "" || f.Crit == "component" || f.Crit == "baseline" {
 				continue
 			}
 
@@ -1829,22 +1885,52 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			categoryMap[cat] = findings
 		}
 
-		// Build categories in display order
-		displayOrder := []string{"well-known", "objectives", "micro-behaviors", "metadata", "third_party"}
-		var categories []CategoryGroup
+		// Build categories sorted by highest criticality finding, then by default order.
+		defaultOrder := map[string]int{"well-known": 0, "objectives": 1, "micro-behaviors": 2, "metadata": 3, "third_party": 4}
+		critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
 
-		for _, cat := range displayOrder {
-			if findings, ok := categoryMap[cat]; ok && len(findings) > 0 {
-				name := categoryNames[cat]
-				if name == "" {
-					name = cat
-				}
-				categories = append(categories, CategoryGroup{
-					Name:     name,
-					Findings: findings,
-				})
+		var categories []CategoryGroup
+		for cat, findings := range categoryMap {
+			if len(findings) == 0 {
+				continue
 			}
+			name := categoryNames[cat]
+			if name == "" {
+				name = cat
+			}
+			categories = append(categories, CategoryGroup{
+				Name:     name,
+				Findings: findings,
+			})
 		}
+
+		// Sort: highest criticality first, then by default category order.
+		sort.Slice(categories, func(i, j int) bool {
+			maxCrit := func(cg CategoryGroup) int {
+				best := 0
+				for _, f := range cg.Findings {
+					if r := critRank[f.Crit]; r > best {
+						best = r
+					}
+				}
+				return best
+			}
+			ci, cj := maxCrit(categories[i]), maxCrit(categories[j])
+			if ci != cj {
+				return ci > cj
+			}
+			// Same criticality: use default order
+			catKey := func(name string) string {
+				for k, v := range categoryNames {
+					if v == name {
+						return k
+					}
+				}
+				return name
+			}
+			oi, oj := defaultOrder[catKey(categories[i].Name)], defaultOrder[catKey(categories[j].Name)]
+			return oi < oj
+		})
 
 		if len(categories) > 0 {
 			// Extract basename
@@ -1891,7 +1977,42 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 			strs = append(strs, StringDisplay{
 				Value:   s.Value,
 				Section: s.Section,
+				Offset:  s.Offset,
 			})
+		}
+
+		// Sort by offset (hex string comparison works for zero-padded offsets;
+		// for non-padded, parse as integers).
+		sort.Slice(strs, func(i, j int) bool {
+			oi, _ := strconv.ParseUint(strings.TrimPrefix(strs[i].Offset, "0x"), 16, 64)
+			oj, _ := strconv.ParseUint(strings.TrimPrefix(strs[j].Offset, "0x"), 16, 64)
+			return oi < oj
+		})
+
+		// Group strings by section when section data is available.
+		hasSections := false
+		sectionOrder := []string{}
+		sectionMap := map[string][]StringDisplay{}
+		for _, s := range strs {
+			sec := s.Section
+			if sec != "" {
+				hasSections = true
+			} else {
+				sec = "(other)"
+			}
+			if _, ok := sectionMap[sec]; !ok {
+				sectionOrder = append(sectionOrder, sec)
+			}
+			sectionMap[sec] = append(sectionMap[sec], s)
+		}
+		var sections []StringSectionGroup
+		if hasSections {
+			for _, sec := range sectionOrder {
+				sections = append(sections, StringSectionGroup{
+					Section: sec,
+					Strings: sectionMap[sec],
+				})
+			}
 		}
 
 		result = append(result, FileStringsDisplay{
@@ -1903,6 +2024,8 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 			Formula:        file.Formula,
 			FileType:       strings.ToUpper(file.FileType),
 			Strings:        strs,
+			Sections:       sections,
+			HasSections:    hasSections,
 		})
 	}
 
@@ -2207,17 +2330,23 @@ func formatBytes(b int64) string {
 
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
+type litmusThresholds struct {
+	Suspicious float64 `json:"suspicious"`
+	Hostile    float64 `json:"hostile"`
+}
+
 type litmusAPIResponse struct {
-	Path           string              `json:"path"`
-	Classification string              `json:"classification"`
-	Formula        string              `json:"formula"`
-	FileType       string              `json:"file_type"`
-	SHA256         string              `json:"sha256"`
-	Cleave         json.RawMessage     `json:"cleave,omitempty"`
+	Path           string               `json:"path"`
+	Classification string               `json:"classification"`
+	Formula        string               `json:"formula"`
+	FileType       string               `json:"file_type"`
+	SHA256         string               `json:"sha256"`
+	Cleave         json.RawMessage      `json:"cleave,omitempty"`
 	EmbeddedFiles  []litmusEmbeddedFile `json:"embedded_files,omitempty"`
 	TopFindings    []litmusTopFinding   `json:"top_findings,omitempty"`
-	SizeBytes      int64               `json:"size_bytes"`
-	Probability    float64             `json:"probability"`
+	SizeBytes      int64                `json:"size_bytes"`
+	Probability    float64              `json:"probability"`
+	Thresholds     litmusThresholds     `json:"thresholds"`
 }
 
 // litmusEmbeddedFile is a per-file ML evaluation from litmus for archive members.

@@ -2,6 +2,10 @@ import * as THREE from '/static/js/three.module.js';
 import { CSS2DRenderer, CSS2DObject } from '/static/js/CSS2DRenderer.js';
 import { OrbitControls } from '/static/js/OrbitControls.js';
 
+// Apply dynamic styles from data attributes (CSP-safe, no inline styles)
+document.querySelectorAll('[data-gradient]').forEach(el => { el.style.background = el.getAttribute('data-gradient'); });
+document.querySelectorAll('[data-width]').forEach(el => { el.style.width = el.getAttribute('data-width'); });
+
 // Molecule data injected by Go template into a JSON script tag
 const moleculeData = JSON.parse(document.getElementById('molecule-data').textContent);
 
@@ -56,10 +60,10 @@ scene.add(moleculeGroup);
 
 // Color mapping for severity
 const severityColors = {
-    hostile: 0xef4444,
-    suspicious: 0xeab308,
-    notable: 0x3b82f6,
-    neutral: 0x9ca3af
+    hostile: 0xff6b6b,
+    suspicious: 0xffd43b,
+    notable: 0x74b9ff,
+    neutral: 0xb8bec5
 };
 
 // Returns true if this atom is a dim supporting/neutral atom.
@@ -708,6 +712,9 @@ function showMoleculeInfo(mol) {
     infoPanel.classList.add('visible');
 }
 
+// Traits lookup from molecule data (trait ID → {desc, crit, evidence[]})
+const traitsLookup = moleculeData.traits || {};
+
 function showAtomInfo(atom, mol) {
     if (atom.category === 'file') {
         const filename = moleculeData.filename || (mol ? basename(mol.path) : 'file');
@@ -725,18 +732,53 @@ function showAtomInfo(atom, mol) {
 
     const symbol = atom.symbol;
     const category = atom.category || 'unknown';
-    const baseline = isBaseline(atom);
-    infoTitle.textContent = symbol + ' \u00b7 ' + category + (baseline ? ' (baseline)' : '');
-    infoFormula.textContent = mol ? basename(mol.path) : '';
+    const bl = isBaseline(atom);
+    infoTitle.textContent = symbol + ' \u00b7 ' + category + (bl ? ' (baseline)' : '');
+    infoFormula.textContent = '';
 
-    const severity = baseline ? 'dim' : (atom.severity || 'notable');
     infoFindings.replaceChildren();
     if (atom.trait_id) {
-        atom.trait_id.split(', ').forEach(t => {
-            const div = document.createElement('div');
-            div.className = severity;
-            div.textContent = t;
-            infoFindings.appendChild(div);
+        // Deduplicate trait IDs
+        const seen = new Set();
+        const traitIds = atom.trait_id.split(', ').filter(t => {
+            if (seen.has(t)) return false;
+            seen.add(t);
+            return true;
+        });
+
+        traitIds.forEach(tid => {
+            const detail = traitsLookup[tid];
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = '6px';
+
+            // Trait ID line
+            const idLine = document.createElement('div');
+            idLine.className = bl ? 'dim' : (atom.severity || 'notable');
+            idLine.textContent = tid;
+            wrapper.appendChild(idLine);
+
+            if (detail) {
+                // Description
+                if (detail.desc) {
+                    const descLine = document.createElement('div');
+                    descLine.style.fontSize = '11px';
+                    descLine.style.color = '#9ca3af';
+                    descLine.textContent = detail.desc;
+                    wrapper.appendChild(descLine);
+                }
+                // Evidence
+                if (detail.evidence && detail.evidence.length > 0) {
+                    detail.evidence.forEach(ev => {
+                        const evLine = document.createElement('div');
+                        evLine.style.fontSize = '10px';
+                        evLine.style.color = '#6b7280';
+                        evLine.textContent = '\u2192 ' + ev;
+                        wrapper.appendChild(evLine);
+                    });
+                }
+            }
+
+            infoFindings.appendChild(wrapper);
         });
     } else {
         const div = document.createElement('div');

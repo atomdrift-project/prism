@@ -88,6 +88,29 @@ var (
 	Gold         = Element{Number: 79, Symbol: "Au", Name: "Gold"}          // Quality
 	Silver       = Element{Number: 47, Symbol: "Ag", Name: "Silver"}        // Format
 	Platinum     = Element{Number: 78, Symbol: "Pt", Name: "Platinum"}      // Lang
+	Sulfur        = Element{Number: 16, Symbol: "S", Name: "Sulfur"}          // Supply-chain (S for Supply)
+	Magnesium     = Element{Number: 12, Symbol: "Mg", Name: "Magnesium"}     // Mem (Mg for Memory)
+	Titanium      = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}      // Time (Ti for Time)
+	Uranium       = Element{Number: 92, Symbol: "U", Name: "Uranium"}        // UI (U for UI)
+	Bismuth       = Element{Number: 83, Symbol: "Bi", Name: "Bismuth"}       // Binary (Bi for Binary)
+	Protactinium  = Element{Number: 91, Symbol: "Pa", Name: "Protactinium"}  // Package (Pa for Package)
+	Silicon       = Element{Number: 14, Symbol: "Si", Name: "Silicon"}       // Signed (Si for Signed)
+	Vanadium      = Element{Number: 23, Symbol: "V", Name: "Vanadium"}       // Vendor (V for Vendor)
+	Lithium       = Element{Number: 3, Symbol: "Li", Name: "Lithium"}        // Library (Li for Library)
+	Argon         = Element{Number: 18, Symbol: "Ar", Name: "Argon"}         // Archive (Ar for Archive)
+	Berkelium     = Element{Number: 97, Symbol: "Bk", Name: "Berkelium"}     // Builder (Bk for Build)
+	Boron         = Element{Number: 5, Symbol: "B", Name: "Boron"}           // Bundle (B for Bundle)
+	Cerium        = Element{Number: 58, Symbol: "Ce", Name: "Cerium"}        // Compiler (Ce for Compile)
+	Californium   = Element{Number: 98, Symbol: "Cf", Name: "Californium"}   // Config (Cf for Config)
+	Germanium     = Element{Number: 32, Symbol: "Ge", Name: "Germanium"}     // Dev
+	Rhodium       = Element{Number: 45, Symbol: "Rh", Name: "Rhodium"}       // Entitlements (Rh for Rights)
+	Iron          = Element{Number: 26, Symbol: "Fe", Name: "Iron"}          // File (Fe for File)
+	Helium        = Element{Number: 2, Symbol: "He", Name: "Helium"}         // Hardening (He for Hardening)
+	Indium        = Element{Number: 49, Symbol: "In", Name: "Indium"}        // Import (In for Import)
+	Americium     = Element{Number: 95, Symbol: "Am", Name: "Americium"}     // Analytics (Am for Analytics)
+	Neon          = Element{Number: 10, Symbol: "Ne", Name: "Neon"}          // Arch
+	Tellurium     = Element{Number: 52, Symbol: "Te", Name: "Tellurium"}     // Tools (Te for Tools)
+	Terbium       = Element{Number: 65, Symbol: "Tb", Name: "Terbium"}       // Encoded-payload
 )
 
 var categoryElements = map[string]Element{
@@ -113,6 +136,7 @@ var categoryElements = map[string]Element{
 	"privilege-escalation": Praseodymium,
 	"evasion":              Erbium,
 	"resource-development": Rubidium,
+	"supply-chain":         Sulfur,
 
 	// Micro-behavior subcategories
 	"crypto":         Chromium,
@@ -125,14 +149,36 @@ var categoryElements = map[string]Element{
 	"hardware":       Hafnium,
 	"network":        Neptunium,
 	"dylib":          Darmstadtium,
+	"mem":            Magnesium,
+	"time":           Titanium,
+	"ui":             Uranium,
 
 	// Metadata subcategories
-	"quality": Gold,
-	"format":  Silver,
-	"lang":    Platinum,
+	"quality":         Gold,
+	"format":          Silver,
+	"lang":            Platinum,
+	"binary":          Bismuth,
+	"package":         Protactinium,
+	"signed":          Silicon,
+	"vendor":          Vanadium,
+	"library":         Lithium,
+	"archive":         Argon,
+	"builder":         Berkelium,
+	"bundle":          Boron,
+	"compiler":        Cerium,
+	"config":          Californium,
+	"dev":             Germanium,
+	"entitlements":    Rhodium,
+	// NOTE: "file" deliberately omitted — collides with micro-behaviors/fs/file path segments.
+	"hardening":       Helium,
+	"import":          Indium,
+	"analytics":       Americium,
+	"arch":            Neon,
+	"encoded-payload": Terbium,
 
 	// Well-known
 	"malware": Potassium,
+	"tools":   Tellurium,
 }
 
 // categoryToElement maps a category path segment to its element.
@@ -155,13 +201,21 @@ type MaleculeAtom struct {
 	Ring     bool    `json:"ring,omitempty"`
 }
 
+// TraitDetail holds display information for a trait, keyed by trait ID.
+type TraitDetail struct {
+	Desc     string   `json:"desc"`
+	Crit     string   `json:"crit"`
+	Evidence []string `json:"evidence,omitempty"`
+}
+
 // MaleculeData contains the complete molecule data for 3D rendering.
 type MaleculeData struct {
-	Filename string         `json:"filename,omitempty"`
-	FileType string         `json:"fileType,omitempty"`
-	Formula  string         `json:"formula"`
-	Atoms    []MaleculeAtom `json:"atoms"`
-	Bonds    [][2]int       `json:"bonds"`
+	Filename string                  `json:"filename,omitempty"`
+	FileType string                  `json:"fileType,omitempty"`
+	Formula  string                  `json:"formula"`
+	Atoms    []MaleculeAtom          `json:"atoms"`
+	Bonds    [][2]int                `json:"bonds"`
+	Traits   map[string]*TraitDetail `json:"traits,omitempty"`
 }
 
 // FileMolecule represents a single file's molecule in a galaxy.
@@ -187,9 +241,10 @@ type GalaxyLink struct {
 
 // GalaxyData contains multiple molecules for archive visualization.
 type GalaxyData struct {
-	Molecules []FileMolecule `json:"molecules"`
-	Links     []GalaxyLink   `json:"links"` // Dropper relationships
-	IsGalaxy  bool           `json:"isGalaxy"`
+	Molecules []FileMolecule          `json:"molecules"`
+	Links     []GalaxyLink            `json:"links"`  // Dropper relationships
+	IsGalaxy  bool                    `json:"isGalaxy"`
+	Traits    map[string]*TraitDetail `json:"traits,omitempty"`
 }
 
 // FindingForFormula is a simplified finding for formula generation.

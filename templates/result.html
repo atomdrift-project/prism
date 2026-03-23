@@ -15,15 +15,15 @@
             --graphite: #404040;
             --iron: #52525b;
             --slate: #6b7280;
-            --mist: #f3f4f6;
+            --mist: #f5f5f5;
             --white: #ffffff;
-            --cream: #fafaf9;
+            --border: #e8e8e8;
             --isotope: #3b82f6;
             --isotope-dim: rgba(59, 130, 246, 0.1);
             --toxic: #d0ff00;
             --toxic-muted: #9abe25;
             --toxic-dark: #4a6b0f;
-            --toxic-dim: rgba(208, 255, 0, 0.08);
+            --toxic-dim: rgba(154, 190, 37, 0.2);
             --hostile: #ef4444;
             --suspicious: #eab308;
             --notable: #3b82f6;
@@ -35,7 +35,7 @@
         }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--cream);
+            background: var(--white);
             color: var(--carbon);
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
@@ -92,26 +92,37 @@
         /* Hero Section */
         .hero {
             background: var(--white);
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--border);
             border-radius: 12px;
             overflow: hidden;
             margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
         }
         .verdict-bar {
             padding: 12px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
+        }
+        .verdict-bar.sev-hostile { background: rgba(239, 68, 68, 0.16); }
+        .verdict-bar.sev-suspicious { background: rgba(234, 179, 8, 0.16); }
+        .verdict-bar.sev-notable { background: rgba(59, 130, 246, 0.12); }
+        .verdict-bar.sev-benign { background: rgba(154, 190, 37, 0.16); }
+        .verdict-bar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
         }
         .hero-body {
             display: flex;
         }
         .molecule-info {
-            width: 320px;
+            width: 45%;
             flex-shrink: 0;
             padding: 24px;
-            border-left: 1px solid #e5e7eb;
+            border-left: 1px solid var(--border);
         }
         .file-name {
             display: inline-block;
@@ -119,15 +130,17 @@
             font-size: 13px;
             font-weight: 500;
             color: var(--carbon);
-            border-left: 3px solid var(--toxic);
-            padding-left: 10px;
-            word-break: break-all;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 360px;
         }
-        .header-sha256 {
+        .verdict-meta {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 11px;
             color: var(--slate);
-            word-break: break-all;
+            padding: 4px 24px 8px;
+            border-bottom: 1px solid var(--border);
         }
         .verdict {
             display: flex;
@@ -143,11 +156,8 @@
             font-weight: 700;
             font-size: 14px;
             letter-spacing: 0.5px;
+            color: var(--carbon);
         }
-        .verdict-value.hostile { color: var(--hostile); }
-        .verdict-value.suspicious { color: var(--suspicious); }
-        .verdict-value.notable { color: var(--notable); }
-        .verdict-value.baseline { color: var(--toxic-muted); }
 
         /* Litmus band — two-color gradient square */
         .band {
@@ -155,14 +165,6 @@
             width: 14px;
             height: 10px;
             border-radius: 2px;
-        }
-        .file-band {
-            display: inline-block;
-            width: 12px;
-            height: 8px;
-            border-radius: 2px;
-            margin-left: 6px;
-            vertical-align: middle;
         }
         .formula-label {
             font-size: 11px;
@@ -237,7 +239,7 @@
         .tabs {
             display: flex;
             gap: 4px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
             margin-bottom: 0;
         }
         .tab {
@@ -305,7 +307,7 @@
         footer {
             margin-top: 48px;
             padding-top: 24px;
-            border-top: 1px solid var(--mist);
+            border-top: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             font-size: 14px;
@@ -368,7 +370,7 @@
             left: 8px;
             right: 8px;
             background: rgba(255, 255, 255, 0.95);
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--border);
             border-radius: 8px;
             padding: 12px;
             color: var(--carbon);
@@ -385,7 +387,7 @@
             align-items: center;
             margin-bottom: 8px;
             padding-bottom: 6px;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
         }
         .galaxy-info-title {
             font-family: 'SF Mono', Consolas, monospace;
@@ -420,10 +422,11 @@
         }
         .file-findings {
             background: var(--white);
-            border: 1px solid #e5e7eb;
+            border: 1px solid var(--border);
             border-radius: 8px;
             margin-bottom: 16px;
             overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
         .file-header {
             display: flex;
@@ -431,8 +434,12 @@
             gap: 12px;
             padding: 12px 16px;
             background: var(--mist);
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
         }
+        .file-header.sev-hostile { background: rgba(239, 68, 68, 0.16); border-bottom-color: rgba(239, 68, 68, 0.24); }
+        .file-header.sev-suspicious { background: rgba(234, 179, 8, 0.16); border-bottom-color: rgba(234, 179, 8, 0.24); }
+        .file-header.sev-notable { background: rgba(59, 130, 246, 0.12); border-bottom-color: rgba(59, 130, 246, 0.2); }
+        .file-header.sev-benign { background: rgba(154, 190, 37, 0.16); border-bottom-color: rgba(154, 190, 37, 0.24); }
         .file-header-left {
             display: flex;
             align-items: center;
@@ -446,87 +453,49 @@
             margin-left: auto;
             flex-shrink: 0;
         }
-        .file-header-sha256 {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11px;
-            color: var(--slate);
-        }
         .file-risk-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
+            width: 14px;
+            height: 12px;
+            border-radius: 2px;
             flex-shrink: 0;
         }
-        .file-risk-dot.hostile { background: var(--hostile); }
-        .file-risk-dot.suspicious { background: var(--suspicious); }
-        .file-risk-dot.notable { background: var(--notable); }
-        .file-risk-dot.benign { background: var(--toxic-muted); }
         .file-eval-badge {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 10px;
-            font-weight: 600;
+            font-family: 'Oxanium', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            padding: 1px 6px;
-            border-radius: 3px;
-            margin-left: 6px;
-        }
-        .file-eval-badge.hostile {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--hostile);
-        }
-        .file-eval-badge.suspicious {
-            background: rgba(245, 158, 11, 0.12);
-            color: #92400e;
-        }
-        .file-eval-badge.benign {
-            background: var(--toxic-dim);
-            color: var(--toxic-dark);
+            color: var(--carbon);
         }
         .file-name-header {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 13px;
             font-weight: 500;
             color: var(--carbon);
-        }
-        .file-formula {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--slate);
-            margin-left: auto;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .category-section {
             margin-bottom: 16px;
         }
         .category-title {
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 600;
-            color: var(--slate);
+            color: var(--white);
             text-transform: uppercase;
             letter-spacing: 0.5px;
             padding: 8px 16px;
-            background: rgba(0, 0, 0, 0.02);
-            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+            background: var(--carbon);
+            border-bottom: 1px solid var(--graphite);
         }
         .findings-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
-            table-layout: fixed;
         }
-        .findings-table th {
-            text-align: left;
-            font-weight: 500;
-            color: var(--slate);
-            padding: 10px 16px;
-            background: var(--mist);
-            border-bottom: 1px solid #e5e7eb;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-        .findings-table .col-crit { width: 90px; }
-        .findings-table .col-trait { width: 260px; }
+        .findings-table .col-crit { width: 8em; white-space: nowrap; }
+        .findings-table .col-trait { white-space: nowrap; }
         .findings-table td {
             padding: 12px 16px;
             border-bottom: 1px solid var(--mist);
@@ -560,8 +529,8 @@
             color: var(--notable);
         }
         .crit-badge.baseline {
-            background: var(--toxic-dim);
-            color: var(--toxic-dark);
+            background: rgba(107, 114, 128, 0.1);
+            color: var(--slate);
         }
         .trait-id {
             font-family: 'SF Mono', Consolas, monospace;
@@ -632,7 +601,7 @@
             color: var(--slate);
             padding: 10px 16px;
             background: var(--mist);
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.3px;
@@ -644,6 +613,13 @@
             font-size: 12px;
             color: var(--graphite);
             word-break: break-all;
+        }
+        .string-offset {
+            color: var(--slate);
+            font-size: 11px;
+            white-space: nowrap;
+            width: 80px;
+            word-break: normal;
         }
         .strings-table tr:hover {
             background: rgba(0, 0, 0, 0.01);
@@ -712,7 +688,7 @@
             color: var(--slate);
             padding: 10px 16px;
             background: var(--mist);
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.3px;
@@ -762,30 +738,30 @@
         }
 
         /* Metrics Tab */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 16px;
-            padding: 16px;
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
         }
-        .metric-card {
-            background: var(--white);
-            border: 1px solid var(--mist);
-            border-radius: 8px;
-            padding: 16px;
+        .metrics-table td {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .metrics-table tr:last-child td {
+            border-bottom: none;
+        }
+        .metrics-table tr:hover {
+            background: rgba(0, 0, 0, 0.01);
         }
         .metric-label {
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--slate);
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-            margin-bottom: 4px;
+            color: var(--iron);
+            font-size: 13px;
+            width: 200px;
         }
         .metric-value {
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 18px;
-            font-weight: 600;
+            font-size: 13px;
+            font-weight: 500;
             color: var(--carbon);
         }
 
@@ -796,7 +772,7 @@
             .molecule-info {
                 width: 100%;
                 border-left: none;
-                border-top: 1px solid #e5e7eb;
+                border-top: 1px solid var(--border);
             }
             .molecule-viz {
                 min-height: 240px;
@@ -819,16 +795,16 @@
         </header>
 
         <section class="hero">
-            <div class="verdict-bar">
-                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <div class="file-name">{{.Filename}}</div>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                    <span class="header-sha256">{{.SHA256}}</span>
+            <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
+                <div class="verdict-bar-left">
+                    <span class="band" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                    <div class="file-name" title="{{.Filename}}">{{.Filename}}</div>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                 </div>
                 <div class="verdict">
-                    <span class="band" style="background: {{bandGradient .Probability}}"></span>
-                    <span class="verdict-value {{if eq .Verdict "HOSTILE"}}hostile{{else if eq .Verdict "SUSPICIOUS"}}suspicious{{else if eq .Verdict "NOTABLE"}}notable{{else}}baseline{{end}}">{{.Verdict}}</span>
+                    <span class="verdict-value">{{.Verdict}}</span>
                 </div>
             </div>
+            <div class="verdict-meta">SHA256 {{.SHA256}}</div>
             <div class="hero-body">
             <div class="molecule-viz">
                 <div class="molecule-container">
@@ -876,15 +852,13 @@
                     {{if .FileFindings}}
                         {{range .FileFindings}}
                         <div class="file-findings">
-                            <div class="file-header">
+                            <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
                                 <div class="file-header-left">
-                                    <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                    <span class="file-name-header">{{.Basename}}</span>
-                                    <span class="file-header-sha256">{{.SHA256}}</span>
+                                    <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                    <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                                     {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                                    {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
                                 </div>
-                                {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
+                                {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                             </div>
                             {{range .Categories}}
                             <div class="category-section">
@@ -893,8 +867,8 @@
                                     <tbody>
                                         {{range .Findings}}
                                         <tr>
-                                            <td><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
-                                            <td class="trait-id">{{.ID}}</td>
+                                            <td class="col-crit"><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
+                                            <td class="col-trait trait-id">{{.ID}}</td>
                                             <td>
                                                 <div class="trait-desc">{{.Desc}}</div>
                                                 {{if .Evidence}}
@@ -927,32 +901,41 @@
                 {{if .FileStrings}}
                     {{range .FileStrings}}
                     <div class="file-findings">
-                        <div class="file-header">
+                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
                             <div class="file-header-left">
-                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                <span class="file-name-header">{{.Basename}}</span>
-                                <span class="file-header-sha256">{{.SHA256}}</span>
-                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                             </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                         </div>
-                        <div class="file-meta">
-                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
-                        </div>
-                        <table class="strings-table">
-                            <thead>
-                                <tr>
-                                    <th>String</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {{range .Strings}}
-                                <tr>
-                                    <td>{{.Value}}{{if .Section}}<span class="section-badge">{{.Section}}</span>{{end}}</td>
-                                </tr>
-                                {{end}}
-                            </tbody>
-                        </table>
+                        {{if .HasSections}}
+                            {{range .Sections}}
+                            <div class="category-section">
+                                <div class="category-title">{{.Section}}</div>
+                                <table class="strings-table">
+                                    <tbody>
+                                        {{range .Strings}}
+                                        <tr>
+                                            {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
+                                            <td>{{.Value}}</td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {{end}}
+                        {{else}}
+                            <table class="strings-table">
+                                <tbody>
+                                    {{range .Strings}}
+                                    <tr>
+                                        {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
+                                        <td>{{.Value}}</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        {{end}}
                     </div>
                     {{end}}
                 {{else}}
@@ -964,17 +947,12 @@
                 {{if .FileSymbols}}
                     {{range .FileSymbols}}
                     <div class="file-findings">
-                        <div class="file-header">
+                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
                             <div class="file-header-left">
-                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                <span class="file-name-header">{{.Basename}}</span>
-                                <span class="file-header-sha256">{{.SHA256}}</span>
-                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                             </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
-                        </div>
-                        <div class="file-meta">
-                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                         </div>
                         {{if .Imports}}
                         <div class="symbols-section">
@@ -1007,17 +985,12 @@
                 {{if .FileSections}}
                     {{range .FileSections}}
                     <div class="file-findings">
-                        <div class="file-header">
+                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
                             <div class="file-header-left">
-                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                <span class="file-name-header">{{.Basename}}</span>
-                                <span class="file-header-sha256">{{.SHA256}}</span>
-                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                             </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
-                        </div>
-                        <div class="file-meta">
-                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                         </div>
                         <table class="sections-table">
                             <thead>
@@ -1034,7 +1007,7 @@
                                     <td class="section-name">{{.Name}}</td>
                                     <td class="section-size">{{.Size}} B</td>
                                     <td>
-                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" style="width: {{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
+                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" data-width="{{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
                                         <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
                                     </td>
                                     <td class="section-flags">{{.Flags}}</td>
@@ -1053,29 +1026,26 @@
                 {{if .FileMetrics}}
                     {{range .FileMetrics}}
                     <div class="file-findings">
-                        <div class="file-header">
+                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
                             <div class="file-header-left">
-                                <span class="file-risk-dot {{if .Classification}}{{.Classification}}{{else}}{{.Risk}}{{end}}"></span>
-                                <span class="file-name-header">{{.Basename}}</span>
-                                <span class="file-header-sha256">{{.SHA256}}</span>
-                                {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
+                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                             </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge {{.Classification}}">{{.Classification}}</span><span class="file-band" style="background: {{bandGradient .Probability}}"></span></div>{{end}}
-                        </div>
-                        <div class="file-meta">
-                            <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
+                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                         </div>
                         {{range .Groups}}
-                        <div class="metrics-group">
-                            <div class="metrics-group-title">{{.Name}}</div>
-                            <div class="metrics-grid">
-                                {{range .Fields}}
-                                <div class="metric-card">
-                                    <div class="metric-label">{{.Label}}</div>
-                                    <div class="metric-value">{{.Value}}</div>
-                                </div>
-                                {{end}}
-                            </div>
+                        <div class="category-section">
+                            <div class="category-title">{{.Name}}</div>
+                            <table class="metrics-table">
+                                <tbody>
+                                    {{range .Fields}}
+                                    <tr>
+                                        <td class="metric-label">{{.Label}}</td>
+                                        <td class="metric-value">{{.Value}}</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
                         </div>
                         {{end}}
                     </div>
