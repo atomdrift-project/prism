@@ -410,7 +410,11 @@
             margin-bottom: 32px;
         }
         .file-findings {
-            margin-bottom: 24px;
+            background: var(--white);
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
         }
         .file-header {
             display: flex;
@@ -418,8 +422,7 @@
             gap: 12px;
             padding: 12px 16px;
             background: var(--mist);
-            border-radius: 8px 8px 0 0;
-            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+            border-bottom: 1px solid #e5e7eb;
         }
         .file-risk-dot {
             width: 10px;
@@ -464,17 +467,6 @@
             font-size: 12px;
             color: var(--slate);
             margin-left: auto;
-        }
-        .file-meta {
-            padding: 6px 16px;
-            background: rgba(0, 0, 0, 0.02);
-            border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-        }
-        .file-sha256 {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11px;
-            color: var(--slate);
-            word-break: break-all;
         }
         .category-section {
             margin-bottom: 16px;
@@ -867,20 +859,10 @@
                                 {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                                 {{if .Formula}}<span class="file-formula">{{.Formula}}</span>{{end}}
                             </div>
-                            <div class="file-meta">
-                                <span class="file-sha256" title="{{.SHA256}}">{{.SHA256}}</span>
-                            </div>
                             {{range .Categories}}
                             <div class="category-section">
                                 <div class="category-title">{{.Name}}</div>
                                 <table class="findings-table">
-                                    <thead>
-                                        <tr>
-                                            <th class="col-crit">Criticality</th>
-                                            <th class="col-trait">Trait</th>
-                                            <th>Description</th>
-                                        </tr>
-                                    </thead>
                                     <tbody>
                                         {{range .Findings}}
                                         <tr>
