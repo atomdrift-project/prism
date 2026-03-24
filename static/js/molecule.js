@@ -485,10 +485,9 @@ function addMolecule(atoms, bonds, group, moleculeIndex = null, molData = null) 
         meshToMolecule.set(mesh, moleculeIndex);
         meshToAtom.set(mesh, { atom, moleculeData: molData });
 
-        // Labels: show on normal atoms only. Suppress on all cluster members
-        // (both center and satellites) — the cluster blob speaks for itself.
-        const inCluster = clusterParents.has(atomIndex) || clusterSatellites.has(atomIndex);
-        if (atom.symbol && !inCluster) {
+        // Labels: show on normal atoms and cluster centers. Suppress on satellites.
+        const isSatellite = clusterSatellites.has(atomIndex);
+        if (atom.symbol && !isSatellite) {
             const labelDiv = document.createElement('div');
             labelDiv.className = 'atom-label' + (bl ? ' atom-label-baseline' : '');
             labelDiv.textContent = atom.symbol;

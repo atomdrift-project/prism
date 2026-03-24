@@ -972,7 +972,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	case "helix4", "helix5", "organic2", "organic4", "organic5", "flat":
 		data.Layout = r.URL.Query().Get("layout")
 	default:
-		data.Layout = "helix"
+		data.Layout = "organic2"
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

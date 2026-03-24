@@ -522,14 +522,12 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 			// Cap visible satellites at 12 (one full icosahedron).
 			const maxSatellites = 12
 
-			// Satellite sphere size — small enough to see gaps between them.
-			satRadius := atomRadius * 0.45
-			// Shell radius — distance from center to satellite centers.
-			// Sized so adjacent icosahedral neighbors nearly touch but don't overlap.
-			shellR := satRadius * 2.8
+			// Satellite sphere size and shell radius — overlapping for a solid cluster.
+			satRadius := atomRadius * 0.55
+			shellR := satRadius * 1.4
 
-			// Center atom: small, carries its own trait + overflow.
-			centerRadius := satRadius * 0.6
+			// Center atom slightly larger than satellites.
+			centerRadius := atomRadius * 0.7
 			atoms = append(atoms, MaleculeAtom{
 				ID:       atomIdx,
 				X:        p.x,
