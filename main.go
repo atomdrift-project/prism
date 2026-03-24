@@ -332,7 +332,8 @@ type resultData struct {
 	BuildCommit   string  // git commit short hash, set at build time
 	SuspiciousT   float64 // litmus suspicious threshold
 	HostileT      float64 // litmus hostile threshold
-	TraitColWidth string  // CSS width for trait ID column, computed from longest trait
+	TraitColWidth string // CSS width for trait ID column, computed from longest trait
+	IsArchive     bool   // true when result contains multiple analyzed files
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -365,7 +366,7 @@ type cleaveFile struct {
 	Classification     string         `json:"-"` // litmus ML classification, injected from embedded_files
 	Formula            string         `json:"formula,omitempty"`
 	Counts             *findingCounts `json:"counts,omitempty"`
-	Metrics            *metricsInfo   `json:"metrics,omitempty"`
+	Metrics            json.RawMessage `json:"metrics,omitempty"`
 	Findings           []finding      `json:"findings,omitempty"`
 	Strings            []stringInfo   `json:"strings,omitempty"`
 	Imports            []symbolInfo   `json:"imports,omitempty"`
@@ -407,98 +408,6 @@ type sectionInfo struct {
 	Entropy float64 `json:"entropy,omitempty"`
 }
 
-type metricsInfo struct {
-	Binary      *binaryMetrics     `json:"binary,omitempty"`
-	Comments    *commentMetrics    `json:"comments,omitempty"`
-	Functions   *functionMetrics   `json:"functions,omitempty"`
-	Identifiers *identifierMetrics `json:"identifiers,omitempty"`
-	Imports     *importMetrics     `json:"imports,omitempty"`
-	Strings     *stringMetrics     `json:"strings,omitempty"`
-	Text        *textMetrics       `json:"text,omitempty"`
-}
-
-type binaryMetrics struct {
-	FileSize         int64   `json:"file_size"`
-	CodeSize         int64   `json:"code_size,omitempty"`
-	OverallEntropy   float64 `json:"overall_entropy,omitempty"`
-	CodeEntropy      float64 `json:"code_entropy,omitempty"`
-	SectionCount     int     `json:"section_count,omitempty"`
-	ImportCount      int     `json:"import_count,omitempty"`
-	ExportCount      int     `json:"export_count,omitempty"`
-	StringCount      int     `json:"string_count,omitempty"`
-	FunctionCount    int     `json:"function_count,omitempty"`
-	AvgComplexity    float64 `json:"avg_complexity,omitempty"`
-	IsPIE            bool    `json:"is_pie,omitempty"`
-	CodeToDataRatio  float64 `json:"code_to_data_ratio,omitempty"`
-	AvgFunctionSize  float64 `json:"avg_function_size,omitempty"`
-	AvgStringEntropy float64 `json:"avg_string_entropy,omitempty"`
-	AvgStringLength  float64 `json:"avg_string_length,omitempty"`
-	MaxStringLength  int     `json:"max_string_length,omitempty"`
-}
-
-type commentMetrics struct {
-	Lines               int     `json:"lines"`
-	Chars               int     `json:"chars,omitempty"`
-	Total               int     `json:"total,omitempty"`
-	ToCodeRatio         float64 `json:"to_code_ratio,omitempty"`
-	URLInComments       int     `json:"url_in_comments,omitempty"`
-	HighEntropyComments int     `json:"high_entropy_comments,omitempty"`
-}
-
-type functionMetrics struct {
-	Total                int     `json:"total"`
-	AvgLengthLines       float64 `json:"avg_length_lines,omitempty"`
-	MaxLengthLines       int     `json:"max_length_lines,omitempty"`
-	MinLengthLines       int     `json:"min_length_lines,omitempty"`
-	DensityPer100Lines   float64 `json:"density_per_100_lines,omitempty"`
-	CodeInFunctionsRatio float64 `json:"code_in_functions_ratio,omitempty"`
-	AvgNameLength        float64 `json:"avg_name_length,omitempty"`
-	HighEntropyNames     int     `json:"high_entropy_names,omitempty"`
-	NoParamsCount        int     `json:"no_params_count,omitempty"`
-}
-
-type identifierMetrics struct {
-	Total                 int     `json:"total"`
-	UniqueCount           int     `json:"unique_count,omitempty"`
-	AvgLength             float64 `json:"avg_length,omitempty"`
-	AvgEntropy            float64 `json:"avg_entropy,omitempty"`
-	HighEntropyCount      int     `json:"high_entropy_count,omitempty"`
-	HighEntropyRatio      float64 `json:"high_entropy_ratio,omitempty"`
-	AllUppercaseRatio     float64 `json:"all_uppercase_ratio,omitempty"`
-	AllLowercaseRatio     float64 `json:"all_lowercase_ratio,omitempty"`
-	SingleCharCount       int     `json:"single_char_count,omitempty"`
-	UnderscorePrefixCount int     `json:"underscore_prefix_count,omitempty"`
-}
-
-type importMetrics struct {
-	Total           int     `json:"total"`
-	UniqueModules   int     `json:"unique_modules,omitempty"`
-	ThirdPartyCount int     `json:"third_party_count,omitempty"`
-	ThirdPartyRatio float64 `json:"third_party_ratio,omitempty"`
-}
-
-type stringMetrics struct {
-	Total                  int     `json:"total"`
-	TotalBytes             int     `json:"total_bytes,omitempty"`
-	AvgLength              float64 `json:"avg_length,omitempty"`
-	MaxLength              int     `json:"max_length,omitempty"`
-	AvgEntropy             float64 `json:"avg_entropy,omitempty"`
-	URLCount               int     `json:"url_count,omitempty"`
-	ShellCommandStrings    int     `json:"shell_command_strings,omitempty"`
-	EmbeddedCodeCandidates int     `json:"embedded_code_candidates,omitempty"`
-}
-
-type textMetrics struct {
-	TotalLines             int     `json:"total_lines"`
-	AvgLineLength          float64 `json:"avg_line_length,omitempty"`
-	MaxLineLength          int     `json:"max_line_length,omitempty"`
-	CharEntropy            float64 `json:"char_entropy,omitempty"`
-	EmptyLineRatio         float64 `json:"empty_line_ratio,omitempty"`
-	TabCount               int     `json:"tab_count,omitempty"`
-	SuspiciousStringRatio  float64 `json:"suspicious_string_ratio,omitempty"`
-	SuspiciousCommentRatio float64 `json:"suspicious_comment_ratio,omitempty"`
-	SuspiciousIdentRatio   float64 `json:"suspicious_identifier_ratio,omitempty"`
-}
 
 type findingCounts struct {
 	Hostile    int `json:"hostile"`
@@ -1060,10 +969,10 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
 	switch r.URL.Query().Get("layout") {
-	case "helix", "helix2", "helix3", "organic", "organic2", "organic3", "tetrahedral2":
+	case "helix4", "helix5", "organic2", "organic4", "organic5", "flat":
 		data.Layout = r.URL.Query().Get("layout")
 	default:
-		data.Layout = "tetrahedral"
+		data.Layout = "helix"
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1642,6 +1551,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 	// ~0.65em per character in monospace at 12px, with 2em padding
 	data.TraitColWidth = fmt.Sprintf("%.1fem", float64(maxTraitLen)*0.65+2)
+	data.IsArchive = len(data.FileFindings) > 1
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
@@ -1976,6 +1886,19 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 }
 
 // buildStructuredStrings extracts strings data for table display.
+// sectionAddress extracts a uint64 address from a sectionInfo.Address (may be number or hex string).
+func sectionAddress(v any) (uint64, bool) {
+	switch a := v.(type) {
+	case float64:
+		return uint64(a), true
+	case string:
+		n, err := strconv.ParseUint(strings.TrimPrefix(a, "0x"), 16, 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
 func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 	var result []FileStringsDisplay
 
@@ -1986,11 +1909,42 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 		}
 
 		basename := extractBasename(file.Path)
+
+		// Build section ranges for offset-to-section lookup.
+		type sectionRange struct {
+			name       string
+			start, end uint64
+		}
+		var sectionRanges []sectionRange
+		for _, sec := range file.Sections {
+			addr, ok := sectionAddress(sec.Address)
+			if ok && sec.Size > 0 {
+				sectionRanges = append(sectionRanges, sectionRange{
+					name:  sec.Name,
+					start: addr,
+					end:   addr + uint64(sec.Size),
+				})
+			}
+		}
+
 		var strs []StringDisplay
 		for _, s := range file.Strings {
+			section := s.Section
+			// Compute section from offset if not already set.
+			if section == "" && s.Offset != "" && len(sectionRanges) > 0 {
+				off, err := strconv.ParseUint(strings.TrimPrefix(s.Offset, "0x"), 16, 64)
+				if err == nil {
+					for _, sr := range sectionRanges {
+						if off >= sr.start && off < sr.end {
+							section = sr.name
+							break
+						}
+					}
+				}
+			}
 			strs = append(strs, StringDisplay{
 				Value:   s.Value,
-				Section: s.Section,
+				Section: section,
 				Offset:  s.Offset,
 			})
 		}
@@ -2134,167 +2088,75 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 	return result
 }
 
-// convertMetrics maps a cleaveAPIMetrics to the internal metricsInfo type.
-func convertMetrics(m *cleaveAPIMetrics) *metricsInfo {
-	if m == nil {
-		return nil
-	}
-	info := &metricsInfo{
-		Comments:    m.Comments,
-		Functions:   m.Functions,
-		Identifiers: m.Identifiers,
-		Imports:     m.Imports,
-		Strings:     m.Strings,
-		Text:        m.Text,
-	}
-	if m.Binary != nil {
-		info.Binary = &binaryMetrics{
-			FileSize:         m.Binary.FileSize,
-			CodeSize:         m.Binary.CodeSize,
-			OverallEntropy:   m.Binary.OverallEntropy,
-			CodeEntropy:      m.Binary.CodeEntropy,
-			SectionCount:     m.Binary.SectionCount,
-			ImportCount:      m.Binary.ImportCount,
-			ExportCount:      m.Binary.ExportCount,
-			StringCount:      m.Binary.StringCount,
-			AvgFunctionSize:  m.Binary.AvgFunctionSize,
-			AvgStringEntropy: m.Binary.AvgStringEntropy,
-			AvgStringLength:  m.Binary.AvgStringLength,
-			MaxStringLength:  m.Binary.MaxStringLength,
-		}
-	}
-	return info
-}
-
-// buildStructuredMetrics extracts metrics data for table display.
-//
-//nolint:gocognit // inherently branchy: many independent optional blocks
+// buildStructuredMetrics dynamically walks raw metrics JSON to produce display groups.
+// This avoids hardcoding field names — any metric cleave emits will appear automatically.
 func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 	var result []FileMetricsDisplay
 
 	for i := range files {
 		file := &files[i]
-		if file.Metrics == nil {
+		if len(file.Metrics) == 0 {
 			continue
 		}
-		met := file.Metrics
+
+		// Parse as map of group → map of key → value (any JSON type).
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(file.Metrics, &raw); err != nil {
+			continue
+		}
+
 		var groups []metricGroup
-
-		if b := met.Binary; b != nil {
-			var fields []metricField
-			fields = append(fields, metricField{"File Size", strconv.FormatInt(b.FileSize, 10) + " B"})
-			if b.ImportCount > 0 {
-				fields = append(fields, metricField{"Imports", strconv.Itoa(b.ImportCount)})
-			}
-			if b.ExportCount > 0 {
-				fields = append(fields, metricField{"Exports", strconv.Itoa(b.ExportCount)})
-			}
-			if b.StringCount > 0 {
-				fields = append(fields, metricField{"Strings", strconv.Itoa(b.StringCount)})
-			}
-			if b.OverallEntropy > 0 {
-				fields = append(fields, metricField{"Entropy", fmt.Sprintf("%.2f", b.OverallEntropy)})
-			}
-			if b.AvgFunctionSize > 0 {
-				fields = append(fields, metricField{"Avg Function Size", fmt.Sprintf("%.1f B", b.AvgFunctionSize)})
-			}
-			if b.SectionCount > 0 {
-				fields = append(fields, metricField{"Sections", strconv.Itoa(b.SectionCount)})
-			}
-			if b.CodeSize > 0 {
-				fields = append(fields, metricField{"Code Size", strconv.FormatInt(b.CodeSize, 10) + " B"})
-			}
-			if b.CodeEntropy > 0 {
-				fields = append(fields, metricField{"Code Entropy", fmt.Sprintf("%.2f", b.CodeEntropy)})
-			}
-			if len(fields) > 0 {
-				groups = append(groups, metricGroup{"Binary", fields})
-			}
+		// Sort group names for deterministic order.
+		groupNames := make([]string, 0, len(raw))
+		for name := range raw {
+			groupNames = append(groupNames, name)
 		}
+		sort.Strings(groupNames)
 
-		if t := met.Text; t != nil {
-			fields := []metricField{
-				{"Lines", strconv.Itoa(t.TotalLines)},
-				{"Avg Line Length", fmt.Sprintf("%.1f", t.AvgLineLength)},
-				{"Max Line Length", strconv.Itoa(t.MaxLineLength)},
-				{"Char Entropy", fmt.Sprintf("%.2f", t.CharEntropy)},
-				{"Empty Line Ratio", fmt.Sprintf("%.2f", t.EmptyLineRatio)},
+		for _, groupName := range groupNames {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw[groupName], &fields); err != nil {
+				// Scalar at top level — skip (shouldn't happen with cleave metrics).
+				continue
 			}
-			if t.SuspiciousStringRatio > 0 {
-				fields = append(fields, metricField{"Suspicious Strings", fmt.Sprintf("%.0f%%", t.SuspiciousStringRatio*100)})
-			}
-			if t.SuspiciousCommentRatio > 0 {
-				fields = append(fields, metricField{"Suspicious Comments", fmt.Sprintf("%.0f%%", t.SuspiciousCommentRatio*100)})
-			}
-			groups = append(groups, metricGroup{"Text", fields})
-		}
 
-		if f := met.Functions; f != nil {
-			fields := []metricField{
-				{"Total", strconv.Itoa(f.Total)},
-				{"Avg Length", fmt.Sprintf("%.1f lines", f.AvgLengthLines)},
-				{"Max Length", fmt.Sprintf("%d lines", f.MaxLengthLines)},
-				{"Density / 100 lines", fmt.Sprintf("%.2f", f.DensityPer100Lines)},
-				{"Code in Functions", fmt.Sprintf("%.0f%%", f.CodeInFunctionsRatio*100)},
+			fieldNames := make([]string, 0, len(fields))
+			for name := range fields {
+				fieldNames = append(fieldNames, name)
 			}
-			if f.HighEntropyNames > 0 {
-				fields = append(fields, metricField{"High-entropy Names", strconv.Itoa(f.HighEntropyNames)})
-			}
-			groups = append(groups, metricGroup{"Functions", fields})
-		}
+			sort.Strings(fieldNames)
 
-		if c := met.Comments; c != nil {
-			fields := []metricField{
-				{"Lines", strconv.Itoa(c.Lines)},
-				{"To Code Ratio", fmt.Sprintf("%.2f", c.ToCodeRatio)},
+			var mf []metricField
+			for _, fieldName := range fieldNames {
+				val := string(fields[fieldName])
+				// Try to format nicely: strip quotes from strings, format numbers.
+				var s string
+				if err := json.Unmarshal(fields[fieldName], &s); err == nil {
+					val = s
+				} else {
+					var f float64
+					if err := json.Unmarshal(fields[fieldName], &f); err == nil {
+						if f == float64(int64(f)) {
+							val = strconv.FormatInt(int64(f), 10)
+						} else {
+							val = strconv.FormatFloat(f, 'f', -1, 64)
+						}
+					} else {
+						var b bool
+						if err := json.Unmarshal(fields[fieldName], &b); err == nil {
+							val = strconv.FormatBool(b)
+						}
+						// Otherwise use raw JSON string (arrays, objects, etc.)
+					}
+				}
+				// Convert snake_case key to readable label.
+				label := strings.ReplaceAll(fieldName, "_", " ")
+				mf = append(mf, metricField{Label: label, Value: val})
 			}
-			if c.URLInComments > 0 {
-				fields = append(fields, metricField{"URLs", strconv.Itoa(c.URLInComments)})
-			}
-			if c.HighEntropyComments > 0 {
-				fields = append(fields, metricField{"High-entropy", strconv.Itoa(c.HighEntropyComments)})
-			}
-			groups = append(groups, metricGroup{"Comments", fields})
-		}
 
-		if imp := met.Imports; imp != nil {
-			fields := []metricField{
-				{"Total", strconv.Itoa(imp.Total)},
-				{"Unique Modules", strconv.Itoa(imp.UniqueModules)},
-				{"Third-party", fmt.Sprintf("%d (%.0f%%)", imp.ThirdPartyCount, imp.ThirdPartyRatio*100)},
+			if len(mf) > 0 {
+				groups = append(groups, metricGroup{Name: groupName, Fields: mf})
 			}
-			groups = append(groups, metricGroup{"Imports", fields})
-		}
-
-		if s := met.Strings; s != nil {
-			fields := []metricField{
-				{"Total", strconv.Itoa(s.Total)},
-				{"Avg Length", fmt.Sprintf("%.1f", s.AvgLength)},
-				{"Avg Entropy", fmt.Sprintf("%.2f", s.AvgEntropy)},
-			}
-			if s.URLCount > 0 {
-				fields = append(fields, metricField{"URLs", strconv.Itoa(s.URLCount)})
-			}
-			if s.ShellCommandStrings > 0 {
-				fields = append(fields, metricField{"Shell Commands", strconv.Itoa(s.ShellCommandStrings)})
-			}
-			if s.EmbeddedCodeCandidates > 0 {
-				fields = append(fields, metricField{"Embedded Code", strconv.Itoa(s.EmbeddedCodeCandidates)})
-			}
-			groups = append(groups, metricGroup{"Strings", fields})
-		}
-
-		if id := met.Identifiers; id != nil {
-			fields := []metricField{
-				{"Total", strconv.Itoa(id.Total)},
-				{"Unique", strconv.Itoa(id.UniqueCount)},
-				{"Avg Length", fmt.Sprintf("%.1f", id.AvgLength)},
-				{"Avg Entropy", fmt.Sprintf("%.2f", id.AvgEntropy)},
-			}
-			if id.HighEntropyCount > 0 {
-				fields = append(fields, metricField{"High-entropy", fmt.Sprintf("%d (%.0f%%)", id.HighEntropyCount, id.HighEntropyRatio*100)})
-			}
-			groups = append(groups, metricGroup{"Identifiers", fields})
 		}
 
 		if len(groups) == 0 {
@@ -2391,7 +2253,7 @@ type cleaveAPIResponse struct {
 	Sections []cleaveAPISection `json:"sections,omitempty"`
 	Version  string             `json:"version"`
 	Summary  *cleaveAPISummary  `json:"summary,omitempty"`
-	Metrics  *cleaveAPIMetrics  `json:"metrics,omitempty"`
+	Metrics  json.RawMessage    `json:"metrics,omitempty"`
 	Target   cleaveTargetInfo   `json:"target"`
 }
 
@@ -2404,7 +2266,7 @@ type cleaveTargetInfo struct {
 
 type cleaveAPIFile struct {
 	ParentID *int               `json:"parent_id,omitempty"`
-	Metrics  *cleaveAPIMetrics  `json:"metrics,omitempty"`
+	Metrics  json.RawMessage    `json:"metrics,omitempty"`
 	Counts   *findingCounts     `json:"counts,omitempty"`
 	Formula  string             `json:"formula,omitempty"`
 	Risk     string             `json:"risk,omitempty"`
@@ -2430,30 +2292,6 @@ type cleaveAPISection struct {
 	Entropy    float64 `json:"entropy,omitempty"`
 }
 
-type cleaveAPIMetrics struct {
-	Binary      *cleaveAPIBinaryMetrics `json:"binary,omitempty"`
-	Comments    *commentMetrics         `json:"comments,omitempty"`
-	Functions   *functionMetrics        `json:"functions,omitempty"`
-	Identifiers *identifierMetrics      `json:"identifiers,omitempty"`
-	Imports     *importMetrics          `json:"imports,omitempty"`
-	Strings     *stringMetrics          `json:"strings,omitempty"`
-	Text        *textMetrics            `json:"text,omitempty"`
-}
-
-type cleaveAPIBinaryMetrics struct {
-	FileSize         int64   `json:"file_size,omitempty"`
-	CodeSize         int64   `json:"code_size,omitempty"`
-	OverallEntropy   float64 `json:"overall_entropy,omitempty"`
-	CodeEntropy      float64 `json:"code_entropy,omitempty"`
-	SectionCount     int     `json:"section_count,omitempty"`
-	ImportCount      int     `json:"import_count,omitempty"`
-	ExportCount      int     `json:"export_count,omitempty"`
-	StringCount      int     `json:"string_count,omitempty"`
-	AvgFunctionSize  float64 `json:"avg_function_size,omitempty"`
-	AvgStringEntropy float64 `json:"avg_string_entropy,omitempty"`
-	AvgStringLength  float64 `json:"avg_string_length,omitempty"`
-	MaxStringLength  int     `json:"max_string_length,omitempty"`
-}
 
 type cleaveAPISummary struct {
 	Counts        *findingCounts `json:"counts,omitempty"`
@@ -2685,9 +2523,7 @@ func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
 				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
-		if resp.Metrics != nil {
-			entry.Metrics = convertMetrics(resp.Metrics)
-		}
+		entry.Metrics = resp.Metrics
 		report.Files = append(report.Files, entry)
 	}
 
@@ -2726,8 +2562,8 @@ func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
 			if len(f.Strings) == 0 {
 				entry.Strings = resp.Strings
 			}
-			if f.Metrics == nil && resp.Metrics != nil {
-				entry.Metrics = convertMetrics(resp.Metrics)
+			if len(entry.Metrics) == 0 && len(resp.Metrics) > 0 {
+				entry.Metrics = resp.Metrics
 			}
 		} else {
 			entry.Imports = f.Imports
@@ -2743,8 +2579,8 @@ func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
 				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
-		if f.Metrics != nil && entry.Metrics == nil {
-			entry.Metrics = convertMetrics(f.Metrics)
+		if len(f.Metrics) > 0 && len(entry.Metrics) == 0 {
+			entry.Metrics = f.Metrics
 		}
 
 		report.Files = append(report.Files, entry)

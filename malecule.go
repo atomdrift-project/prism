@@ -52,65 +52,86 @@ func (s Severity) Color() string {
 }
 
 // Periodic table elements used for category mapping.
+//
+// Mnemonic guide for security engineers reading formulas:
+//
+// Top-level: O(bjectives) H(micro-behaviors) Md(metadata) K(nown) Th(ird-party)
+//
+// Objectives:  Al(anti-analysis) As(anti-static) C(2/c&c) Ca(credential-access)
+//   Co(llection) Dy(discoverY) Er(vasion) Eu(xfiltration) I(mpact) La(teral)
+//   P(ersistence) Pr(ivilege) S(upply-chain) Xe(xecution)
+//
+// Micro-behaviors: Cm(comms) Cr(ypto) Db(data) Ds(dylib/shared) F(ilesystem)
+//   Hf(hardware) Ho(st) Mg(memory) N(etwork) Os(operating-system) Po(process)
+//   Ti(me) U(I)
+//
+// Metadata: Ar(ch) Bi(nary) Bk(build) Cf(config) He(hardening) In(import)
+//   Li(brary) Pa(ckage) Pd(ocument) Pt(lang) Rh(ights/entitlements) Si(gned)
+//   V(endor) + deeper: Ag(format) Au(quality) B(undle) Ce(compiler) Ne(archive)
 var (
-	Oxygen       = Element{Number: 8, Symbol: "O", Name: "Oxygen"}          // Objectives
-	Hydrogen     = Element{Number: 1, Symbol: "H", Name: "Hydrogen"}        // Micro-behaviors
-	Mendelevium  = Element{Number: 101, Symbol: "Md", Name: "Mendelevium"}  // Metadata
-	Potassium    = Element{Number: 19, Symbol: "K", Name: "Potassium"}      // Well-known
-	Thorium      = Element{Number: 90, Symbol: "Th", Name: "Thorium"}       // Third-party
-	Carbon       = Element{Number: 6, Symbol: "C", Name: "Carbon"}          // Command & Control
-	Aluminum     = Element{Number: 13, Symbol: "Al", Name: "Aluminum"}      // Anti-analysis
-	Arsenic      = Element{Number: 33, Symbol: "As", Name: "Arsenic"}       // Anti-static
-	Cobalt       = Element{Number: 27, Symbol: "Co", Name: "Cobalt"}        // Collection
-	Calcium      = Element{Number: 20, Symbol: "Ca", Name: "Calcium"}       // Credential-access
-	Dysprosium   = Element{Number: 66, Symbol: "Dy", Name: "Dysprosium"}    // Discovery
-	Xenon        = Element{Number: 54, Symbol: "Xe", Name: "Xenon"}         // Execution
-	Europium     = Element{Number: 63, Symbol: "Eu", Name: "Europium"}      // Exfiltration
-	Iodine       = Element{Number: 53, Symbol: "I", Name: "Iodine"}         // Impact
-	Lanthanum    = Element{Number: 57, Symbol: "La", Name: "Lanthanum"}     // Lateral-movement
-	Phosphorus   = Element{Number: 15, Symbol: "P", Name: "Phosphorus"}     // Persistence
-	Praseodymium = Element{Number: 59, Symbol: "Pr", Name: "Praseodymium"}  // Privilege-escalation
-	Erbium       = Element{Number: 68, Symbol: "Er", Name: "Erbium"}        // Evasion
-	Rubidium     = Element{Number: 37, Symbol: "Rb", Name: "Rubidium"}      // Resource-development
-	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}      // Crypto
-	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}        // Communications
-	Fluorine     = Element{Number: 9, Symbol: "F", Name: "Fluorine"}        // Filesystem
-	Polonium     = Element{Number: 84, Symbol: "Po", Name: "Polonium"}      // Process
-	Osmium       = Element{Number: 76, Symbol: "Os", Name: "Osmium"}        // OS
-	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}      // Data
-	Holmium      = Element{Number: 67, Symbol: "Ho", Name: "Holmium"}       // Host
-	Hafnium      = Element{Number: 72, Symbol: "Hf", Name: "Hafnium"}       // Hardware
-	Neptunium    = Element{Number: 93, Symbol: "Np", Name: "Neptunium"}     // Network
+	// Top-level categories
+	Oxygen      = Element{Number: 8, Symbol: "O", Name: "Oxygen"}         // Objectives
+	Hydrogen    = Element{Number: 1, Symbol: "H", Name: "Hydrogen"}       // Micro-behaviors
+	Mendelevium = Element{Number: 101, Symbol: "Md", Name: "Mendelevium"} // Metadata
+	Potassium   = Element{Number: 19, Symbol: "K", Name: "Potassium"}     // Well-known (K for Known)
+	Thorium     = Element{Number: 90, Symbol: "Th", Name: "Thorium"}      // Third-party
+
+	// Objective subcategories
+	Aluminum     = Element{Number: 13, Symbol: "Al", Name: "Aluminum"}     // Anti-analysis
+	Arsenic      = Element{Number: 33, Symbol: "As", Name: "Arsenic"}      // Anti-static
+	Carbon       = Element{Number: 6, Symbol: "C", Name: "Carbon"}         // Command & Control (C2)
+	Cobalt       = Element{Number: 27, Symbol: "Co", Name: "Cobalt"}       // Collection
+	Calcium      = Element{Number: 20, Symbol: "Ca", Name: "Calcium"}      // Credential-access
+	Dysprosium   = Element{Number: 66, Symbol: "Dy", Name: "Dysprosium"}   // Discovery
+	Erbium       = Element{Number: 68, Symbol: "Er", Name: "Erbium"}       // Evasion
+	Europium     = Element{Number: 63, Symbol: "Eu", Name: "Europium"}     // Exfiltration
+	Iodine       = Element{Number: 53, Symbol: "I", Name: "Iodine"}        // Impact
+	Lanthanum    = Element{Number: 57, Symbol: "La", Name: "Lanthanum"}    // Lateral-movement
+	Phosphorus   = Element{Number: 15, Symbol: "P", Name: "Phosphorus"}    // Persistence
+	Praseodymium = Element{Number: 59, Symbol: "Pr", Name: "Praseodymium"} // Privilege-escalation
+	Sulfur       = Element{Number: 16, Symbol: "S", Name: "Sulfur"}        // Supply-chain
+	Xenon        = Element{Number: 54, Symbol: "Xe", Name: "Xenon"}        // Execution
+
+	// Micro-behavior subcategories
+	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}       // Communications
+	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}     // Crypto
+	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}     // Data
 	Darmstadtium = Element{Number: 110, Symbol: "Ds", Name: "Darmstadtium"} // Dylib
-	Actinium     = Element{Number: 89, Symbol: "Ac", Name: "Actinium"}      // Anti-analysis (micro)
-	Astatine     = Element{Number: 85, Symbol: "At", Name: "Astatine"}      // Anti-static (micro)
-	Einsteinium  = Element{Number: 99, Symbol: "Es", Name: "Einsteinium"}   // Execution (micro)
-	Gold         = Element{Number: 79, Symbol: "Au", Name: "Gold"}          // Quality
-	Silver       = Element{Number: 47, Symbol: "Ag", Name: "Silver"}        // Format
-	Platinum     = Element{Number: 78, Symbol: "Pt", Name: "Platinum"}      // Lang
-	Sulfur        = Element{Number: 16, Symbol: "S", Name: "Sulfur"}          // Supply-chain (S for Supply)
-	Magnesium     = Element{Number: 12, Symbol: "Mg", Name: "Magnesium"}     // Mem (Mg for Memory)
-	Titanium      = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}      // Time (Ti for Time)
-	Uranium       = Element{Number: 92, Symbol: "U", Name: "Uranium"}        // UI (U for UI)
-	Bismuth       = Element{Number: 83, Symbol: "Bi", Name: "Bismuth"}       // Binary (Bi for Binary)
-	Protactinium  = Element{Number: 91, Symbol: "Pa", Name: "Protactinium"}  // Package (Pa for Package)
-	Silicon       = Element{Number: 14, Symbol: "Si", Name: "Silicon"}       // Signed (Si for Signed)
-	Vanadium      = Element{Number: 23, Symbol: "V", Name: "Vanadium"}       // Vendor (V for Vendor)
-	Lithium       = Element{Number: 3, Symbol: "Li", Name: "Lithium"}        // Library (Li for Library)
-	Argon         = Element{Number: 18, Symbol: "Ar", Name: "Argon"}         // Archive (Ar for Archive)
-	Berkelium     = Element{Number: 97, Symbol: "Bk", Name: "Berkelium"}     // Builder (Bk for Build)
-	Boron         = Element{Number: 5, Symbol: "B", Name: "Boron"}           // Bundle (B for Bundle)
-	Cerium        = Element{Number: 58, Symbol: "Ce", Name: "Cerium"}        // Compiler (Ce for Compile)
-	Californium   = Element{Number: 98, Symbol: "Cf", Name: "Californium"}   // Config (Cf for Config)
-	Germanium     = Element{Number: 32, Symbol: "Ge", Name: "Germanium"}     // Dev
-	Rhodium       = Element{Number: 45, Symbol: "Rh", Name: "Rhodium"}       // Entitlements (Rh for Rights)
-	Iron          = Element{Number: 26, Symbol: "Fe", Name: "Iron"}          // File (Fe for File)
-	Helium        = Element{Number: 2, Symbol: "He", Name: "Helium"}         // Hardening (He for Hardening)
-	Indium        = Element{Number: 49, Symbol: "In", Name: "Indium"}        // Import (In for Import)
-	Americium     = Element{Number: 95, Symbol: "Am", Name: "Americium"}     // Analytics (Am for Analytics)
-	Neon          = Element{Number: 10, Symbol: "Ne", Name: "Neon"}          // Arch
-	Tellurium     = Element{Number: 52, Symbol: "Te", Name: "Tellurium"}     // Tools (Te for Tools)
-	Terbium       = Element{Number: 65, Symbol: "Tb", Name: "Terbium"}       // Encoded-payload
+	Fluorine     = Element{Number: 9, Symbol: "F", Name: "Fluorine"}       // Filesystem
+	Hafnium      = Element{Number: 72, Symbol: "Hf", Name: "Hafnium"}      // Hardware
+	Holmium      = Element{Number: 67, Symbol: "Ho", Name: "Holmium"}      // Host
+	Magnesium    = Element{Number: 12, Symbol: "Mg", Name: "Magnesium"}    // Memory
+	Nitrogen     = Element{Number: 7, Symbol: "N", Name: "Nitrogen"}       // Network
+	Osmium       = Element{Number: 76, Symbol: "Os", Name: "Osmium"}       // OS
+	Polonium     = Element{Number: 84, Symbol: "Po", Name: "Polonium"}     // Process
+	Titanium     = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}     // Time
+	Uranium      = Element{Number: 92, Symbol: "U", Name: "Uranium"}       // UI
+
+	// Metadata subcategories (top-level under metadata/)
+	Argon       = Element{Number: 18, Symbol: "Ar", Name: "Argon"}       // Arch (Ar for ARchitecture)
+	Bismuth     = Element{Number: 83, Symbol: "Bi", Name: "Bismuth"}     // Binary
+	Berkelium   = Element{Number: 97, Symbol: "Bk", Name: "Berkelium"}   // Build
+	Californium = Element{Number: 98, Symbol: "Cf", Name: "Californium"} // Config
+	Palladium   = Element{Number: 46, Symbol: "Pd", Name: "Palladium"}   // Document (Pd for PDF/Doc)
+	Rhodium     = Element{Number: 45, Symbol: "Rh", Name: "Rhodium"}     // Entitlements (Rh for Rights)
+	Helium      = Element{Number: 2, Symbol: "He", Name: "Helium"}       // Hardening
+	Indium      = Element{Number: 49, Symbol: "In", Name: "Indium"}      // Import
+	Platinum    = Element{Number: 78, Symbol: "Pt", Name: "Platinum"}    // Lang
+	Lithium     = Element{Number: 3, Symbol: "Li", Name: "Lithium"}      // Library
+
+	Protactinium = Element{Number: 91, Symbol: "Pa", Name: "Protactinium"} // Package
+	Silicon      = Element{Number: 14, Symbol: "Si", Name: "Silicon"}      // Signed
+	Vanadium     = Element{Number: 23, Symbol: "V", Name: "Vanadium"}      // Vendor
+
+	// Metadata deeper-segment matches (3rd+ level)
+	Gold   = Element{Number: 79, Symbol: "Au", Name: "Gold"}   // Quality (gold standard)
+	Silver = Element{Number: 47, Symbol: "Ag", Name: "Silver"} // Format
+	Boron  = Element{Number: 5, Symbol: "B", Name: "Boron"}    // Bundle
+	Cerium = Element{Number: 58, Symbol: "Ce", Name: "Cerium"} // Compiler
+	Neon   = Element{Number: 10, Symbol: "Ne", Name: "Neon"}   // Archive
+
+	// Well-known subcategories
+	Tellurium = Element{Number: 52, Symbol: "Te", Name: "Tellurium"} // Tools
 )
 
 var categoryElements = map[string]Element{
@@ -120,6 +141,7 @@ var categoryElements = map[string]Element{
 	"metadata":        Mendelevium,
 	"well-known":      Potassium,
 	"third_party":     Thorium,
+	"third-party":     Thorium,
 
 	// Objective subcategories
 	"anti-analysis":        Aluminum,
@@ -128,55 +150,54 @@ var categoryElements = map[string]Element{
 	"command-and-control":  Carbon,
 	"credential-access":    Calcium,
 	"discovery":            Dysprosium,
+	"evasion":              Erbium,
 	"execution":            Xenon,
 	"exfiltration":         Europium,
 	"impact":               Iodine,
 	"lateral-movement":     Lanthanum,
 	"persistence":          Phosphorus,
 	"privilege-escalation": Praseodymium,
-	"evasion":              Erbium,
-	"resource-development": Rubidium,
 	"supply-chain":         Sulfur,
 
 	// Micro-behavior subcategories
-	"crypto":         Chromium,
 	"communications": Curium,
-	"fs":             Fluorine,
-	"process":        Polonium,
-	"os":             Osmium,
+	"crypto":         Chromium,
 	"data":           Dubnium,
-	"host":           Holmium,
-	"hardware":       Hafnium,
-	"network":        Neptunium,
 	"dylib":          Darmstadtium,
+	"fs":             Fluorine,
+	"hardware":       Hafnium,
+	"host":           Holmium,
 	"mem":            Magnesium,
+	"network":        Nitrogen,
+	"os":             Osmium,
+	"process":        Polonium,
 	"time":           Titanium,
 	"ui":             Uranium,
 
-	// Metadata subcategories
-	"quality":         Gold,
-	"format":          Silver,
-	"lang":            Platinum,
-	"binary":          Bismuth,
-	"package":         Protactinium,
-	"signed":          Silicon,
-	"vendor":          Vanadium,
-	"library":         Lithium,
-	"archive":         Argon,
-	"builder":         Berkelium,
-	"bundle":          Boron,
-	"compiler":        Cerium,
-	"config":          Californium,
-	"dev":             Germanium,
-	"entitlements":    Rhodium,
+	// Metadata subcategories (top-level under metadata/)
+	"arch":      Argon,
+	"binary":    Bismuth,
+	"build":     Berkelium,
+	"document":  Palladium,
 	// NOTE: "file" deliberately omitted — collides with micro-behaviors/fs/file path segments.
-	"hardening":       Helium,
-	"import":          Indium,
-	"analytics":       Americium,
-	"arch":            Neon,
-	"encoded-payload": Terbium,
+	"hardening": Helium,
+	"import":    Indium,
+	"lang":      Platinum,
+	"library":   Lithium,
+	"package":   Protactinium,
+	"signed":    Silicon,
+	"vendor":    Vanadium,
 
-	// Well-known
+	// Metadata deeper-segment matches (3rd+ level)
+	"archive":      Neon,
+	"bundle":       Boron,
+	"compiler":     Cerium,
+	"config":       Californium,
+	"entitlements": Rhodium,
+	"format":       Silver,
+	"quality":      Gold,
+
+	// Well-known subcategories
 	"malware": Potassium,
 	"tools":   Tellurium,
 }
@@ -189,16 +210,20 @@ func categoryToElement(category string) (Element, bool) {
 
 // MaleculeAtom represents an atom in the 3D visualization.
 type MaleculeAtom struct {
-	Severity string  `json:"severity"`
-	Symbol   string  `json:"symbol"`
-	Category string  `json:"category"`
-	TraitID  string  `json:"trait_id,omitempty"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Z        float64 `json:"z"`
-	Radius   float64 `json:"radius"`
-	ID       int     `json:"id"`
-	Ring     bool    `json:"ring,omitempty"`
+	Severity  string    `json:"severity"`
+	Symbol    string    `json:"symbol"`
+	Category  string    `json:"category"`
+	TraitID   string    `json:"trait_id,omitempty"`
+	X         float64   `json:"x"`
+	Y         float64   `json:"y"`
+	Z         float64   `json:"z"`
+	Radius    float64   `json:"radius"`
+	ID        int       `json:"id"`
+	Ring      bool      `json:"ring,omitempty"`
+	ClusterOf int       `json:"cluster_of,omitempty"` // parent atom ID for buckyball satellite atoms
+	ClusterDx float64   `json:"cdx,omitempty"`        // offset from parent (preserved across layouts)
+	ClusterDy float64   `json:"cdy,omitempty"`
+	ClusterDz float64   `json:"cdz,omitempty"`
 }
 
 // TraitDetail holds display information for a trait, keyed by trait ID.
@@ -490,21 +515,100 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 			}
 		}
 
-		atoms = append(atoms, MaleculeAtom{
-			ID:       atomIdx,
-			X:        p.x,
-			Y:        p.y,
-			Z:        0,
-			Radius:   atomRadius,
-			Severity: sev.String(),
-			Symbol:   n.element.Symbol,
-			Category: n.key,
-			TraitID:  strings.Join(n.traitIDs, ", "),
-			Ring:     item.isL1,
-		})
+		// If a non-ring node has multiple trait IDs, emit a tight buckyball
+		// cluster of overlapping atoms instead of one merged atom.
+		if !item.isL1 && len(n.traitIDs) > 1 {
+			// Buckyball cluster: satellites on an icosahedral shell around a small center.
+			// Cap visible satellites at 12 (one full icosahedron).
+			const maxSatellites = 12
 
-		if item.parentIdx >= 0 {
-			bonds = append(bonds, [2]int{item.parentIdx, atomIdx})
+			// Satellite sphere size — small enough to see gaps between them.
+			satRadius := atomRadius * 0.45
+			// Shell radius — distance from center to satellite centers.
+			// Sized so adjacent icosahedral neighbors nearly touch but don't overlap.
+			shellR := satRadius * 2.8
+
+			// Center atom: small, carries its own trait + overflow.
+			centerRadius := satRadius * 0.6
+			atoms = append(atoms, MaleculeAtom{
+				ID:       atomIdx,
+				X:        p.x,
+				Y:        p.y,
+				Z:        0,
+				Radius:   centerRadius,
+				Severity: sev.String(),
+				Symbol:   n.element.Symbol,
+				Category: n.key,
+				TraitID: func() string {
+					overflow := []string{n.traitIDs[0]}
+					if len(n.traitIDs)-1 > maxSatellites {
+						overflow = append(overflow, n.traitIDs[maxSatellites+1:]...)
+					}
+					return strings.Join(overflow, ", ")
+				}(),
+			})
+			if item.parentIdx >= 0 {
+				bonds = append(bonds, [2]int{item.parentIdx, atomIdx})
+			}
+			// 12 vertices of an icosahedron, normalized to unit sphere.
+			phi := (1 + math.Sqrt(5)) / 2
+			icoVerts := [][3]float64{
+				{0, 1, phi}, {0, -1, phi}, {0, 1, -phi}, {0, -1, -phi},
+				{1, phi, 0}, {-1, phi, 0}, {1, -phi, 0}, {-1, -phi, 0},
+				{phi, 0, 1}, {-phi, 0, 1}, {phi, 0, -1}, {-phi, 0, -1},
+			}
+			for vi := range icoVerts {
+				mag := math.Sqrt(icoVerts[vi][0]*icoVerts[vi][0] + icoVerts[vi][1]*icoVerts[vi][1] + icoVerts[vi][2]*icoVerts[vi][2])
+				icoVerts[vi][0] /= mag
+				icoVerts[vi][1] /= mag
+				icoVerts[vi][2] /= mag
+			}
+			satCount := len(n.traitIDs) - 1
+			if satCount > maxSatellites {
+				satCount = maxSatellites
+			}
+			for ci := 0; ci < satCount; ci++ {
+				shell := ci / len(icoVerts)
+				vi := ci % len(icoVerts)
+				r := shellR * (1.0 + float64(shell)*0.5)
+				dx := r * icoVerts[vi][0]
+				dy := r * icoVerts[vi][1]
+				dz := r * icoVerts[vi][2]
+				cIdx := len(atoms)
+				atoms = append(atoms, MaleculeAtom{
+					ID:        cIdx,
+					X:         p.x + dx,
+					Y:         p.y + dy,
+					Z:         dz,
+					Radius:    satRadius,
+					Severity:  sev.String(),
+					Symbol:    n.element.Symbol,
+					Category:  n.key,
+					TraitID:   n.traitIDs[ci+1],
+					ClusterOf: atomIdx + 1, // +1 so 0 means "not a cluster atom" (omitempty)
+					ClusterDx: dx,
+					ClusterDy: dy,
+					ClusterDz: dz,
+				})
+				bonds = append(bonds, [2]int{atomIdx, cIdx})
+			}
+		} else {
+			atoms = append(atoms, MaleculeAtom{
+				ID:       atomIdx,
+				X:        p.x,
+				Y:        p.y,
+				Z:        0,
+				Radius:   atomRadius,
+				Severity: sev.String(),
+				Symbol:   n.element.Symbol,
+				Category: n.key,
+				TraitID:  strings.Join(n.traitIDs, ", "),
+				Ring:     item.isL1,
+			})
+
+			if item.parentIdx >= 0 {
+				bonds = append(bonds, [2]int{item.parentIdx, atomIdx})
+			}
 		}
 
 		for _, child := range n.children {

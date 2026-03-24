@@ -235,12 +235,16 @@
         /* Tabs Section */
         .tabs-section {
             margin-top: 24px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
         .tabs {
             display: flex;
-            gap: 4px;
+            gap: 0;
+            background: var(--mist);
             border-bottom: 1px solid var(--border);
-            margin-bottom: 0;
         }
         .tab {
             padding: 12px 20px;
@@ -249,21 +253,25 @@
             color: var(--slate);
             background: none;
             border: none;
+            border-right: 1px solid var(--border);
             cursor: pointer;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -1px;
-            transition: all 0.2s;
+            transition: all 0.15s;
+            font-family: inherit;
+        }
+        .tab:last-child {
+            border-right: none;
         }
         .tab:hover {
             color: var(--carbon);
+            background: rgba(0, 0, 0, 0.02);
         }
         .tab.active {
             color: var(--carbon);
-            border-bottom-color: var(--toxic);
+            background: var(--white);
+            font-weight: 600;
         }
         .tab-content {
             display: none;
-            padding-top: 20px;
         }
         .tab-content.active {
             display: block;
@@ -658,17 +666,21 @@
             background: rgba(0, 0, 0, 0.02);
         }
         .symbols-list {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1px;
-            background: var(--mist);
+            display: flex;
+            flex-direction: column;
         }
         .symbol-item {
-            padding: 8px 16px;
-            background: var(--white);
+            padding: 6px 16px;
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 12px;
             color: var(--graphite);
+            border-bottom: 1px solid var(--mist);
+        }
+        .symbol-item:last-child {
+            border-bottom: none;
+        }
+        .symbol-item:hover {
+            background: rgba(0, 0, 0, 0.01);
         }
         .symbol-library {
             font-size: 10px;
@@ -848,83 +860,69 @@
             </div>
 
             <div class="tab-content active" id="tab-traits">
-                <div class="findings-section">
-                    {{if .FileFindings}}
-                        {{range .FileFindings}}
-                        <div class="file-findings">
-                            <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
-                                <div class="file-header-left">
-                                    <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                    <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                                    {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                                </div>
-                                {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                            </div>
-                            {{range .Categories}}
-                            <div class="category-section">
-                                <div class="category-title">{{.Name}}</div>
-                                <table class="findings-table">
-                                    <tbody>
-                                        {{range .Findings}}
-                                        <tr>
-                                            <td class="col-crit"><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
-                                            <td class="col-trait trait-id">{{.ID}}</td>
-                                            <td>
-                                                <div class="trait-desc">{{.Desc}}</div>
-                                                {{if .Evidence}}
-                                                <div class="trait-evidence">
-                                                    {{range .Evidence}}
-                                                    <div class="trait-evidence-item">{{.}}</div>
-                                                    {{end}}
-                                                </div>
-                                                {{end}}
-                                            </td>
-                                        </tr>
-                                        {{end}}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {{end}}
+                {{if .FileFindings}}
+                    {{range .FileFindings}}
+                    {{if $.IsArchive}}
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                        <div class="file-header-left">
+                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
+                            {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                         </div>
-                        {{end}}
-                    {{else}}
-                        {{if .LimitedInfo}}
-                        <div class="no-findings">Analysis could not be performed for this file type.</div>
-                        {{else}}
-                        <div class="no-findings">No notable behaviors detected — this file appears clean.</div>
-                        {{end}}
+                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    </div>
                     {{end}}
-                </div>
+                    {{range .Categories}}
+                    <div class="category-section">
+                        <div class="category-title">{{.Name}}</div>
+                        <table class="findings-table">
+                            <tbody>
+                                {{range .Findings}}
+                                <tr>
+                                    <td class="col-crit"><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
+                                    <td class="col-trait trait-id">{{.ID}}</td>
+                                    <td>
+                                        <div class="trait-desc">{{.Desc}}</div>
+                                        {{if .Evidence}}
+                                        <div class="trait-evidence">
+                                            {{range .Evidence}}
+                                            <div class="trait-evidence-item">{{.}}</div>
+                                            {{end}}
+                                        </div>
+                                        {{end}}
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{end}}
+                    {{end}}
+                {{else}}
+                    {{if .LimitedInfo}}
+                    <div class="no-findings">Analysis could not be performed for this file type.</div>
+                    {{else}}
+                    <div class="no-findings">No notable behaviors detected — this file appears clean.</div>
+                    {{end}}
+                {{end}}
             </div>
 
             <div class="tab-content" id="tab-strings">
                 {{if .FileStrings}}
                     {{range .FileStrings}}
-                    <div class="file-findings">
-                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
-                            <div class="file-header-left">
-                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                            </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    {{if $.IsArchive}}
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                        <div class="file-header-left">
+                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
-                        {{if .HasSections}}
-                            {{range .Sections}}
-                            <div class="category-section">
-                                <div class="category-title">{{.Section}}</div>
-                                <table class="strings-table">
-                                    <tbody>
-                                        {{range .Strings}}
-                                        <tr>
-                                            {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
-                                            <td>{{.Value}}</td>
-                                        </tr>
-                                        {{end}}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {{end}}
-                        {{else}}
+                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    </div>
+                    {{end}}
+                    {{if .HasSections}}
+                        {{range .Sections}}
+                        <div class="category-section">
+                            <div class="category-title">{{.Section}}</div>
                             <table class="strings-table">
                                 <tbody>
                                     {{range .Strings}}
@@ -935,8 +933,20 @@
                                     {{end}}
                                 </tbody>
                             </table>
+                        </div>
                         {{end}}
-                    </div>
+                    {{else}}
+                        <table class="strings-table">
+                            <tbody>
+                                {{range .Strings}}
+                                <tr>
+                                    {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
+                                    <td>{{.Value}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    {{end}}
                     {{end}}
                 {{else}}
                     <div class="no-findings">No strings extracted</div>
@@ -946,35 +956,35 @@
             <div class="tab-content" id="tab-symbols">
                 {{if .FileSymbols}}
                     {{range .FileSymbols}}
-                    <div class="file-findings">
-                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
-                            <div class="file-header-left">
-                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                            </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    {{if $.IsArchive}}
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                        <div class="file-header-left">
+                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
-                        {{if .Imports}}
-                        <div class="symbols-section">
-                            <div class="symbols-type">Imports</div>
-                            <div class="symbols-list">
-                                {{range .Imports}}
-                                <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
-                                {{end}}
-                            </div>
-                        </div>
-                        {{end}}
-                        {{if .Exports}}
-                        <div class="symbols-section">
-                            <div class="symbols-type">Exports</div>
-                            <div class="symbols-list">
-                                {{range .Exports}}
-                                <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
-                                {{end}}
-                            </div>
-                        </div>
-                        {{end}}
+                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                     </div>
+                    {{end}}
+                    {{if .Imports}}
+                    <div class="category-section">
+                        <div class="category-title">Imports</div>
+                        <div class="symbols-list">
+                            {{range .Imports}}
+                            <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                    {{if .Exports}}
+                    <div class="category-section">
+                        <div class="category-title">Exports</div>
+                        <div class="symbols-list">
+                            {{range .Exports}}
+                            <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
                     {{end}}
                 {{else}}
                     <div class="no-findings">No symbols found</div>
@@ -984,38 +994,38 @@
             <div class="tab-content" id="tab-sections">
                 {{if .FileSections}}
                     {{range .FileSections}}
-                    <div class="file-findings">
-                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
-                            <div class="file-header-left">
-                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                            </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    {{if $.IsArchive}}
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                        <div class="file-header-left">
+                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
-                        <table class="sections-table">
-                            <thead>
-                                <tr>
-                                    <th>Section</th>
-                                    <th>Size</th>
-                                    <th>Entropy</th>
-                                    <th>Flags</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {{range .Sections}}
-                                <tr>
-                                    <td class="section-name">{{.Name}}</td>
-                                    <td class="section-size">{{.Size}} B</td>
-                                    <td>
-                                        <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" data-width="{{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
-                                        <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
-                                    </td>
-                                    <td class="section-flags">{{.Flags}}</td>
-                                </tr>
-                                {{end}}
-                            </tbody>
-                        </table>
+                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                     </div>
+                    {{end}}
+                    <table class="sections-table">
+                        <thead>
+                            <tr>
+                                <th>Section</th>
+                                <th>Size</th>
+                                <th>Entropy</th>
+                                <th>Flags</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .Sections}}
+                            <tr>
+                                <td class="section-name">{{.Name}}</td>
+                                <td class="section-size">{{.Size}} B</td>
+                                <td>
+                                    <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" data-width="{{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
+                                    <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
+                                </td>
+                                <td class="section-flags">{{.Flags}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
                     {{end}}
                 {{else}}
                     <div class="no-findings">No sections found</div>
@@ -1025,30 +1035,30 @@
             <div class="tab-content" id="tab-metrics">
                 {{if .FileMetrics}}
                     {{range .FileMetrics}}
-                    <div class="file-findings">
-                        <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
-                            <div class="file-header-left">
-                                <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                            </div>
-                            {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
+                    {{if $.IsArchive}}
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                        <div class="file-header-left">
+                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
-                        {{range .Groups}}
-                        <div class="category-section">
-                            <div class="category-title">{{.Name}}</div>
-                            <table class="metrics-table">
-                                <tbody>
-                                    {{range .Fields}}
-                                    <tr>
-                                        <td class="metric-label">{{.Label}}</td>
-                                        <td class="metric-value">{{.Value}}</td>
-                                    </tr>
-                                    {{end}}
-                                </tbody>
-                            </table>
-                        </div>
-                        {{end}}
+                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
                     </div>
+                    {{end}}
+                    {{range .Groups}}
+                    <div class="category-section">
+                        <div class="category-title">{{.Name}}</div>
+                        <table class="metrics-table">
+                            <tbody>
+                                {{range .Fields}}
+                                <tr>
+                                    <td class="metric-label">{{.Label}}</td>
+                                    <td class="metric-value">{{.Value}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{end}}
                     {{end}}
                 {{else}}
                     <div class="no-findings">No metrics available</div>
