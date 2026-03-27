@@ -234,7 +234,7 @@
             <p class="tagline">{{template "tagline" .}}</p>
         </header>
 
-        <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form">
+        <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
             <div class="upload-zone" id="upload-zone">
                 <input type="file" name="file" id="file-input" required />

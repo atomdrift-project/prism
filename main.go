@@ -342,14 +342,14 @@ type resultData struct {
 // storedResult is what we persist in fido/datastore.
 type storedResult struct {
 	Filename       string
-	RawLitmus      string // raw JSON body from the litmus /analyze response
+	RawLitmus      string    // raw JSON body from the litmus /analyze response
 	Traits         string
 	Strings        string
 	Symbols        string
 	Sections       string
 	Metrics        string
-	Classification string // "hostile", "suspicious", or "benign" from litmus
-	Formula        string // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
+	Classification string    // "hostile", "suspicious", or "benign" from litmus
+	Formula        string    // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
 	FileType       string // file type from litmus (e.g. "macho", "pe")
 }
 
@@ -450,11 +450,9 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Parse command-line flags
-	var flushCache, noCache bool
+	var noCache bool
 	for i, arg := range os.Args[1:] {
 		switch {
-		case arg == "--flush" || arg == "-flush":
-			flushCache = true
 		case arg == "--no-cache" || arg == "-no-cache":
 			noCache = true
 		case arg == "--public" || arg == "-public":
@@ -508,22 +506,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Handle --flush command (only relevant when using real cache)
-		if flushCache {
-			logger.Info("flushing in-memory cache")
-			if closeErr := cache.Close(); closeErr != nil {
-				logger.Warn("error closing cache", "error", closeErr)
-			}
-			cache, cacheErr = fido.NewTiered(store)
-			if cacheErr != nil {
-				logger.Error("failed to reinitialize cache", "error", cacheErr)
-				os.Exit(1)
-			}
-			logger.Info("in-memory cache flushed successfully")
-			fmt.Println("In-memory cache cleared. Note: Persistent cache in datastore is not affected.")
-			fmt.Println("For full cache clear, delete entries from your datastore.")
-			os.Exit(0)
-		}
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -687,7 +669,6 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /_/health", handleHealth)
-	mux.HandleFunc("POST /_/flush", handleFlush)
 	return mux
 }
 
@@ -861,9 +842,11 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		CSRFToken string
 		Nonce     string
+		Refresh   bool
 	}{
 		CSRFToken: csrfToken(),
 		Nonce:     getNonce(r),
+		Refresh:   r.URL.Query().Get("refresh") == "1",
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
@@ -903,17 +886,6 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func handleFlush(w http.ResponseWriter, r *http.Request) {
-	n, err := cache.Flush(r.Context())
-	if err != nil {
-		logger.Error("cache flush failed", "error", err)
-		http.Error(w, "flush failed", http.StatusInternalServerError)
-		return
-	}
-	logger.Info("cache flushed via HTTP", "entries_removed", n)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "flushed %d entries\n", n)
-}
 
 // validSHA256 reports whether s is exactly 64 lowercase hex characters.
 func validSHA256(s string) bool {
@@ -1304,6 +1276,14 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		}()
 	} else {
 		reqLogger.Debug("skipping GCS upload (not configured)")
+	}
+
+	// If ?refresh=1, evict any cached result so the analysis runs fresh.
+	if r.URL.Query().Get("refresh") == "1" {
+		reqLogger.Info("refresh requested, evicting cached result", "sha256", sha256Hex)
+		if err := cache.Delete(ctx, sha256Hex); err != nil {
+			reqLogger.Debug("cache eviction failed (may not exist)", "error", err)
+		}
 	}
 
 	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
