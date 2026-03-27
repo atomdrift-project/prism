@@ -861,11 +861,55 @@ func BuildGalaxy(files []FileFindings) GalaxyData {
 		calcDepth(i, make(map[int]bool))
 	}
 
-	// Group files by depth level
+	// Determine which files are interesting enough to display.
+	// For small archives (≤16 files) show everything with notable+ findings.
+	// For large archives, focus on suspicious+ files and anything linked to them.
+	fileMaxSev := make([]Severity, len(files))
+	for i, file := range files {
+		for _, f := range file.Findings {
+			if f.Severity > fileMaxSev[i] {
+				fileMaxSev[i] = f.Severity
+			}
+		}
+	}
+
+	include := make([]bool, len(files))
+	notableCount := 0
+	for i := range files {
+		if fileMaxSev[i] >= SeverityNotable {
+			notableCount++
+		}
+	}
+
+	if notableCount <= 8 {
+		// Small archive: show all files with notable+ findings.
+		for i := range files {
+			include[i] = fileMaxSev[i] >= SeverityNotable
+		}
+	} else {
+		// Large archive: seed with suspicious+ files, then include
+		// anything directly linked (dropper or dropped) to them.
+		for i := range files {
+			include[i] = fileMaxSev[i] >= SeveritySuspicious
+		}
+		for i := range files {
+			if !include[i] {
+				continue
+			}
+			for _, j := range drops[i] {
+				include[j] = include[j] || fileMaxSev[j] >= SeverityNotable
+			}
+			for _, j := range droppedBy[i] {
+				include[j] = include[j] || fileMaxSev[j] >= SeverityNotable
+			}
+		}
+	}
+
+	// Group included files by depth level.
 	levels := make(map[int][]int)
 	maxDepth := 0
 	for i := range files {
-		if len(files[i].Findings) == 0 {
+		if !include[i] {
 			continue
 		}
 		d := depth[i]
