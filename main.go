@@ -278,6 +278,7 @@ type FileSectionsDisplay struct {
 
 type SectionDisplay struct {
 	Name    string
+	Offset  string
 	Flags   string
 	Entropy float64
 	Size    int64
@@ -402,6 +403,7 @@ type symbolInfo struct {
 
 type sectionInfo struct {
 	Address any     `json:"address,omitempty"`
+	Offset  *uint64 `json:"offset,omitempty"`
 	Name    string  `json:"name"`
 	Flags   string  `json:"flags,omitempty"`
 	Size    int64   `json:"size"`
@@ -1886,18 +1888,6 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 }
 
 // buildStructuredStrings extracts strings data for table display.
-// sectionAddress extracts a uint64 address from a sectionInfo.Address (may be number or hex string).
-func sectionAddress(v any) (uint64, bool) {
-	switch a := v.(type) {
-	case float64:
-		return uint64(a), true
-	case string:
-		n, err := strconv.ParseUint(strings.TrimPrefix(a, "0x"), 16, 64)
-		return n, err == nil
-	default:
-		return 0, false
-	}
-}
 
 func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 	var result []FileStringsDisplay
@@ -1910,19 +1900,18 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 
 		basename := extractBasename(file.Path)
 
-		// Build section ranges for offset-to-section lookup.
+		// Build section ranges for offset-to-section lookup using file offsets.
 		type sectionRange struct {
 			name       string
 			start, end uint64
 		}
 		var sectionRanges []sectionRange
 		for _, sec := range file.Sections {
-			addr, ok := sectionAddress(sec.Address)
-			if ok && sec.Size > 0 {
+			if sec.Offset != nil && sec.Size > 0 {
 				sectionRanges = append(sectionRanges, sectionRange{
 					name:  sec.Name,
-					start: addr,
-					end:   addr + uint64(sec.Size),
+					start: *sec.Offset,
+					end:   *sec.Offset + uint64(sec.Size),
 				})
 			}
 		}
@@ -2065,8 +2054,13 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 		var sections []SectionDisplay
 
 		for _, s := range file.Sections {
+			var offsetStr string
+			if s.Offset != nil {
+				offsetStr = fmt.Sprintf("0x%x", *s.Offset)
+			}
 			sections = append(sections, SectionDisplay{
 				Name:    s.Name,
+				Offset:  offsetStr,
 				Size:    s.Size,
 				Entropy: s.Entropy,
 				Flags:   s.Flags,
@@ -2288,6 +2282,7 @@ type cleaveAPISection struct {
 	Flags      string  `json:"flags,omitempty"`
 	Permission string  `json:"permission,omitempty"`
 	Address    uint64  `json:"address,omitempty"`
+	Offset     *uint64 `json:"offset,omitempty"`
 	Size       int64   `json:"size"`
 	Entropy    float64 `json:"entropy,omitempty"`
 }
@@ -2520,7 +2515,7 @@ func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
 		}
 		for _, sec := range resp.Sections {
 			entry.Sections = append(entry.Sections, sectionInfo{
-				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
+				Name: sec.Name, Address: sec.Address, Offset: sec.Offset, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
 		entry.Metrics = resp.Metrics
@@ -2576,7 +2571,7 @@ func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
 		}
 		for _, sec := range sections {
 			entry.Sections = append(entry.Sections, sectionInfo{
-				Name: sec.Name, Address: sec.Address, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
+				Name: sec.Name, Address: sec.Address, Offset: sec.Offset, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
 			})
 		}
 		if len(f.Metrics) > 0 && len(entry.Metrics) == 0 {

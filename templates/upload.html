@@ -19,7 +19,7 @@
             --toxic: #d0ff00;
             --toxic-muted: #9abe25;
             --toxic-dark: #4a6b0f;
-            --toxic-dim: rgba(208, 255, 0, 0.18);
+            --toxic-dim: rgba(208, 255, 0, 0.14);
             --hostile: #ef4444;
             --suspicious: #eab308;
             --notable: #3b82f6;
@@ -55,7 +55,7 @@
             color: var(--toxic-muted);
         }
         .beta-tag {
-            font-size: 10px;
+            font-size: 11px;
             font-weight: 600;
             color: var(--toxic-dark);
             background: var(--toxic-dim);
@@ -84,7 +84,7 @@
         }
         .upload-zone:hover, .upload-zone.dragover {
             border-color: var(--toxic-muted);
-            background: var(--toxic-dim);
+            background: rgba(208, 255, 0, 0.28);
         }
         .upload-zone input[type="file"] {
             display: none;
@@ -147,7 +147,7 @@
         }
         .capabilities-heading {
             font-family: 'Oxanium', sans-serif;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -239,7 +239,7 @@
             <div class="upload-zone" id="upload-zone">
                 <input type="file" name="file" id="file-input" required />
                 <label for="file-input">
-                    <div class="upload-icon">⚛</div>
+                    <div class="upload-icon">&#x269B;</div>
                     <div class="upload-text">Drop a file here or click to browse</div>
                     <div class="upload-hint"><a href="/formats" style="color: var(--iron); text-decoration: underline;">Binaries, source code, packages, archives</a></div>
                 </label>
