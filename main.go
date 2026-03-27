@@ -685,6 +685,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /_/health", handleHealth)
+	mux.HandleFunc("POST /_/flush", handleFlush)
 	return mux
 }
 
@@ -898,6 +899,18 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	if _, err := w.Write([]byte("OK\n")); err != nil {
 		logger.Debug("health check write failed", "error", err)
 	}
+}
+
+func handleFlush(w http.ResponseWriter, r *http.Request) {
+	n, err := cache.Flush(r.Context())
+	if err != nil {
+		logger.Error("cache flush failed", "error", err)
+		http.Error(w, "flush failed", http.StatusInternalServerError)
+		return
+	}
+	logger.Info("cache flushed via HTTP", "entries_removed", n)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprintf(w, "flushed %d entries\n", n)
 }
 
 // validSHA256 reports whether s is exactly 64 lowercase hex characters.
