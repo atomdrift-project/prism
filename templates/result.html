@@ -934,6 +934,11 @@
                 </li>
                 {{end}}
             </ul>
+            {{if gt .TotalFiles .ShownFiles}}
+            <div style="padding: 0.5em 1em; font-size: 0.85em; color: var(--ash); text-align: center;">
+                Showing top {{.ShownFiles}} of {{.TotalFiles}} files, sorted by criticality.
+            </div>
+            {{end}}
         </div>
         {{end}}
 

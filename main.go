@@ -335,6 +335,8 @@ type resultData struct {
 	HostileT      float64 // litmus hostile threshold
 	TraitColWidth string // CSS width for trait ID column, computed from longest trait
 	IsArchive     bool   // true when result contains multiple analyzed files
+	TotalFiles    int    // total archive member count before truncation
+	ShownFiles    int    // number of files shown after truncation
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -1558,6 +1560,15 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 		return fileSeverityRank(&report.Files[i]) > fileSeverityRank(&report.Files[j])
 	})
+
+	// For large archives, truncate to the top 25 most critical files.
+	// The depth-0 container is always first (guaranteed by the sort above).
+	const maxArchiveFiles = 25
+	data.TotalFiles = len(report.Files)
+	if len(report.Files) > maxArchiveFiles {
+		report.Files = report.Files[:maxArchiveFiles]
+	}
+	data.ShownFiles = len(report.Files)
 
 	// Build structured data for table display
 	data.FileFindings = buildStructuredFindings(report.Files)
