@@ -234,6 +234,12 @@
             <p class="tagline">{{template "tagline" .}}</p>
         </header>
 
+        {{if .Refresh}}
+        <div style="margin-bottom: 16px; padding: 8px 16px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; font-size: 13px; color: var(--iron); text-align: center;">
+            Refresh mode — cached results will be replaced with a fresh analysis.
+        </div>
+        {{end}}
+
         <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
             <div class="upload-zone" id="upload-zone">
@@ -244,7 +250,7 @@
                     <div class="upload-hint"><a href="/formats" style="color: var(--iron); text-decoration: underline;">Binaries, source code, packages, archives</a></div>
                 </label>
             </div>
-            <button type="submit" class="btn btn-primary" id="submit-btn" disabled>Analyze</button>
+            <button type="submit" class="btn btn-primary" id="submit-btn" disabled>{{if .Refresh}}Re-analyze{{else}}Analyze{{end}}</button>
             <div id="upload-status" class="upload-status"></div>
         </form>
 

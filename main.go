@@ -342,14 +342,14 @@ type resultData struct {
 // storedResult is what we persist in fido/datastore.
 type storedResult struct {
 	Filename       string
-	RawLitmus      string    // raw JSON body from the litmus /analyze response
+	RawLitmus      string // raw JSON body from the litmus /analyze response
 	Traits         string
 	Strings        string
 	Symbols        string
 	Sections       string
 	Metrics        string
-	Classification string    // "hostile", "suspicious", or "benign" from litmus
-	Formula        string    // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
+	Classification string // "hostile", "suspicious", or "benign" from litmus
+	Formula        string // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
 	FileType       string // file type from litmus (e.g. "macho", "pe")
 }
 
@@ -505,7 +505,6 @@ func main() {
 			logger.Error("failed to initialize fido tiered cache", "error", cacheErr)
 			os.Exit(1)
 		}
-
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -885,7 +884,6 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 		logger.Debug("health check write failed", "error", err)
 	}
 }
-
 
 // validSHA256 reports whether s is exactly 64 lowercase hex characters.
 func validSHA256(s string) bool {
