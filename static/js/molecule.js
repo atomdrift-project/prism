@@ -786,3 +786,16 @@ document.querySelectorAll('.tab').forEach(tab => {
         document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
     });
 });
+
+// Archive TOC: click to scroll to file header in active tab
+document.querySelectorAll('.archive-toc-item').forEach(item => {
+    item.addEventListener('click', () => {
+        const sha = item.dataset.fileSha;
+        const activeTab = document.querySelector('.tab-content.active');
+        if (!activeTab) return;
+        const header = activeTab.querySelector('.file-header[data-file-sha="' + sha + '"]');
+        if (header) {
+            header.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
+});

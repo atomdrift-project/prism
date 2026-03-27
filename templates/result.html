@@ -484,6 +484,75 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        /* Archive TOC */
+        .archive-toc {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .archive-toc-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 10px 16px;
+            background: var(--mist);
+            border-bottom: 1px solid var(--border);
+        }
+        .archive-toc-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .archive-toc-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--mist);
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .archive-toc-item:last-child { border-bottom: none; }
+        .archive-toc-item:hover { background: rgba(0, 0, 0, 0.02); }
+        .archive-toc-dot {
+            width: 14px;
+            height: 12px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .archive-toc-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--carbon);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .archive-toc-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            flex-shrink: 0;
+        }
+        .archive-toc-badge {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .archive-toc-badge.hostile { color: var(--hostile); }
+        .archive-toc-badge.suspicious { color: #92400e; }
+        .archive-toc-badge.benign { color: #4d7c0f; }
+
         .category-section {
             margin-bottom: 16px;
         }
@@ -850,6 +919,24 @@
         </div>
         {{end}}
 
+        {{if .IsArchive}}
+        <div class="archive-toc">
+            <div class="archive-toc-title">Archive Contents</div>
+            <ul class="archive-toc-list">
+                {{range .FileFindings}}
+                <li class="archive-toc-item" data-file-sha="{{.SHA256}}">
+                    <span class="archive-toc-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                    <span class="archive-toc-name" title="{{.Basename}}">{{.Basename}}</span>
+                    <span class="archive-toc-right">
+                        {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                        {{if .Classification}}<span class="archive-toc-badge {{.Classification}}">{{.Classification}}</span>{{end}}
+                    </span>
+                </li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+
         <section class="tabs-section">
             <div class="tabs">
                 <button class="tab active" data-tab="traits">Traits</button>
@@ -863,7 +950,7 @@
                 {{if .FileFindings}}
                     {{range .FileFindings}}
                     {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
                             <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
@@ -911,7 +998,7 @@
                 {{if .FileStrings}}
                     {{range .FileStrings}}
                     {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
                             <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
@@ -957,7 +1044,7 @@
                 {{if .FileSymbols}}
                     {{range .FileSymbols}}
                     {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
                             <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
@@ -995,7 +1082,7 @@
                 {{if .FileSections}}
                     {{range .FileSections}}
                     {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
                             <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
@@ -1038,7 +1125,7 @@
                 {{if .FileMetrics}}
                     {{range .FileMetrics}}
                     {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}">
+                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
                             <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>

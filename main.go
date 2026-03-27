@@ -1546,6 +1546,19 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		)
 	}
 
+	// Sort archive files by severity (hostile first) so all tabs show the most
+	// interesting files at the top. Depth-0 (the archive container itself) stays
+	// first regardless of severity.
+	sort.SliceStable(report.Files, func(i, j int) bool {
+		if report.Files[i].Depth == 0 {
+			return true
+		}
+		if report.Files[j].Depth == 0 {
+			return false
+		}
+		return fileSeverityRank(&report.Files[i]) > fileSeverityRank(&report.Files[j])
+	})
+
 	// Build structured data for table display
 	data.FileFindings = buildStructuredFindings(report.Files)
 	data.FileStrings = buildStructuredStrings(report.Files)
@@ -1681,6 +1694,26 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 // Findings are aggregated by directory path, keeping only the highest criticality/confidence per directory.
 //
 //nolint:gocognit // complex findings aggregation logic
+// fileSeverityRank returns a numeric rank for a file's severity, using the
+// litmus ML classification with a fallback to the cleave risk level.
+// Higher values = more severe.
+func fileSeverityRank(f *cleaveFile) int {
+	label := f.Classification
+	if label == "" {
+		label = f.Risk
+	}
+	switch label {
+	case "hostile":
+		return 3
+	case "suspicious":
+		return 2
+	case "notable":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 	var result []FileFindingsDisplay
 
