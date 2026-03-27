@@ -337,6 +337,8 @@ type resultData struct {
 	IsArchive     bool   // true when result contains multiple analyzed files
 	TotalFiles    int    // total archive member count before truncation
 	ShownFiles    int    // number of files shown after truncation
+	AnalyzedAt    string // human-readable UTC date of analysis
+	AnalyzedAgo   string // relative time since analysis (e.g. "5 minutes ago")
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -350,7 +352,8 @@ type storedResult struct {
 	Metrics        string
 	Classification string // "hostile", "suspicious", or "benign" from litmus
 	Formula        string // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
-	FileType       string // file type from litmus (e.g. "macho", "pe")
+	FileType       string    // file type from litmus (e.g. "macho", "pe")
+	CachedAt       time.Time // when this result was first analyzed
 }
 
 // cleaveReport is constructed from JSONL output (multiple lines).
@@ -1048,6 +1051,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 			Classification: lr.Classification,
 			Formula:        lr.Formula,
 			FileType:       lr.FileType,
+			CachedAt:       time.Now().UTC(),
 		}, nil
 	})
 	return cacheHit, res, err
@@ -1317,6 +1321,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			Classification: lr.Classification,
 			Formula:        lr.Formula,
 			FileType:       lr.FileType,
+			CachedAt:       time.Now().UTC(),
 		}, nil
 	})
 
@@ -1361,6 +1366,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 	if sha256Hex != "" && len(sha256Hex) >= 12 {
 		data.SHA256Short = sha256Hex[:12] + "..."
+	}
+
+	if !res.CachedAt.IsZero() {
+		data.AnalyzedAt = res.CachedAt.Format("2 Jan 2006 15:04 UTC")
+		data.AnalyzedAgo = timeAgo(time.Since(res.CachedAt))
 	}
 
 	// Parse raw litmus response to extract cleave analysis data.
@@ -2205,6 +2215,32 @@ func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 	}
 
 	return result
+}
+
+// timeAgo returns a human-readable relative time string (e.g. "5 minutes ago").
+func timeAgo(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", h)
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	}
 }
 
 // extractBasename extracts the filename from a path, handling archive paths.

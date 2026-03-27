@@ -552,6 +552,16 @@
         .archive-toc-badge.hostile { color: var(--hostile); }
         .archive-toc-badge.suspicious { color: #92400e; }
         .archive-toc-badge.benign { color: #4d7c0f; }
+        .archive-toc-footer {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--slate);
+            letter-spacing: 0.3px;
+            padding: 8px 16px;
+            background: var(--mist);
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
 
         .category-section {
             margin-bottom: 16px;
@@ -908,6 +918,12 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">{{.Size}}</span>
                     </div>
+                    {{if .AnalyzedAt}}
+                    <div class="meta-row">
+                        <span class="meta-label">Analyzed</span>
+                        <span class="meta-value" title="{{.AnalyzedAt}}">{{.AnalyzedAgo}}</span>
+                    </div>
+                    {{end}}
                 </div>
             </div>
             </div>
@@ -935,9 +951,7 @@
                 {{end}}
             </ul>
             {{if gt .TotalFiles .ShownFiles}}
-            <div style="padding: 0.5em 1em; font-size: 0.85em; color: var(--ash); text-align: center;">
-                Showing top {{.ShownFiles}} of {{.TotalFiles}} files, sorted by criticality.
-            </div>
+            <div class="archive-toc-footer">Showing top {{.ShownFiles}} of {{.TotalFiles}} files, sorted by criticality</div>
             {{end}}
         </div>
         {{end}}
