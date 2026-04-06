@@ -3,7 +3,6 @@ package main
 import (
 	"math"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -274,9 +273,8 @@ type GalaxyData struct {
 
 // FindingForFormula is a simplified finding for formula generation.
 type FindingForFormula struct {
-	ID        string
-	TraitRefs []string
-	Severity  Severity
+	ID       string
+	Severity Severity
 }
 
 // critToSeverity converts cleave's criticality string to Severity.
@@ -290,6 +288,38 @@ func critToSeverity(crit string) Severity {
 		return SeverityNotable
 	default:
 		return SeverityNeutral
+	}
+}
+
+// critIntToSeverity maps v4 criticality ordinal to Severity.
+func critIntToSeverity(crit int) Severity {
+	switch crit {
+	case 5:
+		return SeverityHostile
+	case 4:
+		return SeveritySuspicious
+	case 3:
+		return SeverityNotable
+	default:
+		return SeverityNeutral
+	}
+}
+
+// critIntToString maps v4 criticality ordinal to display string.
+func critIntToString(crit int) string {
+	switch crit {
+	case 5:
+		return "hostile"
+	case 4:
+		return "suspicious"
+	case 3:
+		return "notable"
+	case 2:
+		return "baseline"
+	case 1:
+		return "component"
+	default:
+		return "filtered"
 	}
 }
 
@@ -635,26 +665,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	type refEntry struct {
 		composites []int // atom indices of composites that reference this ref
 	}
+	// TraitRefs removed in v4 — composite bond pool is empty.
 	refPool := make(map[string]*refEntry)
-	for _, f := range findings {
-		if f.Severity < SeverityNotable || len(f.TraitRefs) == 0 {
-			continue
-		}
-		ci, ok := traitIDToAtomIdx[f.ID]
-		if !ok {
-			continue
-		}
-		for _, ref := range f.TraitRefs {
-			if refPool[ref] == nil {
-				refPool[ref] = &refEntry{}
-			}
-			re := refPool[ref]
-			seen := slices.Contains(re.composites, ci)
-			if !seen {
-				re.composites = append(re.composites, ci)
-			}
-		}
-	}
 
 	if len(refPool) > 0 {
 		// Group refs by primary composite for arc positioning.

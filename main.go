@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	"codeberg.org/atomdrift/hopper"
 	"github.com/codeGROOVE-dev/fido"
 	"github.com/codeGROOVE-dev/fido/pkg/store/cloudrun"
 	"github.com/codeGROOVE-dev/fido/pkg/store/null"
@@ -61,6 +62,7 @@ var (
 	cache             *fido.TieredCache[string, storedResult]
 	logger            *slog.Logger
 	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
+	hopperDB          *hopper.DB
 )
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
@@ -358,36 +360,27 @@ type storedResult struct {
 
 // cleaveReport is constructed from JSONL output (multiple lines).
 type cleaveReport struct {
-	Summary *cleaveSummary `json:"summary,omitempty"`
-	Files   []cleaveFile   `json:"files"`
+	Files []cleaveFile `json:"fs"`
 }
 
-// cleaveFile represents a file entry in cleave output.
+// cleaveFile represents a file entry in cleave v4 output.
+// Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
-	Type               string         `json:"type,omitempty"` // "file" for JSONL parsing
-	Path               string         `json:"path"`
-	FileType           string         `json:"file_type"`
-	SHA256             string         `json:"sha256"`
-	Risk               string         `json:"risk,omitempty"`
-	Classification     string         `json:"-"` // litmus ML classification, injected from embedded_files
-	Formula            string         `json:"formula,omitempty"`
-	Counts             *findingCounts `json:"counts,omitempty"`
-	Metrics            json.RawMessage `json:"metrics,omitempty"`
-	Findings           []finding      `json:"findings,omitempty"`
-	Strings            []stringInfo   `json:"strings,omitempty"`
-	Imports            []symbolInfo   `json:"imports,omitempty"`
-	Exports            []symbolInfo   `json:"exports,omitempty"`
-	Sections           []sectionInfo  `json:"sections,omitempty"`
-	Size               int64          `json:"size"`
-	AnalysisDurationMs int64          `json:"analysis_duration_ms,omitempty"`
-	Probability        float64        `json:"-"` // litmus ML probability, injected from embedded_files
-	ID                 int            `json:"id"`
-	Depth              int            `json:"depth"`
-	// Summary fields (only present when Type == "summary")
-	FilesAnalyzed int `json:"files_analyzed,omitempty"`
-	Hostile       int `json:"hostile,omitempty"`
-	Suspicious    int `json:"suspicious,omitempty"`
-	Notable       int `json:"notable,omitempty"`
+	Path           string            `json:"path"`
+	FileType       string            `json:"type"`
+	SHA256         string            `json:"sha"`
+	Classification string            `json:"class,omitempty"` // litmus ML classification, injected by litmus
+	Formula        string            `json:"f,omitempty"`
+	Metrics        json.RawMessage   `json:"ms,omitempty"`
+	Findings       []finding         `json:"ts,omitempty"`
+	Strings        []json.RawMessage `json:"ss,omitempty"` // v4 tuples: [offset, value] or [offset, enc, value]
+	Imports        []string          `json:"is,omitempty"` // v4: bare symbol strings
+	Exports        []symbolInfo      `json:"exports,omitempty"`
+	Sections       []sectionInfo     `json:"sections,omitempty"`
+	Size           int64             `json:"sz"`
+	Probability    float64           `json:"prob,omitempty"` // litmus ML probability, injected by litmus
+	ID             int               `json:"id"`
+	Depth          int               `json:"dp"`
 }
 
 type stringInfo struct {
@@ -423,17 +416,11 @@ type findingCounts struct {
 }
 
 type finding struct {
-	ID        string     `json:"id"`
-	Desc      string     `json:"desc"`
-	Crit      string     `json:"crit,omitempty"`
-	Kind      string     `json:"kind,omitempty"`
-	TraitRefs []string   `json:"trait_refs,omitempty"`
-	Evidence  []evidence `json:"evidence,omitempty"`
-	Conf      float64    `json:"conf"`
-}
-
-type evidence struct {
-	Value string `json:"value"`
+	ID       string   `json:"i"`
+	Desc     string   `json:"d,omitempty"`
+	Crit     int      `json:"l"`
+	Evidence []string `json:"e,omitempty"` // v4: flat value strings
+	Conf     float64  `json:"c,omitempty"`
 }
 
 type cleaveSummary struct {
@@ -586,6 +573,17 @@ func main() {
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
+	}
+
+	// Connect to hopper sample registry if configured.
+	if dsn := os.Getenv("HOPPER_DSN"); dsn != "" {
+		var err error
+		hopperDB, err = hopper.Open(context.Background(), dsn)
+		if err != nil {
+			logger.Error("failed to connect to hopper", "error", err)
+		} else {
+			logger.Info("hopper connected")
+		}
 	}
 
 	port := os.Getenv("PORT")
@@ -1250,35 +1248,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	reqLogger.Info("file written to temp", "bytes", written)
 
 	// Upload to GCS if configured (background, simultaneous to analysis).
-	// Add(1) here so the defer above waits for the upload before deleting the file.
-	if gcsBucket != "" && gcsClient != nil {
-		cleanupWg.Add(1)
-		go func() { //nolint:contextcheck,modernize // background context intentional: upload must outlive request
-			defer cleanupWg.Done()
-			reqLogger.Debug("starting background GCS upload")
-			// Use a background context that isn't tied to the request lifecycle
-			// so the upload can continue after the redirect.
-			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-
-			f, err := os.Open(tempPath)
-			if err != nil {
-				reqLogger.Error("failed to open temp file for background GCS upload", "error", err)
-				return
-			}
-			defer func() {
-				if err := f.Close(); err != nil {
-					reqLogger.Debug("failed to close temp file in GCS upload", "error", err)
-				}
-			}()
-
-			if err := uploadToGCS(bgCtx, gcsBucket, sha256Hex, filename, f, reqLogger); err != nil {
-				reqLogger.Error("background GCS upload failed", "error", err)
-			}
-		}()
-	} else {
-		reqLogger.Debug("skipping GCS upload (not configured)")
-	}
+	// GCS upload removed — will migrate to R2.
 
 	// If ?refresh=1, evict any cached result so the analysis runs fresh.
 	if r.URL.Query().Get("refresh") == "1" {
@@ -1314,6 +1284,27 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			"duration_ms", analysisDuration.Milliseconds(),
 			"classification", lr.Classification,
 		)
+
+		// Store in hopper sample registry (best-effort, inside fetch closure
+		// so it only runs on cache miss — i.e. once per new analysis).
+		if hopperDB != nil {
+			if insertErr := hopperDB.InsertSample(lctx, &hopper.Sample{
+				SHA256:      sha256Hex,
+				Source:      "upload",
+				Filename:    filename,
+				Label:       "unknown",
+				LabelSource: "upload",
+				SizeBytes:   written,
+			}); insertErr != nil {
+				reqLogger.Debug("hopper insert failed", "error", insertErr)
+			}
+			if len(lr.CleaveJSON) > 0 {
+				hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, "") //nolint:errcheck
+			}
+			if len(lr.LitmusEnvelope) > 0 {
+				hopperDB.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope) //nolint:errcheck
+			}
+		}
 
 		return storedResult{
 			Filename:       filename,
@@ -1381,8 +1372,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		return data
 	}
 	// Use thresholds from litmus response, with sensible defaults.
-	data.SuspiciousT = litmusResp.Thresholds.Suspicious
-	data.HostileT = litmusResp.Thresholds.Hostile
+	data.SuspiciousT = litmusResp.suspiciousT()
+	data.HostileT = litmusResp.hostileT()
 	if data.SuspiciousT == 0 {
 		data.SuspiciousT = 0.65
 	}
@@ -1390,13 +1381,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.HostileT = 0.887
 	}
 
-	var cleaveResp cleaveAPIResponse
+	report := &cleaveReport{}
 	if len(litmusResp.Cleave) > 0 {
-		if err := json.Unmarshal(litmusResp.Cleave, &cleaveResp); err != nil {
+		if err := json.Unmarshal(litmusResp.Cleave, report); err != nil {
 			logger.Debug("failed to parse cleave data", "sha256", sha256Hex, "error", err)
 		}
 	}
-	report := parseAPIResponse(&cleaveResp)
 
 	// Normalize paths: replace the temp file path with the real uploaded filename
 	// for any top-level file (depth=0, no archive separator). Cleave reports the
@@ -1407,30 +1397,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 	}
 
-	// Ascribe litmus ML evaluations to individual files. The top-level file gets
-	// the archive-level classification; embedded files are matched by path suffix.
-	if len(litmusResp.EmbeddedFiles) > 0 {
-		evalByPath := make(map[string]*litmusEmbeddedFile, len(litmusResp.EmbeddedFiles))
-		for i := range litmusResp.EmbeddedFiles {
-			evalByPath[litmusResp.EmbeddedFiles[i].Path] = &litmusResp.EmbeddedFiles[i]
-		}
-		for i := range report.Files {
-			if ef, ok := evalByPath[report.Files[i].Path]; ok {
-				report.Files[i].Classification = strings.ToLower(ef.Classification)
-				report.Files[i].Probability = ef.Probability
-			}
-		}
-	}
-	// Top-level file inherits the archive-level litmus classification.
+	// Normalize classification strings from litmus (injected as "class" in each fs[] entry).
 	for i := range report.Files {
-		if report.Files[i].Depth == 0 {
-			report.Files[i].Classification = strings.ToLower(litmusResp.Classification)
-			report.Files[i].Probability = float64(litmusResp.Probability)
-			break
-		}
+		report.Files[i].Classification = strings.ToLower(report.Files[i].Classification)
 	}
 
-	if len(report.Files) == 0 && report.Summary == nil {
+	if len(report.Files) == 0 {
 		logger.Debug("empty cleave report", "sha256", sha256Hex)
 		data.Formula = template.HTML("?")
 		return data
@@ -1451,27 +1423,17 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Size = formatBytes(report.Files[0].Size)
 	}
 
-	// Extract duration from summary
-	if report.Summary != nil {
-		data.Duration = fmt.Sprintf("%dms", report.Summary.AnalysisDurationMs)
-	}
-
-	// Extract findings for formula generation (skip structural/internal findings)
+	// Extract findings for formula generation
 	var findings []FindingForFormula
 	var totalFindings int
 
 	for i := range report.Files {
 		file := &report.Files[i]
 		for _, f := range file.Findings {
-			// Skip structural/internal symbols - they clutter the formula
-			if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
-				continue
-			}
 			totalFindings++
 			findings = append(findings, FindingForFormula{
-				ID:        f.ID,
-				Severity:  critToSeverity(f.Crit),
-				TraitRefs: f.TraitRefs,
+				ID:       f.ID,
+				Severity: critIntToSeverity(f.Crit),
 			})
 		}
 	}
@@ -1482,18 +1444,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	traitDetails := make(map[string]*TraitDetail)
 	for i := range report.Files {
 		for _, f := range report.Files[i].Findings {
-			if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
-				continue
-			}
 			if _, exists := traitDetails[f.ID]; exists {
 				continue // deduplicate
 			}
-			td := &TraitDetail{Desc: f.Desc, Crit: f.Crit}
-			for _, e := range f.Evidence {
-				if e.Value != "" {
-					td.Evidence = append(td.Evidence, e.Value)
-				}
-			}
+			td := &TraitDetail{Desc: f.Desc, Crit: critIntToString(f.Crit)}
+			td.Evidence = append(td.Evidence, f.Evidence...)
 			traitDetails[f.ID] = td
 		}
 	}
@@ -1612,33 +1567,27 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			file := &report.Files[i]
 			var ff []FindingForFormula
 			for _, f := range file.Findings {
-				if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
-					continue
-				}
 				ff = append(ff, FindingForFormula{
-					ID:        f.ID,
-					Severity:  critToSeverity(f.Crit),
-					TraitRefs: f.TraitRefs,
+					ID:       f.ID,
+					Severity: critIntToSeverity(f.Crit),
 				})
 			}
 
 			// Extract string values for dropper detection
 			var strs []string
 			for _, s := range file.Strings {
-				strs = append(strs, s.Value)
+				strs = append(strs, parseStringTupleValue(s)...)
 			}
 
-			// Also scan evidence for dropper detection (may contain file references)
+			// Also scan evidence for dropper detection
 			for _, f := range file.Findings {
-				for _, e := range f.Evidence {
-					strs = append(strs, e.Value)
-				}
+				strs = append(strs, f.Evidence...)
 			}
 
 			if len(ff) > 0 {
 				fileFindings = append(fileFindings, FileFindings{
 					Path:           file.Path,
-					Risk:           file.Risk,
+					Risk:           critIntToString(maxCritInFile(file)),
 					Classification: file.Classification,
 					Probability:    file.Probability,
 					Formula:        file.Formula,
@@ -1697,11 +1646,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 // litmus ML classification with a fallback to the cleave risk level.
 // Higher values = more severe.
 func fileSeverityRank(f *cleaveFile) int {
-	label := f.Classification
-	if label == "" {
-		label = f.Risk
-	}
-	switch label {
+	switch f.Classification {
 	case "hostile":
 		return 3
 	case "suspicious":
@@ -1711,6 +1656,36 @@ func fileSeverityRank(f *cleaveFile) int {
 	default:
 		return 0
 	}
+}
+
+// maxCritInFile returns the highest criticality ordinal from a file's traits.
+func maxCritInFile(f *cleaveFile) int {
+	max := 0
+	for _, t := range f.Findings {
+		if t.Crit > max {
+			max = t.Crit
+		}
+	}
+	return max
+}
+
+// parseStringTupleValue extracts the value from a v4 string tuple.
+// Format: [offset, value] or [offset, encoding, value]
+func parseStringTupleValue(raw json.RawMessage) []string {
+	var arr []json.RawMessage
+	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
+		return nil
+	}
+	var val string
+	if len(arr) == 2 {
+		json.Unmarshal(arr[1], &val)
+	} else if len(arr) >= 3 {
+		json.Unmarshal(arr[2], &val)
+	}
+	if val == "" {
+		return nil
+	}
+	return []string{val}
 }
 
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
@@ -1725,15 +1700,6 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		"third_party":     "Third-party",
 	}
 
-	// Criticality ordering for comparison
-	critOrder := map[string]int{
-		"hostile":    3,
-		"suspicious": 2,
-		"notable":    1,
-		"baseline":   0,
-		"":           -1,
-	}
-
 	for i := range files {
 		file := &files[i]
 		if len(file.Findings) == 0 {
@@ -1746,20 +1712,15 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			evidence map[string]bool
 			dirPath  string
 			topLevel string
-			crit     string
+			crit     int
 			desc     string
 			conf     float64
 		}
 		aggregated := make(map[string]*aggregatedFinding)
 
 		for _, f := range file.Findings {
-			// Skip structural/internal findings
-			if f.Kind == "structural" || strings.HasPrefix(f.ID, "metadata/internal/") {
-				continue
-			}
-
-			// Only show notable or higher (skip baseline/component/empty)
-			if f.Crit == "" || f.Crit == "component" || f.Crit == "baseline" {
+			// Only show notable (3) or higher
+			if f.Crit < 3 {
 				continue
 			}
 
@@ -1772,12 +1733,10 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			topLevel := parts[0]
 
 			// Directory path is everything except the last component, excluding top-level
-			// e.g., "objectives/execution/shell/bash" -> dirPath = "execution/shell"
 			var dirPath string
 			if len(parts) > 2 {
 				dirPath = strings.Join(parts[1:len(parts)-1], "/")
 			} else {
-				// Only 2 parts like "objectives/execution" -> show as "execution"
 				dirPath = parts[1]
 			}
 
@@ -1785,10 +1744,9 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 
 			existing, ok := aggregated[key]
 			if !ok {
-				// New directory - create entry
 				evidenceSet := make(map[string]bool)
 				for _, e := range f.Evidence {
-					evidenceSet[e.Value] = true
+					evidenceSet[e] = true
 				}
 				aggregated[key] = &aggregatedFinding{
 					dirPath:  dirPath,
@@ -1799,12 +1757,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 					evidence: evidenceSet,
 				}
 			} else {
-				// Existing directory - keep higher criticality, then higher confidence
-				existingCrit := critOrder[existing.crit]
-				newCrit := critOrder[f.Crit]
-
-				shouldReplace := newCrit > existingCrit ||
-					(newCrit == existingCrit && f.Conf > existing.conf)
+				shouldReplace := f.Crit > existing.crit ||
+					(f.Crit == existing.crit && f.Conf > existing.conf)
 
 				if shouldReplace {
 					existing.crit = f.Crit
@@ -1812,9 +1766,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 					existing.desc = f.Desc
 				}
 
-				// Merge evidence (always)
 				for _, e := range f.Evidence {
-					existing.evidence[e.Value] = true
+					existing.evidence[e] = true
 				}
 			}
 		}
@@ -1835,7 +1788,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 
 			fd := FindingDisplay{
 				ID:       agg.dirPath, // Show directory path without top-level
-				Crit:     agg.crit,
+				Crit:     critIntToString(agg.crit),
 				Desc:     agg.desc,
 				Evidence: evidence,
 			}
@@ -1843,22 +1796,23 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], fd)
 		}
 
+		critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
+
 		// Sort findings within each category by criticality (desc), then alphabetically
 		for cat := range categoryMap {
 			findings := categoryMap[cat]
 			sort.Slice(findings, func(i, j int) bool {
-				ci, cj := critOrder[findings[i].Crit], critOrder[findings[j].Crit]
+				ci, cj := critRank[findings[i].Crit], critRank[findings[j].Crit]
 				if ci != cj {
-					return ci > cj // Higher criticality first
+					return ci > cj
 				}
-				return findings[i].ID < findings[j].ID // Alphabetical
+				return findings[i].ID < findings[j].ID
 			})
 			categoryMap[cat] = findings
 		}
 
 		// Build categories sorted by highest criticality finding, then by default order.
 		defaultOrder := map[string]int{"well-known": 0, "objectives": 1, "micro-behaviors": 2, "metadata": 3, "third_party": 4}
-		critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
 
 		var categories []CategoryGroup
 		for cat, findings := range categoryMap {
@@ -1918,7 +1872,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			result = append(result, FileFindingsDisplay{
 				Path:           file.Path,
 				Basename:       basename,
-				Risk:           file.Risk,
+				Risk:           critIntToString(maxCritInFile(file)),
 				Classification: file.Classification,
 				Probability:    file.Probability,
 				SHA256:         file.SHA256,
@@ -1962,29 +1916,39 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 		}
 
 		var strs []StringDisplay
-		for _, s := range file.Strings {
-			section := s.Section
-			// Compute section from offset if not already set.
-			if section == "" && s.Offset != "" && len(sectionRanges) > 0 {
-				off, err := strconv.ParseUint(strings.TrimPrefix(s.Offset, "0x"), 16, 64)
-				if err == nil {
-					for _, sr := range sectionRanges {
-						if off >= sr.start && off < sr.end {
-							section = sr.name
-							break
-						}
+		for _, raw := range file.Strings {
+			// v4 string tuples: [offset, value] or [offset, encoding, value]
+			var arr []json.RawMessage
+			if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
+				continue
+			}
+			var offset uint64
+			json.Unmarshal(arr[0], &offset)
+			var value string
+			if len(arr) == 2 {
+				json.Unmarshal(arr[1], &value)
+			} else {
+				json.Unmarshal(arr[2], &value)
+			}
+
+			// Compute section from offset
+			section := ""
+			if len(sectionRanges) > 0 {
+				for _, sr := range sectionRanges {
+					if offset >= sr.start && offset < sr.end {
+						section = sr.name
+						break
 					}
 				}
 			}
 			strs = append(strs, StringDisplay{
-				Value:   s.Value,
+				Value:   value,
 				Section: section,
-				Offset:  s.Offset,
+				Offset:  fmt.Sprintf("0x%x", offset),
 			})
 		}
 
-		// Sort by offset (hex string comparison works for zero-padded offsets;
-		// for non-padded, parse as integers).
+		// Sort by offset
 		sort.Slice(strs, func(i, j int) bool {
 			oi, _ := strconv.ParseUint(strings.TrimPrefix(strs[i].Offset, "0x"), 16, 64)
 			oj, _ := strconv.ParseUint(strings.TrimPrefix(strs[j].Offset, "0x"), 16, 64)
@@ -2019,7 +1983,7 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 
 		result = append(result, FileStringsDisplay{
 			Basename:       basename,
-			Risk:           file.Risk,
+			Risk:           critIntToString(maxCritInFile(file)),
 			Classification: file.Classification,
 			Probability:    file.Probability,
 			SHA256:         file.SHA256,
@@ -2048,13 +2012,8 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 		var imports, exports []SymbolDisplay
 
 		for _, s := range file.Imports {
-			name := s.Symbol
-			if name == "" {
-				name = s.Name
-			}
 			imports = append(imports, SymbolDisplay{
-				Name:    name,
-				Library: s.Library,
+				Name: s,
 			})
 		}
 
@@ -2071,7 +2030,7 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 
 		result = append(result, FileSymbolsDisplay{
 			Basename:       basename,
-			Risk:           file.Risk,
+			Risk:           critIntToString(maxCritInFile(file)),
 			Classification: file.Classification,
 			Probability:    file.Probability,
 			SHA256:         file.SHA256,
@@ -2114,7 +2073,7 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 
 		result = append(result, FileSectionsDisplay{
 			Basename:       basename,
-			Risk:           file.Risk,
+			Risk:           critIntToString(maxCritInFile(file)),
 			Classification: file.Classification,
 			Probability:    file.Probability,
 			SHA256:         file.SHA256,
@@ -2204,7 +2163,7 @@ func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 
 		result = append(result, FileMetricsDisplay{
 			Basename:       extractBasename(file.Path),
-			Risk:           file.Risk,
+			Risk:           critIntToString(maxCritInFile(file)),
 			Classification: file.Classification,
 			Probability:    file.Probability,
 			SHA256:         file.SHA256,
@@ -2271,104 +2230,75 @@ func formatBytes(b int64) string {
 
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
-type litmusThresholds struct {
-	Suspicious float64 `json:"suspicious"`
-	Hostile    float64 `json:"hostile"`
-}
-
+// litmusAPIResponse matches the v4 compact litmus JSON output.
+// Fields like formula, file_type, sha256 are embedded in cleave.fs[0],
+// not at the top level.
 type litmusAPIResponse struct {
-	Path           string               `json:"path"`
-	Classification string               `json:"classification"`
-	Formula        string               `json:"formula"`
-	FileType       string               `json:"file_type"`
-	SHA256         string               `json:"sha256"`
-	Cleave         json.RawMessage      `json:"cleave,omitempty"`
-	EmbeddedFiles  []litmusEmbeddedFile `json:"embedded_files,omitempty"`
-	TopFindings    []litmusTopFinding   `json:"top_findings,omitempty"`
-	SizeBytes      int64                `json:"size_bytes"`
-	Probability    float64              `json:"probability"`
-	Thresholds     litmusThresholds     `json:"thresholds"`
+	V              string          `json:"v"`
+	Classification string          `json:"class"`
+	Probability    float64         `json:"prob"`
+	Thresholds     [2]float64      `json:"thresholds"` // [suspicious, hostile]
+	Version        string          `json:"version"`
+	AnalyzedAt     string          `json:"analyzed_at"`
+	Cleave         json.RawMessage `json:"cleave,omitempty"`
 }
 
-// litmusEmbeddedFile is a per-file ML evaluation from litmus for archive members.
-type litmusEmbeddedFile struct {
-	Path           string             `json:"path"`
-	FileType       string             `json:"file_type"`
-	Classification string             `json:"classification"`
-	Formula        string             `json:"formula,omitempty"`
-	TopFindings    []litmusTopFinding `json:"top_findings,omitempty"`
-	Probability    float64            `json:"probability"`
+// litmusThresholds returns suspicious and hostile thresholds as named values.
+func (r *litmusAPIResponse) suspiciousT() float64 { return r.Thresholds[0] }
+func (r *litmusAPIResponse) hostileT() float64    { return r.Thresholds[1] }
+
+// litmusEnvelope returns the litmus classification envelope JSON (without the
+// cleave field) suitable for storing in hopper's litmus_result column.
+func (r *litmusAPIResponse) envelope() ([]byte, error) {
+	env := struct {
+		V          string     `json:"v"`
+		Class      string     `json:"class"`
+		Prob       float64    `json:"prob"`
+		Thresholds [2]float64 `json:"thresholds"`
+		Version    string     `json:"version"`
+		AnalyzedAt string     `json:"analyzed_at"`
+	}{
+		V:          r.V,
+		Class:      r.Classification,
+		Prob:       r.Probability,
+		Thresholds: r.Thresholds,
+		Version:    r.Version,
+		AnalyzedAt: r.AnalyzedAt,
+	}
+	return json.Marshal(env)
 }
 
-// litmusTopFinding is a representative finding surfaced by litmus ML evaluation.
-type litmusTopFinding struct {
-	ID   string `json:"id"`
-	Crit string `json:"crit"`
-	Desc string `json:"desc"`
+// primaryFile extracts formula, file_type, and sha256 from the first (dp=0)
+// entry in the cleave report embedded in the litmus response.
+func (r *litmusAPIResponse) primaryFile() (formula, fileType, sha256 string) {
+	var report struct {
+		Files []struct {
+			Formula  string `json:"f"`
+			FileType string `json:"type"`
+			SHA256   string `json:"sha"`
+			Depth    int    `json:"dp"`
+		} `json:"fs"`
+	}
+	if json.Unmarshal(r.Cleave, &report) != nil || len(report.Files) == 0 {
+		return "", "", ""
+	}
+	// Find root file (dp=0), fall back to first.
+	for _, f := range report.Files {
+		if f.Depth == 0 {
+			return f.Formula, f.FileType, f.SHA256
+		}
+	}
+	f := report.Files[0]
+	return f.Formula, f.FileType, f.SHA256
 }
 
-// cleaveAPIResponse represents the JSON response from cleave's AnalysisReport.
-// After finalize(), cleave clears top-level arrays and target — all data lives in files[].
-type cleaveAPIResponse struct {
-	Files    []cleaveAPIFile    `json:"files"`
-	Findings []finding          `json:"findings,omitempty"`
-	Strings  []stringInfo       `json:"strings,omitempty"`
-	Imports  []symbolInfo       `json:"imports,omitempty"`
-	Exports  []symbolInfo       `json:"exports,omitempty"`
-	Sections []cleaveAPISection `json:"sections,omitempty"`
-	Version  string             `json:"version"`
-	Summary  *cleaveAPISummary  `json:"summary,omitempty"`
-	Metrics  json.RawMessage    `json:"metrics,omitempty"`
-	Target   cleaveTargetInfo   `json:"target"`
-}
-
-type cleaveTargetInfo struct {
-	Path     string `json:"path"`
-	FileType string `json:"type"`
-	SHA256   string `json:"sha256"`
-	Size     int64  `json:"size_bytes"`
-}
-
-type cleaveAPIFile struct {
-	ParentID *int               `json:"parent_id,omitempty"`
-	Metrics  json.RawMessage    `json:"metrics,omitempty"`
-	Counts   *findingCounts     `json:"counts,omitempty"`
-	Formula  string             `json:"formula,omitempty"`
-	Risk     string             `json:"risk,omitempty"`
-	SHA256   string             `json:"sha256"`
-	FileType string             `json:"file_type"`
-	Path     string             `json:"path"`
-	Imports  []symbolInfo       `json:"imports,omitempty"`
-	Sections []cleaveAPISection `json:"sections,omitempty"`
-	Exports  []symbolInfo       `json:"exports,omitempty"`
-	Strings  []stringInfo       `json:"strings,omitempty"`
-	Findings []finding          `json:"findings,omitempty"`
-	ID       int                `json:"id"`
-	Depth    int                `json:"depth"`
-	Size     int64              `json:"size"`
-}
-
-type cleaveAPISection struct {
-	Name       string  `json:"name"`
-	Flags      string  `json:"flags,omitempty"`
-	Permission string  `json:"permission,omitempty"`
-	Address    uint64  `json:"address,omitempty"`
-	Offset     *uint64 `json:"offset,omitempty"`
-	Size       int64   `json:"size"`
-	Entropy    float64 `json:"entropy,omitempty"`
-}
-
-
-type cleaveAPISummary struct {
-	Counts        *findingCounts `json:"counts,omitempty"`
-	MaxRisk       string         `json:"max_risk,omitempty"`
-	FilesAnalyzed int            `json:"files_analyzed"`
-	DurationMs    int64          `json:"duration_ms,omitempty"`
-}
+// v4 cleave types are defined above: cleaveReport, cleaveFile, finding.
 
 // litmusResult holds the output of a runLitmus call.
 type litmusResult struct {
-	RawLitmus      string // raw JSON body from litmus /analyze, served as-is from the .json endpoint
+	RawLitmus      string // full litmus JSON response (served as-is from .json endpoint)
+	CleaveJSON     []byte // raw cleave report (litmus response .cleave field)
+	LitmusEnvelope []byte // litmus classification envelope (without cleave)
 	Classification string
 	Formula        string
 	FileType       string
@@ -2515,244 +2445,29 @@ func runLitmus(
 		return litmusResult{}, fmt.Errorf("failed to send request to litmus server: %w", retryErr)
 	}
 
+	formula, fileType, _ := litmusResp.primaryFile()
+	envelope, _ := litmusResp.envelope()
+
 	reqLogger.Info("litmus analysis complete",
 		"total_duration_ms", time.Since(startTime).Milliseconds(),
 		"classification", litmusResp.Classification,
 		"probability", litmusResp.Probability,
-		"formula", litmusResp.Formula,
-		"file_type", litmusResp.FileType,
+		"formula", formula,
+		"file_type", fileType,
+		"version", litmusResp.Version,
 		"raw_bytes", len(rawBody),
 	)
 
 	return litmusResult{
 		RawLitmus:      string(rawBody),
+		CleaveJSON:     litmusResp.Cleave,
+		LitmusEnvelope: envelope,
 		Classification: litmusResp.Classification,
-		Formula:        litmusResp.Formula,
-		FileType:       litmusResp.FileType,
+		Formula:        formula,
+		FileType:       fileType,
 	}, nil
 }
 
-// parseAPIResponse converts a cleaveAPIResponse into a cleaveReport for HTML rendering.
-// It applies the same fallback logic as the old JSONL pipeline: depth-0 files inherit
-// top-level imports, exports, strings, sections, and metrics when the per-file fields
-// are absent.
-//
-//nolint:gocognit // inherently branchy: many independent optional blocks
-func parseAPIResponse(resp *cleaveAPIResponse) *cleaveReport {
-	report := &cleaveReport{}
+// v4: cleave output deserializes directly into cleaveReport via json tags.
+// parseAPIResponse and uploadToGCS removed.
 
-	// If the files array is empty, synthesize a single entry from the top-level data.
-	if len(resp.Files) == 0 && resp.Target.Path != "" {
-		entry := cleaveFile{
-			Path:     resp.Target.Path,
-			Depth:    0,
-			FileType: resp.Target.FileType,
-			SHA256:   resp.Target.SHA256,
-			Size:     resp.Target.Size,
-			Findings: resp.Findings,
-			Strings:  resp.Strings,
-			Imports:  resp.Imports,
-			Exports:  resp.Exports,
-		}
-		for _, f := range resp.Findings {
-			switch f.Crit {
-			case "hostile":
-				entry.Risk = "hostile"
-			case "suspicious":
-				if entry.Risk != "hostile" {
-					entry.Risk = "suspicious"
-				}
-			case "notable":
-				if entry.Risk == "" {
-					entry.Risk = "notable"
-				}
-			default:
-			}
-		}
-		counts := &findingCounts{}
-		for _, f := range resp.Findings {
-			switch f.Crit {
-			case "hostile":
-				counts.Hostile++
-			case "suspicious":
-				counts.Suspicious++
-			case "notable":
-				counts.Notable++
-			default:
-			}
-		}
-		if counts.Hostile > 0 || counts.Suspicious > 0 || counts.Notable > 0 {
-			entry.Counts = counts
-		}
-		for _, sec := range resp.Sections {
-			entry.Sections = append(entry.Sections, sectionInfo{
-				Name: sec.Name, Address: sec.Address, Offset: sec.Offset, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
-			})
-		}
-		entry.Metrics = resp.Metrics
-		report.Files = append(report.Files, entry)
-	}
-
-	for i := range resp.Files {
-		f := &resp.Files[i]
-		entry := cleaveFile{
-			ID:       f.ID,
-			Path:     f.Path,
-			Depth:    f.Depth,
-			FileType: f.FileType,
-			SHA256:   f.SHA256,
-			Size:     f.Size,
-			Risk:     f.Risk,
-			Counts:   f.Counts,
-			Findings: f.Findings,
-			Strings:  f.Strings,
-			Formula:  f.Formula,
-		}
-
-		if f.Depth == 0 {
-			if entry.FileType == "" || entry.FileType == "unknown" {
-				if resp.Target.FileType != "" && resp.Target.FileType != "unknown" {
-					entry.FileType = resp.Target.FileType
-				}
-			}
-			if len(f.Imports) == 0 {
-				entry.Imports = resp.Imports
-			} else {
-				entry.Imports = f.Imports
-			}
-			if len(f.Exports) == 0 {
-				entry.Exports = resp.Exports
-			} else {
-				entry.Exports = f.Exports
-			}
-			if len(f.Strings) == 0 {
-				entry.Strings = resp.Strings
-			}
-			if len(entry.Metrics) == 0 && len(resp.Metrics) > 0 {
-				entry.Metrics = resp.Metrics
-			}
-		} else {
-			entry.Imports = f.Imports
-			entry.Exports = f.Exports
-		}
-
-		sections := f.Sections
-		if f.Depth == 0 && len(sections) == 0 {
-			sections = resp.Sections
-		}
-		for _, sec := range sections {
-			entry.Sections = append(entry.Sections, sectionInfo{
-				Name: sec.Name, Address: sec.Address, Offset: sec.Offset, Size: sec.Size, Entropy: sec.Entropy, Flags: sec.Flags,
-			})
-		}
-		if len(f.Metrics) > 0 && len(entry.Metrics) == 0 {
-			entry.Metrics = f.Metrics
-		}
-
-		report.Files = append(report.Files, entry)
-	}
-
-	if resp.Summary != nil {
-		report.Summary = &cleaveSummary{
-			FilesAnalyzed:      resp.Summary.FilesAnalyzed,
-			AnalysisDurationMs: resp.Summary.DurationMs,
-		}
-		if resp.Summary.Counts != nil {
-			report.Summary.Hostile = resp.Summary.Counts.Hostile
-			report.Summary.Suspicious = resp.Summary.Counts.Suspicious
-			report.Summary.Notable = resp.Summary.Counts.Notable
-		}
-	} else {
-		summary := &cleaveSummary{FilesAnalyzed: max(len(resp.Files), 1)}
-		for i := range resp.Files {
-			switch resp.Files[i].Risk {
-			case "hostile":
-				summary.Hostile++
-			case "suspicious":
-				summary.Suspicious++
-			case "notable":
-				summary.Notable++
-			default:
-			}
-		}
-		if len(resp.Files) == 0 {
-			for _, f := range resp.Findings {
-				switch f.Crit {
-				case "hostile":
-					summary.Hostile++
-				case "suspicious":
-					summary.Suspicious++
-				case "notable":
-					summary.Notable++
-				default:
-				}
-			}
-		}
-		report.Summary = summary
-	}
-
-	return report
-}
-
-// uploadToGCS uploads data to GCS with exponential backoff retry.
-func uploadToGCS(ctx context.Context, bucket, sha256Hex, filename string, r io.Reader, reqLogger *slog.Logger) error {
-	if gcsClient == nil {
-		return errors.New("GCS client not initialized")
-	}
-
-	objectPath := fmt.Sprintf("%s/%s", sha256Hex, filename)
-	reqLogger.Debug("preparing GCS upload", "bucket", bucket, "object", objectPath)
-
-	var attempt int
-	startTime := time.Now()
-	err := retry.Do(
-		func() error {
-			attempt++
-			reqLogger.Debug("uploading to GCS",
-				"bucket", bucket,
-				"object", objectPath,
-				"attempt", attempt,
-			)
-
-			wc := gcsClient.Bucket(bucket).Object(objectPath).NewWriter(ctx)
-			wc.ContentType = "application/octet-stream"
-
-			if _, err := io.Copy(wc, r); err != nil {
-				if cerr := wc.Close(); cerr != nil {
-					reqLogger.Debug("failed to close GCS writer after copy error", "error", cerr)
-				}
-				// Seek back to start if it's a seeker for the next retry
-				if rs, ok := r.(io.Seeker); ok {
-					if _, serr := rs.Seek(0, io.SeekStart); serr != nil {
-						reqLogger.Debug("failed to seek file", "error", serr)
-					}
-				}
-				return fmt.Errorf("write: %w", err)
-			}
-
-			if err := wc.Close(); err != nil {
-				return fmt.Errorf("close: %w", err)
-			}
-
-			return nil
-		},
-		retry.Context(ctx),
-		retry.Attempts(5),
-		retry.MaxDelay(2*time.Minute),
-		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
-		retry.OnRetry(func(n uint, err error) {
-			reqLogger.Warn("GCS upload retry",
-				"attempt", n+1,
-				"error", err,
-				"bucket", bucket,
-				"object", objectPath,
-			)
-		}),
-	)
-
-	if err == nil {
-		reqLogger.Info("GCS upload complete", "duration_ms", time.Since(startTime).Milliseconds(), "bucket", bucket, "object", objectPath)
-	}
-
-	return err
-}
