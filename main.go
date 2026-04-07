@@ -32,10 +32,9 @@ import (
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/storage"
 	"codeberg.org/atomdrift/hopper"
 	"github.com/codeGROOVE-dev/fido"
-	"github.com/codeGROOVE-dev/fido/pkg/store/cloudrun"
+	"github.com/codeGROOVE-dev/fido/pkg/store/localfs"
 	"github.com/codeGROOVE-dev/fido/pkg/store/null"
 	"github.com/codeGROOVE-dev/retry"
 )
@@ -55,10 +54,8 @@ var (
 	errorTemplate     *template.Template
 	formatsTemplate   *template.Template
 	poweredByTemplate *template.Template
-	gcsBucket         string
 	litmusAddr        string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient      *http.Client // HTTP client for litmus server
-	gcsClient         *storage.Client
 	cache             *fido.TieredCache[string, storedResult]
 	logger            *slog.Logger
 	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
@@ -369,7 +366,7 @@ type cleaveFile struct {
 	Path           string            `json:"path"`
 	FileType       string            `json:"type"`
 	SHA256         string            `json:"sha"`
-	Classification string            `json:"class,omitempty"` // litmus ML classification, injected by litmus
+	Classification string            `json:"-"` // populated from ml.fs after parsing
 	Formula        string            `json:"f,omitempty"`
 	Metrics        json.RawMessage   `json:"ms,omitempty"`
 	Findings       []finding         `json:"ts,omitempty"`
@@ -378,7 +375,7 @@ type cleaveFile struct {
 	Exports        []symbolInfo      `json:"exports,omitempty"`
 	Sections       []sectionInfo     `json:"sections,omitempty"`
 	Size           int64             `json:"sz"`
-	Probability    float64           `json:"prob,omitempty"` // litmus ML probability, injected by litmus
+	Probability    float64           `json:"-"` // populated from ml.fs after parsing
 	ID             int               `json:"id"`
 	Depth          int               `json:"dp"`
 }
@@ -474,7 +471,7 @@ func main() {
 	// Initialize fido cache
 	var cacheErr error
 	if noCache {
-		// Use null store for local development (no caching)
+		// No caching
 		logger.Info("cache disabled via --no-cache flag, using null store")
 		nullStore := null.New[string, storedResult]()
 		cache, cacheErr = fido.NewTiered(nullStore)
@@ -483,9 +480,18 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		// Use Cloud Run auto-detection for production
-		logger.Debug("initializing fido store", "cache_id", "prism")
-		store, storeErr := cloudrun.New[string, storedResult](ctx, "prism")
+		// Use local filesystem for caching
+		cacheDir := os.Getenv("CACHE_DIR")
+		if cacheDir == "" {
+			userCache, err := os.UserCacheDir()
+			if err != nil {
+				logger.Error("failed to get user cache dir", "error", err)
+				os.Exit(1)
+			}
+			cacheDir = filepath.Join(userCache, "prism")
+		}
+		logger.Info("initializing localfs store", "cache_id", "prism", "dir", cacheDir)
+		store, storeErr := localfs.New[string, storedResult]("prism", cacheDir)
 		if storeErr != nil {
 			logger.Error("failed to initialize fido store", "error", storeErr)
 			os.Exit(1)
@@ -617,13 +623,6 @@ func main() {
 			logger.Error("graceful shutdown failed", "error", err)
 		}
 
-		// Close GCS client if initialized
-		if gcsClient != nil {
-			if err := gcsClient.Close(); err != nil {
-				logger.Error("failed to close GCS client", "error", err)
-			}
-		}
-
 		if cache != nil {
 			if err := cache.Close(); err != nil {
 				logger.Error("failed to close fido cache", "error", err)
@@ -636,7 +635,6 @@ func main() {
 	logger.Info("server starting",
 		"port", port,
 		"litmus_addr", litmusAddr,
-		"gcs_bucket", gcsBucket,
 	)
 
 	var lc net.ListenConfig
@@ -674,8 +672,6 @@ func newMux() *http.ServeMux {
 
 // loadConfig loads configuration from environment variables.
 func loadConfig() error {
-	gcsBucket = os.Getenv("GCS_BUCKET")
-
 	// LITMUS_ADDR from env (flag takes precedence)
 	if litmusAddr == "" {
 		litmusAddr = os.Getenv("LITMUS_ADDR")
@@ -691,7 +687,6 @@ func loadConfig() error {
 
 	logger.Debug("configuration loaded",
 		"LITMUS_ADDR", litmusAddr,
-		"GCS_BUCKET", gcsBucket,
 		"PORT", os.Getenv("PORT"),
 	)
 
@@ -974,83 +969,14 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// lookupResult retrieves a stored result from cache, falling back to GCS if configured.
+// lookupResult retrieves a stored result from cache.
 // Returns (cacheHit, result, error).
 func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool, storedResult, error) {
 	cacheHit := true
 	res, err := cache.Fetch(ctx, sha, func(lctx context.Context) (storedResult, error) {
 		cacheHit = false
-		if gcsBucket == "" || gcsClient == nil {
-			reqLogger.Debug("cache miss, GCS not configured for fallback")
-			return storedResult{}, errors.New("result not in cache and GCS not configured")
-		}
-
-		reqLogger.Info("cache miss, attempting fallback to GCS")
-
-		it := gcsClient.Bucket(gcsBucket).Objects(lctx, &storage.Query{Prefix: sha + "/"})
-		attrs, err := it.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				reqLogger.Debug("file not found in GCS", "prefix", sha+"/")
-				return storedResult{}, errors.New("file not found in GCS")
-			}
-			reqLogger.Error("GCS list failed", "error", err)
-			return storedResult{}, fmt.Errorf("GCS list failed: %w", err)
-		}
-
-		filename := filepath.Base(attrs.Name)
-		reqLogger.Info("found file in GCS, re-analyzing", "filename", filename, "gcs_path", attrs.Name)
-
-		tempFile, err := os.CreateTemp("", "litmus-fallback-*")
-		if err != nil {
-			return storedResult{}, fmt.Errorf("failed to create temp file: %w", err)
-		}
-		tempPath := tempFile.Name()
-		defer func() {
-			if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				reqLogger.Debug("failed to remove temp file", "path", tempPath, "error", err)
-			}
-		}()
-		defer func() {
-			if err := tempFile.Close(); err != nil {
-				reqLogger.Debug("failed to close temp file", "error", err)
-			}
-		}()
-
-		reqLogger.Debug("downloading from GCS", "temp_path", tempPath)
-		rc, err := gcsClient.Bucket(gcsBucket).Object(attrs.Name).NewReader(lctx)
-		if err != nil {
-			return storedResult{}, fmt.Errorf("GCS reader failed: %w", err)
-		}
-		defer func() {
-			if err := rc.Close(); err != nil {
-				reqLogger.Debug("failed to close GCS reader", "error", err)
-			}
-		}()
-
-		dlStart := time.Now()
-		if _, err := io.Copy(tempFile, rc); err != nil {
-			return storedResult{}, fmt.Errorf("failed to download from GCS: %w", err)
-		}
-		reqLogger.Debug("GCS download complete", "duration_ms", time.Since(dlStart).Milliseconds())
-		if err := tempFile.Close(); err != nil {
-			reqLogger.Debug("failed to close temp file after download", "error", err)
-		}
-
-		reqLogger.Debug("starting fallback analysis")
-		lr, err := runLitmus(lctx, tempPath, filename, reqLogger)
-		if err != nil {
-			return storedResult{}, fmt.Errorf("litmus failed: %w", err)
-		}
-
-		return storedResult{
-			Filename:       filename,
-			RawLitmus:      lr.RawLitmus,
-			Classification: lr.Classification,
-			Formula:        lr.Formula,
-			FileType:       lr.FileType,
-			CachedAt:       time.Now().UTC(),
-		}, nil
+		reqLogger.Debug("cache miss")
+		return storedResult{}, errors.New("result not in cache")
 	})
 	return cacheHit, res, err
 }
@@ -1364,16 +1290,21 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.AnalyzedAgo = timeAgo(time.Since(res.CachedAt))
 	}
 
-	// Parse raw litmus response to extract cleave analysis data.
-	var litmusResp litmusAPIResponse
-	if err := json.Unmarshal([]byte(res.RawLitmus), &litmusResp); err != nil {
+	// Parse raw litmus response envelope: {"ml": {...}, "raw": {...}}.
+	var fullResp litmusFullResponse
+	if err := json.Unmarshal([]byte(res.RawLitmus), &fullResp); err != nil {
 		logger.Debug("failed to parse raw litmus response", "sha256", sha256Hex, "error", err)
 		data.Formula = template.HTML("?")
 		return data
 	}
+	var mlResp litmusMlResponse
+	if err := json.Unmarshal(fullResp.ML, &mlResp); err != nil {
+		logger.Debug("failed to parse ml section", "sha256", sha256Hex, "error", err)
+	}
+
 	// Use thresholds from litmus response, with sensible defaults.
-	data.SuspiciousT = litmusResp.suspiciousT()
-	data.HostileT = litmusResp.hostileT()
+	data.SuspiciousT = mlResp.suspiciousT()
+	data.HostileT = mlResp.hostileT()
 	if data.SuspiciousT == 0 {
 		data.SuspiciousT = 0.65
 	}
@@ -1382,8 +1313,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	report := &cleaveReport{}
-	if len(litmusResp.Cleave) > 0 {
-		if err := json.Unmarshal(litmusResp.Cleave, report); err != nil {
+	if len(fullResp.Raw) > 0 {
+		if err := json.Unmarshal(fullResp.Raw, report); err != nil {
 			logger.Debug("failed to parse cleave data", "sha256", sha256Hex, "error", err)
 		}
 	}
@@ -1397,9 +1328,22 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 	}
 
-	// Normalize classification strings from litmus (injected as "class" in each fs[] entry).
+	// Merge ML classifications from ml.fs into cleave report files (matched by id).
+	mlByID := make(map[int]struct {
+		Class int
+		Prob  float64
+	}, len(mlResp.Files))
+	for _, f := range mlResp.Files {
+		mlByID[f.ID] = struct {
+			Class int
+			Prob  float64
+		}{f.Class, f.Prob}
+	}
 	for i := range report.Files {
-		report.Files[i].Classification = strings.ToLower(report.Files[i].Classification)
+		if ml, ok := mlByID[report.Files[i].ID]; ok {
+			report.Files[i].Classification = classificationName(ml.Class)
+			report.Files[i].Probability = ml.Prob
+		}
 	}
 
 	if len(report.Files) == 0 {
@@ -2233,44 +2177,43 @@ func formatBytes(b int64) string {
 // litmusAPIResponse matches the v4 compact litmus JSON output.
 // Fields like formula, file_type, sha256 are embedded in cleave.fs[0],
 // not at the top level.
-type litmusAPIResponse struct {
-	V              string          `json:"v"`
-	Classification string          `json:"class"`
-	Probability    float64         `json:"prob"`
-	Thresholds     [2]float64      `json:"thresholds"` // [suspicious, hostile]
-	Version        string          `json:"version"`
-	AnalyzedAt     string          `json:"analyzed_at"`
-	Cleave         json.RawMessage `json:"cleave,omitempty"`
+// litmusFullResponse matches the top-level {"ml": {...}, "raw": {...}} envelope.
+type litmusFullResponse struct {
+	ML  json.RawMessage `json:"ml"`
+	Raw json.RawMessage `json:"raw"`
 }
 
-// litmusThresholds returns suspicious and hostile thresholds as named values.
-func (r *litmusAPIResponse) suspiciousT() float64 { return r.Thresholds[0] }
-func (r *litmusAPIResponse) hostileT() float64    { return r.Thresholds[1] }
+// litmusMlResponse matches the ml section of the litmus response.
+type litmusMlResponse struct {
+	V              string     `json:"v"`
+	Classification int        `json:"class"` // 0=benign, 1=suspicious, 2=hostile
+	Probability    float64    `json:"prob"`
+	Thresholds     [2]float64 `json:"thresholds"` // [suspicious, hostile]
+	Version        string     `json:"version"`
+	AnalyzedAt     string     `json:"analyzed_at"`
+	Files          []struct {
+		ID    int     `json:"id"`
+		Class int     `json:"class"`
+		Prob  float64 `json:"prob"`
+	} `json:"fs"`
+}
 
-// litmusEnvelope returns the litmus classification envelope JSON (without the
-// cleave field) suitable for storing in hopper's litmus_result column.
-func (r *litmusAPIResponse) envelope() ([]byte, error) {
-	env := struct {
-		V          string     `json:"v"`
-		Class      string     `json:"class"`
-		Prob       float64    `json:"prob"`
-		Thresholds [2]float64 `json:"thresholds"`
-		Version    string     `json:"version"`
-		AnalyzedAt string     `json:"analyzed_at"`
-	}{
-		V:          r.V,
-		Class:      r.Classification,
-		Prob:       r.Probability,
-		Thresholds: r.Thresholds,
-		Version:    r.Version,
-		AnalyzedAt: r.AnalyzedAt,
+// classificationNames maps integer classification to display string.
+var classificationNames = [3]string{"benign", "suspicious", "hostile"}
+
+func classificationName(c int) string {
+	if c >= 0 && c < len(classificationNames) {
+		return classificationNames[c]
 	}
-	return json.Marshal(env)
+	return "unknown"
 }
+
+func (r *litmusMlResponse) suspiciousT() float64 { return r.Thresholds[0] }
+func (r *litmusMlResponse) hostileT() float64    { return r.Thresholds[1] }
 
 // primaryFile extracts formula, file_type, and sha256 from the first (dp=0)
-// entry in the cleave report embedded in the litmus response.
-func (r *litmusAPIResponse) primaryFile() (formula, fileType, sha256 string) {
+// entry in the raw cleave report.
+func primaryFile(raw json.RawMessage) (formula, fileType, sha256 string) {
 	var report struct {
 		Files []struct {
 			Formula  string `json:"f"`
@@ -2279,10 +2222,9 @@ func (r *litmusAPIResponse) primaryFile() (formula, fileType, sha256 string) {
 			Depth    int    `json:"dp"`
 		} `json:"fs"`
 	}
-	if json.Unmarshal(r.Cleave, &report) != nil || len(report.Files) == 0 {
+	if json.Unmarshal(raw, &report) != nil || len(report.Files) == 0 {
 		return "", "", ""
 	}
-	// Find root file (dp=0), fall back to first.
 	for _, f := range report.Files {
 		if f.Depth == 0 {
 			return f.Formula, f.FileType, f.SHA256
@@ -2365,7 +2307,8 @@ func runLitmus(
 	retryCtx, retryCancel := context.WithTimeout(ctx, time.Minute)
 	defer retryCancel()
 
-	var litmusResp litmusAPIResponse
+	var fullResp litmusFullResponse
+	var mlResp litmusMlResponse
 	var attempt int
 	var rawBody []byte
 	if retryErr := retry.Do(
@@ -2430,8 +2373,11 @@ func runLitmus(
 				return fmt.Errorf("litmus server returned status %d: %s", resp.StatusCode, string(body))
 			}
 
-			if err := json.Unmarshal(body, &litmusResp); err != nil {
+			if err := json.Unmarshal(body, &fullResp); err != nil {
 				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus response: %w", err))
+			}
+			if err := json.Unmarshal(fullResp.ML, &mlResp); err != nil {
+				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus ml section: %w", err))
 			}
 			rawBody = body
 			return nil
@@ -2445,24 +2391,23 @@ func runLitmus(
 		return litmusResult{}, fmt.Errorf("failed to send request to litmus server: %w", retryErr)
 	}
 
-	formula, fileType, _ := litmusResp.primaryFile()
-	envelope, _ := litmusResp.envelope()
+	formula, fileType, _ := primaryFile(fullResp.Raw)
 
 	reqLogger.Info("litmus analysis complete",
 		"total_duration_ms", time.Since(startTime).Milliseconds(),
-		"classification", litmusResp.Classification,
-		"probability", litmusResp.Probability,
+		"classification", classificationName(mlResp.Classification),
+		"probability", mlResp.Probability,
 		"formula", formula,
 		"file_type", fileType,
-		"version", litmusResp.Version,
+		"version", mlResp.Version,
 		"raw_bytes", len(rawBody),
 	)
 
 	return litmusResult{
 		RawLitmus:      string(rawBody),
-		CleaveJSON:     litmusResp.Cleave,
-		LitmusEnvelope: envelope,
-		Classification: litmusResp.Classification,
+		CleaveJSON:     fullResp.Raw,
+		LitmusEnvelope: fullResp.ML,
+		Classification: classificationName(mlResp.Classification),
 		Formula:        formula,
 		FileType:       fileType,
 	}, nil

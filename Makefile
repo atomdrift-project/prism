@@ -7,15 +7,8 @@ help:
 	@echo "  make test                   Run tests"
 	@echo "  make run                    Run locally (requires cleave in PATH)"
 	@echo "  make clean                  Clean build artifacts"
-	@echo "  make deploy                 Deploy to Cloud Run"
 	@echo "  make rollout-bastille       Deploy to Bastille jails (BUILD=jail RUN=jail)"
 	@echo ""
-	@echo "Deploy options:"
-	@echo "  make deploy GCP_PROJECT=my-project GCS_BUCKET=my-bucket"
-	@echo ""
-	@echo "Environment variables:"
-	@echo "  GCP_PROJECT     GCP project ID (required for deploy)"
-	@echo "  GCS_BUCKET      GCS bucket name for file storage (required for deploy)"
 
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -30,16 +23,6 @@ integration:
 
 run: build
 	PORT=8080 CLEAVE_PATH=cleave ./prism
-
-check-deploy-deps:
-	@command -v apko >/dev/null 2>&1 || { echo "❌ apko not found. Install with: go install chainguard.dev/apko@latest"; exit 1; }
-	@command -v crane >/dev/null 2>&1 || { echo "❌ crane not found. Install with: go install github.com/google/go-containerregistry/cmd/crane@latest"; exit 1; }
-	@command -v gcloud >/dev/null 2>&1 || { echo "❌ gcloud not found. Install from: https://cloud.google.com/sdk/docs/install"; exit 1; }
-	@command -v jq >/dev/null 2>&1 || { echo "❌ jq not found. Install with: brew install jq"; exit 1; }
-	@echo "✓ All deploy dependencies found (no Docker required)"
-
-deploy: check-deploy-deps
-	./hacks/deploy.sh "$(GCP_PROJECT)" "$(GCS_BUCKET)"
 
 rollout-bastille:
 	@[ -n "$(BUILD)" ] && [ -n "$(RUN)" ] || { echo "Usage: make rollout-bastille BUILD=<build-jail> RUN=<run-jail>"; exit 1; }
