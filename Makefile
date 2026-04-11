@@ -7,10 +7,13 @@ help:
 	@echo "  make test                   Run tests"
 	@echo "  make run                    Run locally (requires cleave in PATH)"
 	@echo "  make clean                  Clean build artifacts"
-	@echo "  make rollout-bastille       Deploy to Bastille jails (BUILD=jail RUN=jail)"
+	@echo "  make rollout-bastille       Deploy to Bastille jails (BUILD=build RUN=prism)"
 	@echo ""
 
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+BUILD ?= build
+RUN ?= prism
 
 build:
 	CGO_ENABLED=0 go build -o prism -ldflags="-s -w -X main.buildCommit=$(GIT_COMMIT)" .
@@ -25,7 +28,6 @@ run: build
 	PORT=8080 CLEAVE_PATH=cleave ./prism
 
 rollout-bastille:
-	@[ -n "$(BUILD)" ] && [ -n "$(RUN)" ] || { echo "Usage: make rollout-bastille BUILD=<build-jail> RUN=<run-jail>"; exit 1; }
 	./hacks/rollout-bastille.sh "$(BUILD)" "$(RUN)"
 
 clean:

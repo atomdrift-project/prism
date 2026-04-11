@@ -693,7 +693,7 @@ func loadConfig() error {
 		litmusAddr = os.Getenv("LITMUS_ADDR")
 	}
 	if litmusAddr == "" {
-		litmusAddr = "127.0.0.1:8081"
+		litmusAddr = "127.0.0.1:49999"
 	}
 
 	// Initialize HTTP client for litmus server

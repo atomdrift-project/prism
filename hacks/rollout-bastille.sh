@@ -91,24 +91,14 @@ doas bastille cmd "$RUN" rm -f /tmp/prism
 # --- Hopper database password ---
 # Stored in ~prism/.pgpass (PostgreSQL standard; pgx reads it automatically).
 # The password is never placed in the DSN, environment, or process table.
+# Copied from the hopper jail where it is already provisioned.
 
-PGPASS_FILE="$BASTILLE_DIR/$RUN/root/home/prism/.pgpass"
-HOPPER_PASS=""
-if doas test -f "$PGPASS_FILE" 2>/dev/null; then
-    HOPPER_PASS=$(doas grep -s '^hopper:' "$PGPASS_FILE" | cut -d: -f5)
-fi
+PGPASS_SRC="$BASTILLE_DIR/hopper/root/home/prism/.pgpass"
+PGPASS_DST="$BASTILLE_DIR/$RUN/root/home/prism/.pgpass"
 
-if [ -z "$HOPPER_PASS" ]; then
-    printf "Enter hopper database password for prism: "
-    stty -echo
-    read -r HOPPER_PASS
-    stty echo
-    printf "\n"
-    [ -z "$HOPPER_PASS" ] && die "database password is required"
-fi
-
-log "Writing hopper credentials to jail .pgpass"
-printf 'hopper:5432:hopper:prism:%s\n' "$HOPPER_PASS" | doas tee "$PGPASS_FILE" >/dev/null
+doas test -f "$PGPASS_SRC" || die "hopper jail pgpass not found at $PGPASS_SRC"
+log "Copying hopper credentials from hopper jail"
+doas cp "$PGPASS_SRC" "$PGPASS_DST"
 doas bastille cmd "$RUN" chown prism /home/prism/.pgpass
 doas bastille cmd "$RUN" chmod 600 /home/prism/.pgpass
 
