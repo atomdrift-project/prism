@@ -91,16 +91,20 @@ doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism
 # Stored in ~prism/.pgpass in the run jail (PostgreSQL standard; pgx reads it automatically).
 # The password is never placed in the DSN, environment, or process table.
 
-log "Copying hopper credentials from hopper jail"
-doas bastille cmd hopper test -f /home/hopper/.pgpass || die "hopper jail pgpass not found at /home/hopper/.pgpass"
-# Hoist the password from the hopper jail's pgpass (localhost entry) and write a
-# remote entry for prism to use (connecting to the hopper host, not localhost).
-set +x
-HOPPER_PASS=$(doas bastille cmd hopper sh -c "cut -d: -f5 /home/hopper/.pgpass")
-[ -z "$HOPPER_PASS" ] && die "could not read password from hopper jail pgpass"
-doas bastille cmd "$RUN" su -l prism -c "printf 'hopper:5432:hopper:hopper:%s\n' '$HOPPER_PASS' > ~/.pgpass && chmod 600 ~/.pgpass"
-unset HOPPER_PASS
-set -x
+if doas bastille cmd "$RUN" test -f /home/prism/.pgpass 2>/dev/null; then
+    log "Hopper credentials already present in prism jail, skipping copy"
+else
+    log "Copying hopper credentials from hopper jail"
+    doas bastille cmd hopper test -f /home/hopper/.pgpass || die "hopper jail pgpass not found at /home/hopper/.pgpass"
+    # Hoist the password from the hopper jail's pgpass (localhost entry) and write a
+    # remote entry for prism to use (connecting to the hopper host, not localhost).
+    set +x
+    HOPPER_PASS=$(doas bastille cmd hopper sh -c "cut -d: -f5 /home/hopper/.pgpass")
+    [ -z "$HOPPER_PASS" ] && die "could not read password from hopper jail pgpass"
+    doas bastille cmd "$RUN" su -l prism -c "printf 'hopper:5432:hopper:hopper:%s\n' '$HOPPER_PASS' > ~/.pgpass && chmod 600 ~/.pgpass"
+    unset HOPPER_PASS
+    set -x
+fi
 
 log "Creating rc.d service for prism"
 doas bastille cmd "$RUN" mkdir -p /usr/local/etc/rc.d
