@@ -39,6 +39,11 @@ doas bastille cmd "$RUN" true || die "run jail '$RUN' not accessible"
 
 # --- Build jail setup ---
 
+log "Ensuring DNS resolver is running in build jail"
+doas bastille sysrc "$BUILD" local_unbound_enable=YES
+doas bastille service "$BUILD" local_unbound status >/dev/null 2>&1 || \
+    doas bastille service "$BUILD" local_unbound start
+
 log "Ensuring build user exists"
 doas bastille cmd "$BUILD" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$BUILD" pw useradd prism -m -s /bin/sh -c "Prism Build"
@@ -140,6 +145,13 @@ doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/prism
 doas bastille sysrc "$RUN" prism_enable=YES
 
 # --- Cloudflare Tunnel setup ---
+# DNS must be running before pkg can bootstrap.
+log "Ensuring DNS resolver is running in run jail"
+doas bastille sysrc "$RUN" local_unbound_enable=YES
+doas bastille service "$RUN" local_unbound status >/dev/null 2>&1 || \
+    doas bastille service "$RUN" local_unbound start
+
+
 # Tunnel and DNS are configured in the Cloudflare dashboard (Zero Trust -> Tunnels).
 # Pass CF_TUNNEL_TOKEN on first deploy; it is persisted via sysrc for future runs.
 
