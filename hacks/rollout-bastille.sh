@@ -10,7 +10,7 @@
 #   - "hopper" must have an entry in /etc/hosts on this host
 #   - The hopper PostgreSQL database must be reachable from the run jail
 
-set -e
+set -ex
 
 BUILD="$1"
 RUN="$2"
