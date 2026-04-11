@@ -5,6 +5,10 @@
 # Environment:
 #   CF_TUNNEL_TOKEN - Cloudflare Tunnel token (required on first deploy,
 #                     persisted in jail via sysrc for subsequent runs)
+#
+# Prerequisites:
+#   - "hopper" must have an entry in /etc/hosts on this host
+#   - The hopper PostgreSQL database must be reachable from the run jail
 
 set -e
 
@@ -21,6 +25,13 @@ log() {
 }
 
 [ -z "$BUILD" ] || [ -z "$RUN" ] && die "usage: $0 <build-jail> <run-jail>"
+
+# --- Resolve hopper hostname ---
+# Look up the hopper entry in /etc/hosts so the run jail can reach the database.
+
+HOPPER_LINE=$(awk '/[[:space:]]hopper([[:space:]]|$)/{print; exit}' /etc/hosts)
+[ -z "$HOPPER_LINE" ] && die "hopper not found in /etc/hosts — add an entry before deploying"
+log "Using hopper: $HOPPER_LINE"
 
 # Verify jails are accessible
 doas bastille cmd "$BUILD" true || die "build jail '$BUILD' not accessible"
@@ -56,6 +67,13 @@ doas cp "$BASTILLE_DIR/$BUILD/root/home/prism/prism/prism" \
 
 # --- Run jail setup (all config before any restarts) ---
 
+# Ensure hopper hostname resolves inside the run jail.
+JAIL_HOSTS="$BASTILLE_DIR/$RUN/root/etc/hosts"
+if ! doas grep -q '[[:space:]]hopper\b' "$JAIL_HOSTS" 2>/dev/null; then
+    printf '%s\n' "$HOPPER_LINE" | doas tee -a "$JAIL_HOSTS" >/dev/null
+    log "Added hopper to jail /etc/hosts"
+fi
+
 log "Ensuring run user exists"
 doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$RUN" pw useradd prism -m -s /bin/sh -c "Prism Service"
@@ -64,6 +82,30 @@ log "Installing prism binary"
 doas bastille cmd "$RUN" mkdir -p /usr/local/bin
 doas bastille cmd "$RUN" install -o root -g wheel -m 755 /tmp/prism /usr/local/bin/prism
 doas bastille cmd "$RUN" rm -f /tmp/prism
+
+# --- Hopper database password ---
+# Stored in ~prism/.pgpass (PostgreSQL standard; pgx reads it automatically).
+# The password is never placed in the DSN, environment, or process table.
+
+PGPASS_FILE="$BASTILLE_DIR/$RUN/root/home/prism/.pgpass"
+HOPPER_PASS=""
+if doas test -f "$PGPASS_FILE" 2>/dev/null; then
+    HOPPER_PASS=$(doas grep -s '^hopper:' "$PGPASS_FILE" | cut -d: -f5)
+fi
+
+if [ -z "$HOPPER_PASS" ]; then
+    printf "Enter hopper database password for prism: "
+    stty -echo
+    read -r HOPPER_PASS
+    stty echo
+    printf "\n"
+    [ -z "$HOPPER_PASS" ] && die "database password is required"
+fi
+
+log "Writing hopper credentials to jail .pgpass"
+printf 'hopper:5432:hopper:prism:%s\n' "$HOPPER_PASS" | doas tee "$PGPASS_FILE" >/dev/null
+doas bastille cmd "$RUN" chown prism /home/prism/.pgpass
+doas bastille cmd "$RUN" chmod 600 /home/prism/.pgpass
 
 log "Creating rc.d service for prism"
 doas bastille cmd "$RUN" mkdir -p /usr/local/etc/rc.d
@@ -87,7 +129,8 @@ load_rc_config $name
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
-prism_env="PORT=8080 LITMUS_ADDR=${prism_litmus_addr}"
+# HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
+prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_DSN=postgres://prism@hopper/hopper"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public"
 
 run_rc_command "$1"
