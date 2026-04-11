@@ -123,7 +123,7 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_litmus_addr:="10.9.8.63:8880"}
+: ${prism_litmus_addr:="litmus:49999"}
 
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
