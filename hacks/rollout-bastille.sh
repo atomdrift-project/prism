@@ -91,7 +91,7 @@ doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism
 # Stored in ~prism/.pgpass in the run jail (PostgreSQL standard; pgx reads it automatically).
 # The password is never placed in the DSN, environment, or process table.
 
-if doas bastille cmd "$RUN" test -f /home/prism/.pgpass 2>/dev/null; then
+if doas bastille cmd "$RUN" sh -c "test -f /home/prism/.pgpass" 2>/dev/null; then
     log "Hopper credentials already present in prism jail, skipping copy"
 else
     log "Copying hopper credentials from hopper jail"
