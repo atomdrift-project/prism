@@ -787,6 +787,15 @@ document.querySelectorAll('.tab').forEach(tab => {
     });
 });
 
+/// Evidence toggles
+document.querySelectorAll('.evidence-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const evidence = btn.nextElementSibling;
+        const open = evidence.classList.toggle('visible');
+        btn.classList.toggle('open', open);
+    });
+});
+
 // Archive TOC: click to scroll to file header in active tab
 document.querySelectorAll('.archive-toc-item').forEach(item => {
     item.addEventListener('click', () => {
