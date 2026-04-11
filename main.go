@@ -438,18 +438,39 @@ func main() {
 
 	// Parse command-line flags
 	var noCache bool
+	var dbDSN string
+	var port string
 	for i, arg := range os.Args[1:] {
 		switch {
 		case arg == "--no-cache" || arg == "-no-cache":
 			noCache = true
 		case arg == "--public" || arg == "-public":
 			publicMode = true
+		case strings.HasPrefix(arg, "--db="):
+			dbDSN = strings.TrimPrefix(arg, "--db=")
+		case arg == "--db" && i+1 < len(os.Args[1:]):
+			dbDSN = os.Args[i+2]
+		case strings.HasPrefix(arg, "--port="):
+			port = strings.TrimPrefix(arg, "--port=")
+		case arg == "--port" && i+1 < len(os.Args[1:]):
+			port = os.Args[i+2]
 		case strings.HasPrefix(arg, "--litmus-addr="):
 			litmusAddr = strings.TrimPrefix(arg, "--litmus-addr=")
 		case arg == "--litmus-addr" && i+1 < len(os.Args[1:]):
 			litmusAddr = os.Args[i+2]
 		default:
 		}
+	}
+
+	if dbDSN == "" {
+		dbDSN = os.Getenv("HOPPER_DSN")
+	}
+
+	if port == "" {
+		port = os.Getenv("PORT")
+	}
+	if port == "" {
+		port = "8080"
 	}
 
 	logger.Info("prism starting",
@@ -582,19 +603,14 @@ func main() {
 	}
 
 	// Connect to hopper sample registry if configured.
-	if dsn := os.Getenv("HOPPER_DSN"); dsn != "" {
+	if dbDSN != "" {
 		var err error
-		hopperDB, err = hopper.Open(context.Background(), dsn)
+		hopperDB, err = hopper.Open(context.Background(), dbDSN)
 		if err != nil {
 			logger.Error("failed to connect to hopper", "error", err)
 		} else {
 			logger.Info("hopper connected")
 		}
-	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
 	}
 
 	mux := newMux()
