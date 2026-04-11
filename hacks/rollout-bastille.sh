@@ -74,6 +74,9 @@ log "Ensuring run user exists"
 doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$RUN" pw useradd prism -m -s /bin/sh -c "Prism Service"
 
+log "Stopping prism service (if running)"
+doas bastille cmd "$RUN" service prism stop 2>/dev/null || true
+
 log "Installing prism binary"
 doas bastille cmd "$RUN" mkdir -p /usr/local/bin
 doas bastille jcp "$BUILD" /home/prism/prism/prism "$RUN" /usr/local/bin/prism
