@@ -62,20 +62,11 @@ doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake build"
 log "Running tests"
 doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake test"
 
-# --- Transfer binary via jail filesystem ---
-
-BASTILLE_DIR="/usr/local/bastille/jails"
-
-log "Transferring binary to run jail"
-doas cp "$BASTILLE_DIR/$BUILD/root/home/prism/prism/prism" \
-       "$BASTILLE_DIR/$RUN/root/tmp/prism"
-
 # --- Run jail setup (all config before any restarts) ---
 
 # Ensure hopper hostname resolves inside the run jail.
-JAIL_HOSTS="$BASTILLE_DIR/$RUN/root/etc/hosts"
-if ! doas grep -q '[[:space:]]hopper\b' "$JAIL_HOSTS" 2>/dev/null; then
-    printf '%s\n' "$HOPPER_LINE" | doas tee -a "$JAIL_HOSTS" >/dev/null
+if ! doas bastille cmd "$RUN" grep -q 'hopper' /etc/hosts 2>/dev/null; then
+    doas bastille cmd "$RUN" sh -c "echo '$HOPPER_LINE' >> /etc/hosts"
     log "Added hopper to jail /etc/hosts"
 fi
 
@@ -85,20 +76,17 @@ doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
 
 log "Installing prism binary"
 doas bastille cmd "$RUN" mkdir -p /usr/local/bin
-doas bastille cmd "$RUN" install -o root -g wheel -m 755 /tmp/prism /usr/local/bin/prism
-doas bastille cmd "$RUN" rm -f /tmp/prism
+doas bastille jcp "$BUILD" /home/prism/prism/prism "$RUN" /usr/local/bin/prism
+doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism
 
 # --- Hopper database password ---
 # Stored in ~prism/.pgpass (PostgreSQL standard; pgx reads it automatically).
 # The password is never placed in the DSN, environment, or process table.
 # Copied from the hopper jail where it is already provisioned.
 
-PGPASS_SRC="$BASTILLE_DIR/hopper/root/home/prism/.pgpass"
-PGPASS_DST="$BASTILLE_DIR/$RUN/root/home/prism/.pgpass"
-
-doas test -f "$PGPASS_SRC" || die "hopper jail pgpass not found at $PGPASS_SRC"
+doas bastille cmd hopper test -f /home/prism/.pgpass || die "hopper jail pgpass not found"
 log "Copying hopper credentials from hopper jail"
-doas cp "$PGPASS_SRC" "$PGPASS_DST"
+doas bastille jcp hopper /home/prism/.pgpass "$RUN" /home/prism/.pgpass
 doas bastille cmd "$RUN" chown prism /home/prism/.pgpass
 doas bastille cmd "$RUN" chmod 600 /home/prism/.pgpass
 
