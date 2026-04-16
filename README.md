@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/logo.svg" alt="prism" width="240">
+</p>
+
 # prism
 
 Web interface for binary static analysis using cleave and rizin.
