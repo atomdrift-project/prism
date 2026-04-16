@@ -985,16 +985,113 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// lookupResult retrieves a stored result from cache.
-// Returns (cacheHit, result, error).
+// hopperCacheTTL is how long a cached result is served without consulting
+// hopper. Older entries are still served immediately; the refresh happens
+// in a background goroutine so the request path never waits on the database.
+const hopperCacheTTL = time.Hour
+
+// refreshInFlight deduplicates concurrent background refreshes per sha so a
+// stale entry under load triggers one hopper query, not one per request.
+var refreshInFlight sync.Map // key: sha string, value: struct{}{}
+
+// lookupResult retrieves a stored result, treating hopper as the source of
+// truth and the fido cache as an in-memory/disk tier in front of it.
+//
+// On cache miss, fetches from hopper synchronously (shared via fido's
+// singleflight so concurrent requests coalesce). On cache hit older than
+// hopperCacheTTL, serves the cached value immediately and fires an async
+// refresh — the serving path never blocks on hopper for stale data.
 func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool, storedResult, error) {
 	cacheHit := true
 	res, err := cache.Fetch(ctx, sha, func(lctx context.Context) (storedResult, error) {
 		cacheHit = false
-		reqLogger.Debug("cache miss")
-		return storedResult{}, errors.New("result not in cache")
+		reqLogger.Debug("cache miss, loading from hopper")
+		if hopperDB == nil {
+			return storedResult{}, errors.New("hopper unavailable")
+		}
+		return fetchFromHopper(lctx, sha)
 	})
-	return cacheHit, res, err
+	if err != nil {
+		return false, storedResult{}, err
+	}
+	if cacheHit && hopperDB != nil && time.Since(res.CachedAt) > hopperCacheTTL {
+		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
+			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
+		}
+	}
+	return cacheHit, res, nil
+}
+
+// fetchFromHopper loads a sample from hopper and reshapes it into the
+// storedResult shape expected by the rest of prism. Returns an error whose
+// message contains "not found" when the sample is absent, so HTTP handlers
+// render a 404 instead of a 500.
+func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
+	sample, err := hopperDB.SampleBySHA256(ctx, sha)
+	if err != nil {
+		if errors.Is(err, hopper.ErrNotFound) {
+			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
+		}
+		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
+	}
+
+	envelope := map[string]json.RawMessage{}
+	if len(sample.LitmusResult) > 0 {
+		envelope["ml"] = sample.LitmusResult
+	}
+	if len(sample.CleaveResult) > 0 {
+		envelope["raw"] = sample.CleaveResult
+	}
+	rawLitmus, err := json.Marshal(envelope)
+	if err != nil {
+		return storedResult{}, fmt.Errorf("encode litmus envelope: %w", err)
+	}
+
+	classification := ""
+	if len(sample.LitmusResult) > 0 {
+		var mlResp litmusMlResponse
+		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
+			classification = classificationName(mlResp.Classification)
+		}
+	}
+
+	cachedAt := sample.UpdatedAt
+	if sample.AnalyzedAt != nil && !sample.AnalyzedAt.IsZero() {
+		cachedAt = *sample.AnalyzedAt
+	}
+	if cachedAt.IsZero() {
+		cachedAt = time.Now().UTC()
+	}
+
+	return storedResult{
+		Filename:       sample.Filename,
+		RawLitmus:      string(rawLitmus),
+		Classification: classification,
+		Formula:        sample.Formula,
+		FileType:       sample.FileType,
+		CachedAt:       cachedAt,
+	}, nil
+}
+
+// refreshFromHopper reloads a sample from hopper and writes it into the cache.
+// Invoked in a goroutine when the cached entry has exceeded hopperCacheTTL so
+// the serving path never blocks on the database. The caller should pass a
+// context detached from the request via context.WithoutCancel so the refresh
+// survives the request completing.
+func refreshFromHopper(ctx context.Context, sha string, reqLogger *slog.Logger) {
+	defer refreshInFlight.Delete(sha)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := fetchFromHopper(ctx, sha)
+	if err != nil {
+		reqLogger.Debug("background refresh from hopper failed", "error", err)
+		return
+	}
+	if err := cache.SetAsync(ctx, sha, res); err != nil {
+		reqLogger.Debug("background cache update failed", "error", err)
+		return
+	}
+	reqLogger.Debug("background refresh from hopper completed")
 }
 
 func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
