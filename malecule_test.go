@@ -6,11 +6,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 )
+
+func init() {
+	// prepareResultData uses the package-level logger; main() normally sets it.
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+}
 
 // TestRouteSetup ensures all route patterns are valid.
 // http.ServeMux.HandleFunc panics on a bad pattern (e.g. wildcards with a suffix
@@ -709,4 +718,121 @@ func absPath(path string) string {
 		return abs + "/" + path
 	}
 	return path
+}
+
+// TestPrepareResultData_SingleFileArchiveCollapses verifies that when a zipfile
+// wraps exactly one inner file, the archive container is dropped so traits,
+// strings, symbols, sections, and metrics aren't duplicated.
+func TestPrepareResultData_SingleFileArchiveCollapses(t *testing.T) {
+	raw := map[string]any{
+		"fs": []map[string]any{
+			{
+				"id":   1,
+				"dp":   0,
+				"path": "/tmp/wrapper.zip",
+				"type": "zip",
+				"sha":  "aaaa",
+				"sz":   1024,
+				"ts": []map[string]any{
+					{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3},
+				},
+				"ss": []any{[]any{0, "PK\x03\x04"}},
+			},
+			{
+				"id":   2,
+				"dp":   1,
+				"path": "/tmp/wrapper.zip!!payload.exe",
+				"type": "pe",
+				"sha":  "bbbb",
+				"sz":   2048,
+				"ts": []map[string]any{
+					{"i": "objectives/payload/execute", "d": "executes payload", "l": 4},
+				},
+				"ss":       []any{[]any{0, "malicious string"}},
+				"is":       []string{"kernel32.dll!CreateProcessA"},
+				"sections": []map[string]any{{"name": ".text", "size": 1024, "entropy": 6.5}},
+				"ms":       map[string]any{"entropy": 7.2},
+			},
+		},
+	}
+	rawBytes, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal raw: %v", err)
+	}
+	ml := map[string]any{
+		"class":      2,
+		"prob":       0.95,
+		"thresholds": []float64{0.65, 0.887},
+		"fs": []map[string]any{
+			{"id": 1, "class": 1, "prob": 0.5},
+			{"id": 2, "class": 2, "prob": 0.95},
+		},
+	}
+	mlBytes, err := json.Marshal(ml)
+	if err != nil {
+		t.Fatalf("marshal ml: %v", err)
+	}
+	envelope, err := json.Marshal(map[string]json.RawMessage{
+		"ml":  mlBytes,
+		"raw": rawBytes,
+	})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+
+	data := prepareResultData("wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
+
+	if data.IsArchive {
+		t.Error("IsArchive should be false for single-inner-file zip (container collapsed)")
+	}
+	checks := []struct {
+		name string
+		n    int
+	}{
+		{"FileFindings", len(data.FileFindings)},
+		{"FileStrings", len(data.FileStrings)},
+		{"FileSymbols", len(data.FileSymbols)},
+		{"FileSections", len(data.FileSections)},
+		{"FileMetrics", len(data.FileMetrics)},
+	}
+	for _, c := range checks {
+		if c.n > 1 {
+			t.Errorf("%s: got %d entries, want <=1 (inner file only, no container duplication)", c.name, c.n)
+		}
+	}
+	// The single remaining entry must be the inner file, not the zip container.
+	if len(data.FileFindings) == 1 && data.FileFindings[0].Basename != "payload.exe" {
+		t.Errorf("FileFindings kept %q; expected inner basename payload.exe", data.FileFindings[0].Basename)
+	}
+	if len(data.FileStrings) == 1 && data.FileStrings[0].Basename != "payload.exe" {
+		t.Errorf("FileStrings kept %q; expected inner basename payload.exe", data.FileStrings[0].Basename)
+	}
+}
+
+// TestPrepareResultData_MultiFileArchivePreserved verifies the collapse does
+// not fire for archives with multiple inner files.
+func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
+	raw := map[string]any{
+		"fs": []map[string]any{
+			{"id": 1, "dp": 0, "path": "/tmp/bundle.zip", "type": "zip", "sha": "aaaa", "sz": 1024,
+				"ts": []map[string]any{{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3}}},
+			{"id": 2, "dp": 1, "path": "/tmp/bundle.zip!!a.exe", "type": "pe", "sha": "bbbb", "sz": 2048,
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}}},
+			{"id": 3, "dp": 1, "path": "/tmp/bundle.zip!!b.exe", "type": "pe", "sha": "cccc", "sz": 2048,
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}}},
+		},
+	}
+	rawBytes, _ := json.Marshal(raw)
+	ml := map[string]any{"class": 2, "prob": 0.9, "thresholds": []float64{0.65, 0.887}}
+	mlBytes, _ := json.Marshal(ml)
+	envelope, _ := json.Marshal(map[string]json.RawMessage{"ml": mlBytes, "raw": rawBytes})
+
+	data := prepareResultData("bundle.zip", strings.Repeat("b", 64), &storedResult{RawLitmus: string(envelope)})
+
+	if !data.IsArchive {
+		t.Error("IsArchive should be true for multi-inner-file archive")
+	}
+	if len(data.FileFindings) < 2 {
+		t.Errorf("FileFindings: got %d entries, want >=2 for multi-file archive", len(data.FileFindings))
+	}
 }

@@ -1368,6 +1368,22 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		return data
 	}
 
+	// Collapse single-file archives: if the archive container wraps exactly one
+	// inner file, drop the container so results are shown only once. Mirrors
+	// BuildGalaxy's handling of the same case.
+	innerCount := 0
+	containerIdx := -1
+	for i := range report.Files {
+		if strings.Contains(report.Files[i].Path, "!!") {
+			innerCount++
+		} else if report.Files[i].Depth == 0 {
+			containerIdx = i
+		}
+	}
+	if innerCount == 1 && containerIdx >= 0 {
+		report.Files = append(report.Files[:containerIdx], report.Files[containerIdx+1:]...)
+	}
+
 	// Extract target info from top-level file (depth=0) or first file
 	for i := range report.Files {
 		file := &report.Files[i]

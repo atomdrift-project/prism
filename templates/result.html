@@ -581,7 +581,7 @@
             border-collapse: collapse;
             font-size: 13px;
         }
-        .findings-table .col-crit { width: 8em; white-space: nowrap; }
+        .findings-table .col-crit { width: 2em; white-space: nowrap; }
         .findings-table .col-trait { width: {{.TraitColWidth}}; white-space: nowrap; }
         .findings-table td {
             padding: 8px 14px;
@@ -596,29 +596,15 @@
         }
         .crit-badge {
             display: inline-block;
-            font-size: 11px;
-            font-weight: 600;
-            padding: 3px 8px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
+            width: 14px;
+            height: 12px;
+            border-radius: 2px;
+            vertical-align: middle;
         }
-        .crit-badge.hostile {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--hostile);
-        }
-        .crit-badge.suspicious {
-            background: rgba(234, 179, 8, 0.12);
-            color: #92400e;
-        }
-        .crit-badge.notable {
-            background: var(--isotope-dim);
-            color: var(--notable);
-        }
-        .crit-badge.baseline {
-            background: rgba(107, 114, 128, 0.1);
-            color: var(--slate);
-        }
+        .crit-badge.hostile { background: var(--hostile); }
+        .crit-badge.suspicious { background: var(--suspicious); }
+        .crit-badge.notable { background: var(--notable); }
+        .crit-badge.baseline { background: var(--slate); }
         .trait-id {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 13px;
@@ -972,7 +958,7 @@
                             <tbody>
                                 {{range .Findings}}
                                 <tr>
-                                    <td class="col-crit"><span class="crit-badge {{.Crit}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span></td>
+                                    <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
                                     <td class="col-trait trait-id">{{.ID}}</td>
                                     <td>
                                         <div class="trait-desc">{{.Desc}}</div>
