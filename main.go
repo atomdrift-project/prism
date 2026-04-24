@@ -1326,11 +1326,16 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 		// Store in hopper sample registry (best-effort, inside fetch closure
 		// so it only runs on cache miss — i.e. once per new analysis).
+		// Path is required by hopper's validSample guard; the uploaded
+		// filename is the only user-meaningful identifier we have, and
+		// re-uploads of the same content just bump last_seen_at on the
+		// matching sample_locations row.
 		if hopperDB != nil {
 			if insertErr := hopperDB.InsertSample(lctx, &hopper.Sample{
 				SHA256:      sha256Hex,
 				Source:      "upload",
 				Filename:    filename,
+				Path:        "upload/" + filename,
 				Label:       "unknown",
 				LabelSource: "upload",
 				SizeBytes:   written,
@@ -1338,7 +1343,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Debug("hopper insert failed", "error", insertErr)
 			}
 			if len(lr.CleaveJSON) > 0 {
-				hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, "") //nolint:errcheck
+				hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, "") //nolint:errcheck
 			}
 			if len(lr.LitmusEnvelope) > 0 {
 				hopperDB.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope) //nolint:errcheck
