@@ -1,54 +1,60 @@
-const zone = document.getElementById('upload-zone');
 const input = document.getElementById('file-input');
-const btn = document.getElementById('submit-btn');
-const uploadText = zone.querySelector('.upload-text');
-const uploadHint = zone.querySelector('.upload-hint');
+const form = document.getElementById('upload-form');
 const uploadStatus = document.getElementById('upload-status');
+const filterForm = document.getElementById('filter-form');
+const criticalityFilter = document.getElementById('criticality');
+const ecosystemFilter = document.getElementById('ecosystem-filter');
 const maxSize = 100 * 1024 * 1024; // 100 MB
 
-['dragenter', 'dragover'].forEach(e => {
-    zone.addEventListener(e, ev => {
-        ev.preventDefault();
-        zone.classList.add('dragover');
+document.querySelectorAll('[data-gradient]').forEach(el => { el.style.background = el.getAttribute('data-gradient'); });
+
+function setStatusText(message, className = '') {
+    uploadStatus.className = 'top-upload-status' + (className ? ' ' + className : '');
+    uploadStatus.textContent = message;
+}
+
+function setAnalyzingStatus(fileName) {
+    uploadStatus.className = 'top-upload-status is-analyzing';
+    uploadStatus.innerHTML = '<span class="analyzing-label">Analyzing</span><span class="analyzing-dots" aria-hidden="true"><span></span><span></span><span></span></span> <span class="analyzing-file"></span>';
+    uploadStatus.querySelector('.analyzing-file').textContent = fileName;
+}
+
+if (ecosystemFilter) {
+    ecosystemFilter.addEventListener('change', function() {
+        const url = new URL(window.location.origin + (ecosystemFilter.value ? '/' + encodeURIComponent(ecosystemFilter.value) + '/' : '/'));
+        if (criticalityFilter && criticalityFilter.value) {
+            url.searchParams.set('criticality', criticalityFilter.value);
+        }
+        window.location = url.toString();
     });
-});
+}
 
-['dragleave', 'drop'].forEach(e => {
-    zone.addEventListener(e, ev => {
-        ev.preventDefault();
-        zone.classList.remove('dragover');
+if (criticalityFilter && filterForm) {
+    criticalityFilter.addEventListener('change', function() {
+        filterForm.submit();
     });
-});
+}
 
-zone.addEventListener('drop', e => {
-    input.files = e.dataTransfer.files;
-    updateUI();
-});
+if (input && form) {
+    input.addEventListener('change', function() {
+        if (input.files.length === 0) return;
+        const file = input.files[0];
+        if (file.size > maxSize) {
+            uploadStatus.className = 'top-upload-status';
+            uploadStatus.innerHTML = 'File exceeds 100 MB. Use <a href="https://codeberg.org/atomdrift/litmus">litmus CLI</a>.';
+            input.value = '';
+            return;
+        }
+        setAnalyzingStatus(file.name);
+        form.submit();
+    });
 
-input.addEventListener('change', updateUI);
-
-document.getElementById('upload-form').addEventListener('submit', function() {
-    btn.disabled = true;
-    btn.textContent = 'Analyzing...';
-    setTimeout(function() {
-        uploadStatus.textContent = 'Waiting for analysis server to start up\u2026';
-    }, 3000);
-    setTimeout(function() {
-        uploadStatus.textContent = 'Analysis server is starting up \u2014 this may take up to a minute.';
-    }, 15000);
-});
-
-function updateUI() {
-    if (input.files.length === 0) return;
-    const file = input.files[0];
-    uploadText.textContent = file.name;
-    if (file.size > maxSize) {
-        uploadHint.innerHTML = 'File exceeds 100 MB limit. For larger files, use <a href="https://codeberg.org/atomdrift/litmus" style="color: var(--isotope); text-decoration: underline">litmus CLI</a>';
-        btn.disabled = true;
-        zone.style.borderColor = 'var(--hostile)';
-    } else {
-        uploadHint.textContent = 'Binaries, source code, packages, archives';
-        btn.disabled = false;
-        zone.style.borderColor = '';
-    }
+    form.addEventListener('submit', function() {
+        setTimeout(function() {
+            setStatusText('Waiting for analysis server to start up...');
+        }, 3000);
+        setTimeout(function() {
+            setStatusText('Analysis server is starting up; this may take up to a minute.');
+        }, 15000);
+    });
 }

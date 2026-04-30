@@ -1,274 +1,475 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Molecular Decomposition</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="300">
+    <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Fallout</title>
     <style nonce="{{.Nonce}}">
-    {{template "fonts" .}}
+        {{template "fonts" .}}
         :root {
             --carbon: #0a0a0a;
             --graphite: #404040;
             --iron: #52525b;
             --slate: #6b7280;
+            --muted: #6b7280;
             --mist: #f5f5f5;
             --white: #ffffff;
             --border: #e8e8e8;
             --isotope: #3b82f6;
-            --isotope-dim: rgba(59, 130, 246, 0.1);
             --toxic: #d0ff00;
             --toxic-muted: #9abe25;
             --toxic-dark: #4a6b0f;
             --toxic-dim: rgba(208, 255, 0, 0.14);
             --hostile: #ef4444;
             --suspicious: #eab308;
-            --notable: #3b82f6;
+            --benign: #9abe25;
+            --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
         }
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            min-height: 100vh;
             background: var(--white);
             color: var(--carbon);
-            line-height: 1.6;
+            font-family: "Inter", system-ui, -apple-system, sans-serif;
+            font-size: 14px;
+            line-height: 1.45;
             -webkit-font-smoothing: antialiased;
         }
-        .container {
-            max-width: 800px;
+        a { color: inherit; }
+        .shell {
+            width: min(1320px, calc(100vw - 32px));
             margin: 0 auto;
-            padding: 60px 24px;
+            padding: 24px 0 28px;
         }
-        header {
-            margin-bottom: 48px;
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border);
+        }
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            min-width: 0;
         }
         .logo {
-            font-family: 'Oxanium', sans-serif;
+            font-family: "Oxanium", monospace;
             font-weight: 700;
-            font-size: 28px;
-            letter-spacing: -0.5px;
-            margin-bottom: 12px;
+            font-size: 24px;
+            color: var(--carbon);
+            text-decoration: none;
+            white-space: nowrap;
         }
-        .logo-accent {
-            color: var(--toxic-muted);
-        }
+        .logo-accent { color: var(--toxic-muted); }
         .beta-tag {
-            font-size: 11px;
-            font-weight: 600;
+            margin-left: 6px;
+            font-family: var(--mono);
+            font-size: 10px;
             color: var(--toxic-dark);
             background: var(--toxic-dim);
             border: 1px solid rgba(208, 255, 0, 0.2);
-            padding: 1px 5px;
             border-radius: 3px;
-            margin-left: 6px;
+            padding: 1px 5px;
             vertical-align: super;
-            letter-spacing: 0.5px;
         }
         .tagline {
-            font-size: 18px;
-            color: var(--iron);
-            font-weight: 400;
+            color: var(--muted);
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        .upload-zone {
-            border: 2px dashed var(--border);
-            background: var(--white);
-            border-radius: 12px;
-            padding: 48px;
-            text-align: center;
-            margin: 32px 0;
-            transition: all 0.2s;
-            cursor: pointer;
-            position: relative;
-        }
-        .upload-zone:hover, .upload-zone.dragover {
-            border-color: var(--toxic-muted);
-            background: rgba(208, 255, 0, 0.28);
-        }
-        .upload-zone input[type="file"] {
-            display: none;
-        }
-        .upload-zone label {
-            cursor: pointer;
-            display: block;
-        }
-        .upload-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-            opacity: 0.5;
-        }
-        .upload-zone:hover .upload-icon, .upload-zone.dragover .upload-icon {
-            opacity: 0.8;
-        }
-        .upload-text {
-            font-size: 16px;
-            color: var(--iron);
-            margin-bottom: 8px;
-        }
-        .upload-zone:hover .upload-text, .upload-zone.dragover .upload-text {
-            color: var(--carbon);
-        }
-        .upload-hint {
-            font-size: 14px;
-            color: var(--iron);
-        }
-        .btn {
-            padding: 14px 28px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            border: none;
-            font-family: inherit;
-        }
-        .btn-primary {
+        .upload-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 38px;
+            padding: 0 15px;
+            border: 1px solid var(--carbon);
             background: var(--carbon);
             color: var(--white);
-        }
-        .btn-primary:hover {
-            background: var(--graphite);
-        }
-        .btn-primary:disabled {
-            background: var(--iron);
-            cursor: not-allowed;
-        }
-        .upload-status {
-            margin-top: 12px;
-            font-size: 14px;
-            color: var(--iron);
-            min-height: 20px;
-        }
-        .capabilities {
-            margin-top: 48px;
-            border-top: 1px solid var(--border);
-            padding-top: 24px;
-        }
-        .capabilities-heading {
-            font-family: 'Oxanium', sans-serif;
-            font-size: 13px;
+            border-radius: 6px;
             font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--iron);
-            margin-bottom: 16px;
+            text-decoration: none;
+            cursor: pointer;
+            white-space: nowrap;
         }
-        .cap-list {
-            list-style: none;
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0;
-        }
-        .cap-list li {
-            padding: 10px 0;
-            border-bottom: 1px solid var(--mist);
-            font-size: 14px;
-            color: var(--graphite);
-            line-height: 1.5;
-        }
-        .cap-list li:nth-child(odd) {
-            padding-right: 20px;
-            border-right: 1px solid var(--mist);
-        }
-        .cap-list li:nth-child(even) {
-            padding-left: 20px;
-        }
-        .cap-list strong {
-            color: var(--carbon);
-            font-weight: 600;
-        }
-        .cap-list .accent {
-            color: var(--toxic-dark);
-        }
-        footer {
-            margin-top: 60px;
-            padding-top: 24px;
-            border-top: 1px solid var(--mist);
-            font-size: 14px;
-            color: var(--iron);
-            display: flex;
-            justify-content: space-between;
+        .top-upload {
+            margin: 0;
             position: relative;
         }
-        footer::before {
-            content: '';
+        .top-upload input[type="file"] {
             position: absolute;
-            top: -1px;
-            left: 0;
-            width: 80px;
-            height: 2px;
-            background: var(--toxic);
+            inline-size: 1px;
+            block-size: 1px;
+            opacity: 0;
+            pointer-events: none;
         }
-        footer a {
-            color: var(--slate);
-            text-decoration: none;
+        .top-upload-status {
+            position: absolute;
+            right: 0;
+            top: calc(100% + 7px);
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
         }
-        footer a:hover {
+        .top-upload-status.is-analyzing {
+            color: var(--carbon);
+            font-size: 17px;
+            font-weight: 800;
+            letter-spacing: 0;
+        }
+        .analyzing-dots {
+            display: inline-flex;
+            align-items: flex-end;
+            gap: 3px;
+            margin-left: 3px;
+            margin-right: 5px;
+            height: 0.9em;
+            vertical-align: baseline;
+        }
+        .analyzing-dots span {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--toxic-dark);
+            animation: fallout-dot-bounce 0.86s infinite ease-in-out;
+        }
+        .analyzing-dots span:nth-child(2) {
+            animation-delay: 0.12s;
+        }
+        .analyzing-dots span:nth-child(3) {
+            animation-delay: 0.24s;
+        }
+        .analyzing-file {
+            color: var(--muted);
+            font-weight: 700;
+        }
+        @keyframes fallout-dot-bounce {
+            0%, 80%, 100% {
+                transform: translateY(0);
+                opacity: 0.45;
+            }
+            40% {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+        .intro {
+            padding: 28px 0 22px;
+        }
+        .headline {
+            min-height: 112px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 18px;
+        }
+        h1 {
+            margin: 0;
+            font-size: 30px;
+            line-height: 1.1;
+            letter-spacing: 0;
+            font-weight: 650;
+        }
+        .fallout-lockup {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+        .fallout-symbol {
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+        }
+        .fallout-symbol .field {
+            fill: var(--white);
+            stroke: var(--carbon);
+            stroke-width: 5;
+        }
+        .fallout-symbol .blade,
+        .fallout-symbol .core {
+            fill: var(--toxic);
+            stroke: var(--carbon);
+            stroke-width: 5;
+            stroke-linejoin: round;
+        }
+        .fallout-wordmark {
+            font-family: "Oxanium", monospace;
+            font-weight: 700;
             color: var(--carbon);
         }
-        @media (max-width: 600px) {
-            .cap-list {
-                grid-template-columns: 1fr;
-            }
-            .cap-list li:nth-child(odd) {
-                padding-right: 0;
-                border-right: none;
-            }
-            .cap-list li:nth-child(even) {
-                padding-left: 0;
-            }
+        .fallout-eco {
+            color: var(--toxic-dark);
         }
-        .beta-tag-inline {
-            display: none;
+        .lede {
+            max-width: none;
+            margin: 10px 0 0;
+            color: var(--iron);
+            font-size: 15px;
+            white-space: nowrap;
+        }
+        .filters {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px 0;
+            border-top: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .filter-form {
+            display: flex;
+            align-items: end;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .field {
+            display: grid;
+            gap: 5px;
+        }
+        .field label {
+            color: var(--muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+        select, input[type="search"] {
+            min-height: 34px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--white);
+            color: var(--carbon);
+            padding: 0 10px;
+            font: inherit;
+        }
+        input[type="search"] { width: min(330px, 70vw); font-family: var(--mono); }
+        .count {
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            border-bottom: 1px solid var(--border);
+        }
+        table {
+            width: 100%;
+            min-width: 1180px;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--white);
+            color: var(--slate);
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 10px 9px;
+            border-bottom: 1px solid var(--border);
+        }
+        td {
+            padding: 10px 9px;
+            border-bottom: 1px solid var(--mist);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: middle;
+        }
+        tr:hover td { background: rgba(59, 130, 246, 0.04); }
+        .col-criticality { width: 48px; }
+        .col-date { width: 96px; }
+        .col-file { width: auto; }
+        .col-ecosystem { width: 96px; }
+        .col-formula { width: 14%; }
+        .col-sha { width: 470px; }
+        .litmus-stamp {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            min-height: 24px;
+            border-radius: 5px;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-thickness: 1px;
+        }
+        .litmus-stamp:hover {
+            background: var(--mist);
+            text-decoration-thickness: 2px;
+        }
+        .band {
+            display: inline-block;
+            width: 14px;
+            height: 10px;
+            border-radius: 2px;
+        }
+        .band.hostile { background: #ef4444; }
+        .band.suspicious { background: #facc15; }
+        .band.benign { background: #22c55e; }
+        .file-link {
+            color: var(--carbon);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-thickness: 1px;
+            font-weight: 650;
+        }
+        .file-link:hover, .cell-link:hover {
+            color: var(--carbon);
+            text-decoration-thickness: 2px;
+        }
+        .cell-link {
+            color: var(--slate);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-thickness: 1px;
+        }
+        .mono { font-family: var(--mono); font-size: 12px; }
+        .empty {
+            padding: 42px 12px;
+            color: var(--muted);
+            text-align: center;
+        }
+        footer {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding-top: 22px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        footer a { color: var(--slate); }
+        @media (max-width: 860px) {
+            .shell { width: min(100vw - 22px, 1320px); padding-top: 14px; }
+            .topbar, .filters { align-items: stretch; flex-direction: column; }
+            .brand { flex-direction: column; gap: 3px; }
+            .tagline { white-space: normal; }
+            .headline { min-height: auto; }
+            h1 { font-size: 25px; }
+            .fallout-symbol { width: 36px; height: 36px; }
+            .lede { white-space: normal; }
+            .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
+            .filter-form { display: grid; grid-template-columns: 1fr; }
+            input[type="search"], select { width: 100%; }
         }
     </style>
 </head>
 <body>
     {{template "banner" .}}
-    <div class="container">
-        <header>
-            <div class="logo">
-                <span>{{template "wordmark" .}}</span>
+    <main class="shell">
+        <nav class="topbar" aria-label="Primary">
+            <div class="brand">
+                <a href="/" class="logo">{{template "wordmark" .}}</a>
+                <p class="tagline">{{template "tagline" .}}</p>
             </div>
-            <p class="tagline">{{template "tagline" .}}</p>
-        </header>
-
-        {{if .Refresh}}
-        <div style="margin-bottom: 16px; padding: 8px 16px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; font-size: 13px; color: var(--iron); text-align: center;">
-            Refresh mode — cached results will be replaced with a fresh analysis.
-        </div>
-        {{end}}
-
-        <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-            <div class="upload-zone" id="upload-zone">
+            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
                 <input type="file" name="file" id="file-input" required />
-                <label for="file-input">
-                    <div class="upload-icon">&#x269B;</div>
-                    <div class="upload-text">Drop a file here or click to browse</div>
-                    <div class="upload-hint"><a href="/formats" style="color: var(--iron); text-decoration: underline;">Binaries, source code, packages, archives</a></div>
-                </label>
-            </div>
-            <button type="submit" class="btn btn-primary" id="submit-btn" disabled>{{if .Refresh}}Re-analyze{{else}}Analyze{{end}}</button>
-            <div id="upload-status" class="upload-status"></div>
-        </form>
+                <label class="upload-button" for="file-input">Upload</label>
+                <div id="upload-status" class="top-upload-status"></div>
+            </form>
+        </nav>
 
-        <div class="capabilities">
-            <div class="capabilities-heading">Capabilities</div>
-            <ul class="cap-list">
-                <li><strong>Molecular analysis</strong> — atomic decomposition into behavioral fingerprints</li>
-                <li><strong>AST-aware</strong> — semantic analysis across <span class="accent">20+ languages</span></li>
-                <li><strong>Deep binary inspection</strong> — Radare2/Rizin for Mach-O, ELF, and PE</li>
-                <li><strong>Recursive unpacking</strong> — archives inspected at any nesting depth</li>
-                <li><strong>YARA-X signatures</strong> — pattern matching against known threat indicators</li>
-                <li><strong>ML classification</strong> — XGBoost models trained on malware molecules</li>
-            </ul>
-        </div>
+        <section class="intro">
+            <div class="headline">
+                <h1 class="fallout-lockup">
+                    <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                        <circle class="field" cx="50" cy="50" r="44"></circle>
+                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L58 36.14A16 16 0 0 0 42 36.14Z"></path>
+                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L58 63.86A16 16 0 0 0 66 50Z"></path>
+                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L34 50A16 16 0 0 0 42 63.86Z"></path>
+                        <circle class="core" cx="50" cy="50" r="10"></circle>
+                    </svg>
+                    <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
+                </h1>
+                <p class="lede">Recently scanned open-source supply-chain artifacts and public lab uploads. Every record links back to the full Prism analysis.</p>
+            </div>
+        </section>
+
+        <section class="filters" aria-label="Feed filters">
+            <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/{{end}}" class="filter-form" id="filter-form">
+                <div class="field">
+                    <label for="criticality">Crit</label>
+                    <select name="criticality" id="criticality">
+                        <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
+                        <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
+                        <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
+                        <option value="benign" {{if eq .SelectedCrit "benign"}}selected{{end}}>Benign</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="ecosystem">Ecosystem</label>
+                    <select id="ecosystem-filter">
+                        <option value="" {{if not .SelectedEco}}selected{{end}}>Any</option>
+                        {{range .Ecosystems}}
+                        <option value="{{.}}" {{if eq $.SelectedEco .}}selected{{end}}>{{.}}</option>
+                        {{end}}
+                    </select>
+                </div>
+            </form>
+            <div class="count">{{.FilteredCount}} shown{{if .TotalCount}} from {{.TotalCount}}{{end}}</div>
+        </section>
+
+        <section class="table-wrap" aria-label="Recently scanned records">
+            {{if .HasHopper}}
+            <table>
+                <thead>
+                    <tr>
+                        <th class="col-criticality">Crit</th>
+                        <th class="col-date">Date</th>
+                        <th class="col-file">File</th>
+                        <th class="col-ecosystem">Ecosystem</th>
+                        <th class="col-formula">Malecule</th>
+                        <th class="col-sha">SHA256</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Rows}}
+                    <tr>
+                        <td>
+                            <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
+                                <span class="band {{.Classification}}"></span>
+                            </a>
+                        </td>
+                        <td title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</td>
+                        <td><a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a></td>
+                        <td>
+                            {{if .EcosystemURL}}
+                            <a class="cell-link" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>
+                            {{else}}
+                            <span class="mono">-</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .Formula}}
+                            <a class="cell-link mono" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>
+                            {{else}}
+                            <span class="mono">-</span>
+                            {{end}}
+                        </td>
+                        <td><a class="cell-link mono" href="/file/{{.SHA256}}">{{.SHA256}}</a></td>
+                    </tr>
+                    {{else}}
+                    <tr><td colspan="6" class="empty">No matching records.</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <div class="empty">Connect hopper to show recent records.</div>
+            {{end}}
+        </section>
 
         {{template "footer" .}}
-    </div>
-
+    </main>
     <script src="/static/upload.js"></script>
 </body>
 </html>

@@ -1,5 +1,4 @@
 import * as THREE from '/static/js/three.module.js';
-import { CSS2DRenderer, CSS2DObject } from '/static/js/CSS2DRenderer.js';
 import { OrbitControls } from '/static/js/OrbitControls.js';
 
 // Apply dynamic styles from data attributes (CSP-safe, no inline styles)
@@ -23,16 +22,6 @@ camera.position.set(0, 5, 16);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-// CSS2D renderer for labels
-const labelRenderer = new CSS2DRenderer();
-labelRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
-labelRenderer.domElement.style.position = 'absolute';
-labelRenderer.domElement.style.top = '0';
-labelRenderer.domElement.style.left = '0';
-labelRenderer.domElement.style.pointerEvents = 'none';
-const moleculeContainer = canvas.closest('.molecule-container');
-moleculeContainer.appendChild(labelRenderer.domElement);
 
 // Orbit controls for mouse interaction
 const controls = new OrbitControls(camera, canvas);
@@ -454,17 +443,7 @@ const bondMatStd = new THREE.MeshPhysicalMaterial({ color: 0xc0c0c0, roughness: 
 const bondMatBaseline = new THREE.MeshPhysicalMaterial({ color: 0x999999, roughness: 0.4, metalness: 0.2, transparent: true, opacity: 0.3 });
 
 function addMolecule(atoms, bonds, group, moleculeIndex = null, molData = null) {
-    // Pre-scan: identify cluster parents (atoms that have satellites) and all satellites.
-    const clusterParents = new Set();
-    const clusterSatellites = new Set();
-    atoms.forEach((atom, i) => {
-        if (atom.cluster_of) {
-            clusterSatellites.add(i);
-            clusterParents.add(atom.cluster_of - 1);
-        }
-    });
-
-    atoms.forEach((atom, atomIndex) => {
+    atoms.forEach(atom => {
         const color = severityColors[atom.severity] || severityColors.neutral;
         const bl = isBaseline(atom);
         const mat = new THREE.MeshPhysicalMaterial({
@@ -484,17 +463,6 @@ function addMolecule(atoms, bonds, group, moleculeIndex = null, molData = null) 
         clickableMeshes.push(mesh);
         meshToMolecule.set(mesh, moleculeIndex);
         meshToAtom.set(mesh, { atom, moleculeData: molData });
-
-        // Labels: show on normal atoms and cluster centers. Suppress on satellites.
-        const isSatellite = clusterSatellites.has(atomIndex);
-        if (atom.symbol && !isSatellite) {
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'atom-label' + (bl ? ' atom-label-baseline' : '');
-            labelDiv.textContent = atom.symbol;
-            const label = new CSS2DObject(labelDiv);
-            label.position.set(0, 0, 0);
-            mesh.add(label);
-        }
     });
 
     if (bonds && bonds.length > 0) {
@@ -688,25 +656,19 @@ if (moleculeData && moleculeData.isGalaxy && moleculeData.molecules) {
             // Offset back to galaxy position
             mol.atoms.forEach(a => { a.x += mol.centerX; a.y += mol.centerY; a.z += mol.centerZ; });
             addMolecule(mol.atoms, cleanedBonds, moleculeGroup, molIndex, mol);
-
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'molecule-label ' + (mol.risk || 'notable');
-            labelDiv.textContent = basename(mol.path);
-            const label = new CSS2DObject(labelDiv);
-            label.position.set(mol.centerX, mol.centerY + 2.5, mol.centerZ);
-            moleculeGroup.add(label);
         }
     });
 
-    // Dropper relationship arrows
+    // Dropper relationships between embedded files.
     if (moleculeData.links && moleculeData.links.length > 0) {
         const lineMat = new THREE.LineDashedMaterial({
-            color: 0x22c55e, dashSize: 0.5, gapSize: 0.25, linewidth: 2
+            color: 0x7c8a84,
+            dashSize: 0.12,
+            gapSize: 0.22,
+            linewidth: 1,
+            transparent: true,
+            opacity: 0.7,
         });
-        const arrowheadMat = new THREE.MeshStandardMaterial({
-            color: 0x22c55e, roughness: 0.3, metalness: 0.1
-        });
-        const yAxis = new THREE.Vector3(0, 1, 0);
 
         moleculeData.links.forEach(link => {
             const fromMol = moleculeData.molecules[link.from];
@@ -720,21 +682,14 @@ if (moleculeData && moleculeData.isGalaxy && moleculeData.molecules) {
             if (length < 1) return;
 
             const dir = direction.clone().normalize();
-            const arrowheadLength = 0.6;
-            const lineEnd = end.clone().sub(dir.clone().multiplyScalar(arrowheadLength));
+            const inset = Math.min(1.2, length * 0.18);
+            const lineStart = start.clone().add(dir.clone().multiplyScalar(inset));
+            const lineEnd = end.clone().sub(dir.clone().multiplyScalar(inset));
 
-            const geometry = new THREE.BufferGeometry().setFromPoints([start, lineEnd]);
+            const geometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
             const line = new THREE.Line(geometry, lineMat);
             line.computeLineDistances();
             moleculeGroup.add(line);
-
-            const coneGeo = new THREE.ConeGeometry(0.25, arrowheadLength, 12);
-            const cone = new THREE.Mesh(coneGeo, arrowheadMat);
-            cone.position.copy(end.clone().sub(dir.clone().multiplyScalar(arrowheadLength / 2)));
-            const quaternion = new THREE.Quaternion();
-            quaternion.setFromUnitVectors(yAxis, dir);
-            cone.quaternion.copy(quaternion);
-            moleculeGroup.add(cone);
         });
     }
 
@@ -765,7 +720,6 @@ function animate() {
     requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
-    labelRenderer.render(scene, camera);
 }
 
 animate();
@@ -774,7 +728,6 @@ window.addEventListener('resize', () => {
     camera.aspect = canvas.clientWidth / canvas.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-    labelRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
 });
 
 // Tab switching

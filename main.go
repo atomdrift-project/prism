@@ -21,6 +21,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -57,10 +58,18 @@ var (
 	litmusAddr        string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient      *http.Client // HTTP client for litmus server
 	cache             *fido.TieredCache[string, storedResult]
+	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
 	logger            *slog.Logger
 	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
 	hopperDB          *hopper.DB
 )
+
+const defaultHopperDSN = "postgres://hopper@hopper:5432/hopper?sslmode=disable"
+const frontpageFeedCacheKey = "feed-frontpage-v1"
+const frontpageFeedRefreshInterval = 90 * time.Second
+const frontpageFeedMaxAge = 3 * time.Minute
+
+var frontpageFeedRefreshMu sync.Mutex
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
 // Tokens are stateless: HMAC(timestamp) verified on POST. Key rotates on restart,
@@ -211,7 +220,7 @@ type FileFindingsDisplay struct {
 	Path           string
 	Basename       string
 	Risk           string
-	Classification string  // litmus ML classification: "hostile", "suspicious", "benign"
+	Classification string // litmus ML classification: "hostile", "suspicious", "benign"
 	SHA256         string
 	Formula        string
 	FileType       string
@@ -308,36 +317,39 @@ type FileMetricsDisplay struct {
 }
 
 type resultData struct {
-	RiskLabel    string
-	Size         string
-	SHA256       string
-	Verdict      string
-	Formula      template.HTML
-	FileType     string
-	MoleculeJSON template.JS
-	RiskLevel    string
-	Filename     string
-	Nonce        string
-	SHA256Short  string
-	FindingCount string
-	Duration     string
-	FileFindings []FileFindingsDisplay
-	FileStrings  []FileStringsDisplay
-	FileSymbols  []FileSymbolsDisplay
-	FileSections []FileSectionsDisplay
-	FileMetrics  []FileMetricsDisplay
-	LimitedInfo  bool
-	Probability  float64 // top-level litmus ML probability [0.0, 1.0]
-	Layout        string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
-	BuildCommit   string  // git commit short hash, set at build time
-	SuspiciousT   float64 // litmus suspicious threshold
-	HostileT      float64 // litmus hostile threshold
-	TraitColWidth string // CSS width for trait ID column, computed from longest trait
-	IsArchive     bool   // true when result contains multiple analyzed files
-	TotalFiles    int    // total archive member count before truncation
-	ShownFiles    int    // number of files shown after truncation
-	AnalyzedAt    string // human-readable UTC date of analysis
-	AnalyzedAgo   string // relative time since analysis (e.g. "5 minutes ago")
+	RiskLabel      string
+	Size           string
+	SHA256         string
+	Verdict        string
+	Formula        template.HTML
+	FileType       string
+	MoleculeJSON   template.JS
+	RiskLevel      string
+	Filename       string
+	Nonce          string
+	SHA256Short    string
+	FindingCount   string
+	Duration       string
+	FileFindings   []FileFindingsDisplay
+	FileStrings    []FileStringsDisplay
+	FileSymbols    []FileSymbolsDisplay
+	FileSections   []FileSectionsDisplay
+	FileMetrics    []FileMetricsDisplay
+	LimitedInfo    bool
+	Probability    float64 // top-level litmus ML probability [0.0, 1.0]
+	Layout         string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
+	BuildCommit    string  // git commit short hash, set at build time
+	SuspiciousT    float64 // litmus suspicious threshold
+	HostileT       float64 // litmus hostile threshold
+	TraitColWidth  string  // CSS width for trait ID column, computed from longest trait
+	IsArchive      bool    // true when result contains multiple analyzed files
+	TotalFiles     int     // total archive member count before truncation
+	ShownFiles     int     // number of files shown after truncation
+	AnalyzedAt     string  // human-readable UTC date of analysis
+	AnalyzedAgo    string  // relative time since analysis (e.g. "5 minutes ago")
+	ReportContent  string  // optional reverse-engineering report markdown
+	ReportProvider string
+	ReportCreated  string
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -349,10 +361,64 @@ type storedResult struct {
 	Symbols        string
 	Sections       string
 	Metrics        string
-	Classification string // "hostile", "suspicious", or "benign" from litmus
-	Formula        string // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
+	Classification string    // "hostile", "suspicious", or "benign" from litmus
+	Formula        string    // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
 	FileType       string    // file type from litmus (e.g. "macho", "pe")
 	CachedAt       time.Time // when this result was first analyzed
+}
+
+type feedRow struct {
+	SHA256         string
+	SHA256Short    string
+	Filename       string
+	Classification string
+	Probability    float64
+	SuspiciousT    float64
+	HostileT       float64
+	Formula        string
+	FileType       string
+	Source         string
+	Ecosystem      string
+	EcosystemURL   string
+	AnalyzedAt     time.Time
+	AnalyzedDate   string
+	TimeAgo        string
+}
+
+type feedPageData struct {
+	CSRFToken       string
+	Nonce           string
+	Refresh         bool
+	Rows            []feedRow
+	Ecosystems      []string
+	SelectedEco     string
+	SelectedCrit    string
+	SelectedFormula string
+	Title           string
+	TotalCount      int
+	FilteredCount   int
+	HasHopper       bool
+}
+
+type cachedFeedSnapshot struct {
+	GeneratedAt time.Time
+	Rows        []cachedFeedSample
+	Ecosystems  []string
+	TotalCount  int
+}
+
+type cachedFeedSample struct {
+	SHA256         string
+	Filename       string
+	Classification string
+	Probability    float64
+	SuspiciousT    float64
+	HostileT       float64
+	Formula        string
+	FileType       string
+	Source         string
+	Ecosystem      string
+	CreatedAt      time.Time
 }
 
 // cleaveReport is constructed from JSONL output (multiple lines).
@@ -404,7 +470,6 @@ type sectionInfo struct {
 	Size    int64   `json:"size"`
 	Entropy float64 `json:"entropy,omitempty"`
 }
-
 
 type findingCounts struct {
 	Hostile    int `json:"hostile"`
@@ -465,6 +530,12 @@ func main() {
 	if dbDSN == "" {
 		dbDSN = os.Getenv("HOPPER_DSN")
 	}
+	if dbDSN == "" {
+		dbDSN = os.Getenv("FALLOUT_DB")
+	}
+	if dbDSN == "" {
+		dbDSN = defaultHopperDSN
+	}
 
 	if port == "" {
 		port = os.Getenv("PORT")
@@ -481,7 +552,7 @@ func main() {
 		"public_mode", publicMode,
 	)
 
-	ctx := context.Background()
+	ctx, cancelApp := context.WithCancel(context.Background())
 
 	// Load configuration from environment
 	if err := loadConfig(); err != nil {
@@ -498,6 +569,12 @@ func main() {
 		cache, cacheErr = fido.NewTiered(nullStore)
 		if cacheErr != nil {
 			logger.Error("failed to initialize fido tiered cache", "error", cacheErr)
+			os.Exit(1)
+		}
+		nullFeedStore := null.New[string, cachedFeedSnapshot]()
+		feedCache, cacheErr = fido.NewTiered(nullFeedStore)
+		if cacheErr != nil {
+			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
 			os.Exit(1)
 		}
 	} else {
@@ -522,6 +599,16 @@ func main() {
 			logger.Error("failed to initialize fido tiered cache", "error", cacheErr)
 			os.Exit(1)
 		}
+		feedStore, feedStoreErr := localfs.New[string, cachedFeedSnapshot]("prism-feed", cacheDir)
+		if feedStoreErr != nil {
+			logger.Error("failed to initialize fido feed store", "error", feedStoreErr)
+			os.Exit(1)
+		}
+		feedCache, cacheErr = fido.NewTiered(feedStore)
+		if cacheErr != nil {
+			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
+			os.Exit(1)
+		}
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -529,6 +616,9 @@ func main() {
 	funcs := template.FuncMap{
 		"isPublic": func() bool { return publicMode },
 		"mul":      func(a, b float64) float64 { return a * b },
+		"formulaQuery": func(formula string) string {
+			return desubscriptFormula(formula)
+		},
 		// bandGradient returns a CSS linear-gradient matching litmus's
 		// two-block confidence indicator. Each classification band has its
 		// own color ramp, and the two gradient stops represent left/right
@@ -602,7 +692,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Connect to hopper sample registry if configured.
+	// Connect to hopper sample registry. Explicit --db, HOPPER_DSN, and
+	// FALLOUT_DB override the local hopper default.
 	if dbDSN != "" {
 		var err error
 		hopperDB, err = hopper.Open(context.Background(), dbDSN)
@@ -610,6 +701,7 @@ func main() {
 			logger.Error("failed to connect to hopper", "error", err)
 		} else {
 			logger.Info("hopper connected")
+			go refreshFrontpageFeedLoop(ctx)
 		}
 	}
 
@@ -631,6 +723,7 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		logger.Info("shutdown signal received", "signal", sig.String())
+		cancelApp()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -642,6 +735,11 @@ func main() {
 		if cache != nil {
 			if err := cache.Close(); err != nil {
 				logger.Error("failed to close fido cache", "error", err)
+			}
+		}
+		if feedCache != nil {
+			if err := feedCache.Close(); err != nil {
+				logger.Error("failed to close fido feed cache", "error", err)
 			}
 		}
 
@@ -683,6 +781,8 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /_/health", handleHealth)
+	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
+	mux.HandleFunc("GET /{ecosystem}/", handleEcosystem)
 	return mux
 }
 
@@ -848,20 +948,477 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 	}
 }
 
+const feedLimit = 100
+
+func loadFeedRows(ctx context.Context, ecosystem, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
+	if ecosystem == "" && criticality == "" && formula == "" && feedCache != nil {
+		return loadFrontpageFeedRows(ctx, reqLogger)
+	}
+	return loadFeedRowsFromHopper(ctx, ecosystem, criticality, formula, reqLogger)
+}
+
+func loadFeedRowsFromHopper(ctx context.Context, ecosystem, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
+	ecosystems, err := hopperDB.FeedEcosystems(ctx, "harvest", "")
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	var samples []*hopper.Sample
+	var total int
+	for _, source := range []string{"harvest", "upload"} {
+		q := hopper.FeedQuery{
+			Source:       source,
+			OrderBy:      "created_at",
+			Formula:      formula,
+			TopLevelOnly: true,
+			Limit:        feedLimit,
+		}
+		if ecosystem != "" {
+			q.Ecosystems = []string{ecosystem}
+		}
+		if class, ok := criticalityClass(criticality); ok {
+			q.LitmusClasses = []int{class}
+		} else {
+			q.RequireLitmus = true
+		}
+
+		sourceSamples, err := hopperDB.FeedSamples(ctx, q)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		sourceCount, err := hopperDB.FeedSamplesCount(ctx, q)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		total += sourceCount
+		samples = append(samples, sourceSamples...)
+	}
+
+	sort.SliceStable(samples, func(i, j int) bool {
+		return samples[i].CreatedAt.After(samples[j].CreatedAt)
+	})
+	if len(samples) > feedLimit {
+		samples = samples[:feedLimit]
+	}
+
+	rows := make([]feedRow, 0, len(samples))
+	now := time.Now()
+	for _, sample := range samples {
+		res, err := cachedResultForSample(ctx, sample, reqLogger)
+		if err != nil {
+			reqLogger.Debug("feed cache unavailable, rendering hopper sample directly", "sha256", sample.SHA256, "error", err)
+			res, _ = storedResultFromHopperSample(sample)
+		}
+		classification := res.Classification
+		if classification == "" {
+			continue
+		}
+		if criticality != "" && classification != criticality {
+			continue
+		}
+		if formula != "" && firstNonEmpty(res.Formula, sample.Formula) != formula {
+			continue
+		}
+
+		addedAt := sample.CreatedAt
+		suspiciousT, hostileT := sampleThresholds(sample)
+		rows = append(rows, feedRow{
+			SHA256:         sample.SHA256,
+			SHA256Short:    shortSHA(sample.SHA256),
+			Filename:       firstNonEmpty(res.Filename, sample.Filename, filepath.Base(sample.Path)),
+			Classification: classification,
+			Probability:    sample.LitmusScore,
+			SuspiciousT:    suspiciousT,
+			HostileT:       hostileT,
+			Formula:        res.Formula,
+			FileType:       firstNonEmpty(res.FileType, sample.FileType),
+			Source:         sample.Source,
+			Ecosystem:      sample.Ecosystem,
+			EcosystemURL:   ecosystemURL(sample.Ecosystem),
+			AnalyzedAt:     addedAt,
+			AnalyzedDate:   feedDate(addedAt, now),
+			TimeAgo:        timeAgo(now.Sub(addedAt)),
+		})
+	}
+
+	return rows, ecosystems, total, nil
+}
+
+func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
+	snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey)
+	if err != nil {
+		reqLogger.Debug("frontpage feed cache read failed", "error", err)
+	}
+	if !found || time.Since(snapshot.GeneratedAt) > frontpageFeedMaxAge {
+		snapshot, err = refreshFrontpageFeed(ctx, reqLogger)
+		if err != nil {
+			if found {
+				reqLogger.Warn("frontpage feed refresh failed, serving stale cache", "error", err, "age", time.Since(snapshot.GeneratedAt))
+			} else {
+				return nil, nil, 0, err
+			}
+		}
+	}
+	return feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, snapshot.TotalCount, nil
+}
+
+func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
+	rows := make([]feedRow, 0, len(snapshot.Rows))
+	now := time.Now()
+	for _, sample := range snapshot.Rows {
+		rows = append(rows, feedRow{
+			SHA256:         sample.SHA256,
+			SHA256Short:    shortSHA(sample.SHA256),
+			Filename:       sample.Filename,
+			Classification: sample.Classification,
+			Probability:    sample.Probability,
+			SuspiciousT:    sample.SuspiciousT,
+			HostileT:       sample.HostileT,
+			Formula:        sample.Formula,
+			FileType:       sample.FileType,
+			Source:         sample.Source,
+			Ecosystem:      sample.Ecosystem,
+			EcosystemURL:   ecosystemURL(sample.Ecosystem),
+			AnalyzedAt:     sample.CreatedAt,
+			AnalyzedDate:   feedDate(sample.CreatedAt, now),
+			TimeAgo:        timeAgo(now.Sub(sample.CreatedAt)),
+		})
+	}
+	return rows
+}
+
+func refreshFrontpageFeedLoop(ctx context.Context) {
+	if _, err := refreshFrontpageFeed(ctx, logger); err != nil {
+		logger.Warn("initial frontpage feed refresh failed", "error", err)
+	}
+	ticker := time.NewTicker(frontpageFeedRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := refreshFrontpageFeed(ctx, logger); err != nil {
+				logger.Warn("frontpage feed refresh failed", "error", err)
+			}
+		}
+	}
+}
+
+func refreshFrontpageFeed(ctx context.Context, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
+	frontpageFeedRefreshMu.Lock()
+	defer frontpageFeedRefreshMu.Unlock()
+
+	if snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey); err == nil && found && time.Since(snapshot.GeneratedAt) <= frontpageFeedRefreshInterval {
+		return snapshot, nil
+	}
+
+	rows, ecosystems, total, err := loadFeedRowsFromHopper(ctx, "", "", "", reqLogger)
+	if err != nil {
+		return cachedFeedSnapshot{}, err
+	}
+	snapshot := cachedFeedSnapshot{
+		GeneratedAt: time.Now(),
+		Rows:        cachedFeedSamplesFromRows(rows),
+		Ecosystems:  ecosystems,
+		TotalCount:  total,
+	}
+	if err := feedCache.Set(ctx, frontpageFeedCacheKey, snapshot); err != nil {
+		return cachedFeedSnapshot{}, err
+	}
+	reqLogger.Debug("frontpage feed cache refreshed", "rows", len(snapshot.Rows), "total", total)
+	return snapshot, nil
+}
+
+func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
+	samples := make([]cachedFeedSample, 0, len(rows))
+	for _, row := range rows {
+		samples = append(samples, cachedFeedSample{
+			SHA256:         row.SHA256,
+			Filename:       row.Filename,
+			Classification: row.Classification,
+			Probability:    row.Probability,
+			SuspiciousT:    row.SuspiciousT,
+			HostileT:       row.HostileT,
+			Formula:        row.Formula,
+			FileType:       row.FileType,
+			Source:         row.Source,
+			Ecosystem:      row.Ecosystem,
+			CreatedAt:      row.AnalyzedAt,
+		})
+	}
+	return samples
+}
+
+func feedDate(t, now time.Time) string {
+	localTime := t.Local()
+	localNow := now.Local()
+	if localTime.Year() == localNow.Year() && localTime.YearDay() == localNow.YearDay() {
+		return timeAgo(now.Sub(t))
+	}
+	return localTime.Format("2006-01-02")
+}
+
+func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger *slog.Logger) (storedResult, error) {
+	res, err := cache.Fetch(ctx, sample.SHA256, func(_ context.Context) (storedResult, error) {
+		reqLogger.Debug("feed cache miss, hydrating from hopper sample", "sha256", sample.SHA256)
+		return storedResultFromHopperSample(sample)
+	})
+	if err != nil {
+		return storedResult{}, err
+	}
+	if shouldRefreshCachedSample(res, sample) {
+		fresh, err := storedResultFromHopperSample(sample)
+		if err != nil {
+			return res, nil
+		}
+		if err := cache.SetAsync(ctx, sample.SHA256, fresh); err != nil {
+			reqLogger.Debug("feed cache update failed", "sha256", sample.SHA256, "error", err)
+			return res, nil
+		}
+		return fresh, nil
+	}
+	return res, nil
+}
+
+func criticalityClass(criticality string) (int, bool) {
+	switch criticality {
+	case "benign":
+		return 0, true
+	case "suspicious":
+		return 1, true
+	case "hostile":
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func normalizeCriticality(criticality string) string {
+	criticality = strings.ToLower(strings.TrimSpace(criticality))
+	if _, ok := criticalityClass(criticality); ok {
+		return criticality
+	}
+	return ""
+}
+
+func sampleThresholds(sample *hopper.Sample) (float64, float64) {
+	const (
+		defaultSuspiciousT = 0.65
+		defaultHostileT    = 0.887
+	)
+	if sample != nil && len(sample.LitmusResult) > 0 {
+		var mlResp litmusMlResponse
+		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
+			suspiciousT, hostileT := mlResp.suspiciousT(), mlResp.hostileT()
+			if suspiciousT > 0 && hostileT > 0 {
+				return suspiciousT, hostileT
+			}
+		}
+	}
+	return defaultSuspiciousT, defaultHostileT
+}
+
+func shouldRefreshCachedSample(res storedResult, sample *hopper.Sample) bool {
+	sampleUpdated := sampleTime(sample)
+	if !sampleUpdated.IsZero() && sampleUpdated.After(res.CachedAt) {
+		return true
+	}
+	return (res.Formula == "" && sample.Formula != "") ||
+		(res.FileType == "" && sample.FileType != "") ||
+		(res.Classification == "" && len(sample.LitmusResult) > 0)
+}
+
+func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
+	envelope := map[string]json.RawMessage{}
+	if json.Valid(sample.LitmusResult) {
+		envelope["ml"] = sample.LitmusResult
+	}
+	if json.Valid(sample.CleaveResult) {
+		envelope["raw"] = sample.CleaveResult
+	}
+	rawLitmus, err := json.Marshal(envelope)
+	if err != nil {
+		rawLitmus = []byte("{}")
+	}
+
+	classification := ""
+	if len(sample.LitmusResult) > 0 {
+		var mlResp litmusMlResponse
+		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
+			classification = classificationName(mlResp.Classification)
+		}
+	}
+
+	cachedAt := sampleTime(sample)
+	if cachedAt.IsZero() {
+		cachedAt = time.Now().UTC()
+	}
+
+	return storedResult{
+		Filename:       firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
+		RawLitmus:      string(rawLitmus),
+		Classification: classification,
+		Formula:        sample.Formula,
+		FileType:       sample.FileType,
+		CachedAt:       cachedAt,
+	}, nil
+}
+
+func sampleTime(sample *hopper.Sample) time.Time {
+	switch {
+	case sample.AnalyzedAt != nil && !sample.AnalyzedAt.IsZero():
+		return *sample.AnalyzedAt
+	case sample.Mtime != nil && !sample.Mtime.IsZero():
+		return *sample.Mtime
+	case !sample.UpdatedAt.IsZero():
+		return sample.UpdatedAt
+	default:
+		return sample.CreatedAt
+	}
+}
+
+func shortSHA(sha string) string {
+	if len(sha) <= 12 {
+		return sha
+	}
+	return sha[:12]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" && value != "." {
+			return value
+		}
+	}
+	return "unknown"
+}
+
+func ecosystemURL(ecosystem string) string {
+	if ecosystem == "" {
+		return ""
+	}
+	return "/" + strings.ToLower(urlPathSegment(ecosystem)) + "/"
+}
+
+func formulaFromQuery(values url.Values) string {
+	if formula := strings.TrimSpace(values.Get("m")); formula != "" {
+		return resubscriptFormula(formula)
+	}
+	return strings.TrimSpace(values.Get("formula"))
+}
+
+func desubscriptFormula(formula string) string {
+	replacer := strings.NewReplacer(
+		"₀", "0", "₁", "1", "₂", "2", "₃", "3", "₄", "4",
+		"₅", "5", "₆", "6", "₇", "7", "₈", "8", "₉", "9",
+	)
+	return replacer.Replace(formula)
+}
+
+func resubscriptFormula(formula string) string {
+	var b strings.Builder
+	for _, r := range formula {
+		switch r {
+		case '0':
+			b.WriteRune('₀')
+		case '1':
+			b.WriteRune('₁')
+		case '2':
+			b.WriteRune('₂')
+		case '3':
+			b.WriteRune('₃')
+		case '4':
+			b.WriteRune('₄')
+		case '5':
+			b.WriteRune('₅')
+		case '6':
+			b.WriteRune('₆')
+		case '7':
+			b.WriteRune('₇')
+		case '8':
+			b.WriteRune('₈')
+		case '9':
+			b.WriteRune('₉')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func urlPathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ToLower(value)
+	value = strings.ReplaceAll(value, " ", "-")
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func handleIndex(w http.ResponseWriter, r *http.Request) {
+	renderFeed(w, r, "")
+}
+
+func handleEcosystem(w http.ResponseWriter, r *http.Request) {
+	eco := strings.Trim(r.PathValue("ecosystem"), "/")
+	if eco == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	renderFeed(w, r, eco)
+}
+
+func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
+	eco := strings.Trim(r.PathValue("ecosystem"), "/")
+	if eco == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	target := "/" + eco + "/"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := struct {
-		CSRFToken string
-		Nonce     string
-		Refresh   bool
-	}{
-		CSRFToken: csrfToken(),
-		Nonce:     getNonce(r),
-		Refresh:   r.URL.Query().Get("refresh") == "1",
+	data := feedPageData{
+		CSRFToken:       csrfToken(),
+		Nonce:           getNonce(r),
+		Refresh:         r.URL.Query().Get("refresh") == "1",
+		SelectedEco:     ecosystem,
+		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
+		SelectedFormula: formulaFromQuery(r.URL.Query()),
+		Title:           "Fallout",
+		HasHopper:       hopperDB != nil,
+	}
+	if ecosystem != "" {
+		data.Title = ecosystem + " Fallout"
+	}
+
+	if hopperDB != nil {
+		var err error
+		data.Rows, data.Ecosystems, data.TotalCount, err = loadFeedRows(r.Context(), data.SelectedEco, data.SelectedCrit, data.SelectedFormula, logger)
+		if err != nil {
+			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
+			renderError(w, r, http.StatusInternalServerError, errorData{
+				Icon:    "⚠",
+				Title:   "Feed unavailable",
+				Message: "The recent analysis feed could not be loaded.",
+			})
+			return
+		}
+		data.FilteredCount = len(data.Rows)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
-			"template", "upload",
+			"template", "feed",
 			"error", err,
 		)
 	}
@@ -967,6 +1524,18 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data := prepareResultData(res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
+	if hopperDB != nil {
+		report, err := hopperDB.LatestReport(r.Context(), sha, "re")
+		if err == nil {
+			data.ReportContent = report.Content
+			data.ReportProvider = report.Provider
+			if !report.CreatedAt.IsZero() {
+				data.ReportCreated = report.CreatedAt.Format("2 Jan 2006 15:04 UTC")
+			}
+		} else if !errors.Is(err, hopper.ErrNotFound) {
+			reqLogger.Debug("failed to load reverse-engineering report", "error", err)
+		}
+	}
 	switch r.URL.Query().Get("layout") {
 	case "helix4", "helix5", "organic2", "organic4", "organic5", "flat":
 		data.Layout = r.URL.Query().Get("layout")
@@ -1035,42 +1604,7 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
 	}
 
-	envelope := map[string]json.RawMessage{}
-	if len(sample.LitmusResult) > 0 {
-		envelope["ml"] = sample.LitmusResult
-	}
-	if len(sample.CleaveResult) > 0 {
-		envelope["raw"] = sample.CleaveResult
-	}
-	rawLitmus, err := json.Marshal(envelope)
-	if err != nil {
-		return storedResult{}, fmt.Errorf("encode litmus envelope: %w", err)
-	}
-
-	classification := ""
-	if len(sample.LitmusResult) > 0 {
-		var mlResp litmusMlResponse
-		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
-			classification = classificationName(mlResp.Classification)
-		}
-	}
-
-	cachedAt := sample.UpdatedAt
-	if sample.AnalyzedAt != nil && !sample.AnalyzedAt.IsZero() {
-		cachedAt = *sample.AnalyzedAt
-	}
-	if cachedAt.IsZero() {
-		cachedAt = time.Now().UTC()
-	}
-
-	return storedResult{
-		Filename:       sample.Filename,
-		RawLitmus:      string(rawLitmus),
-		Classification: classification,
-		Formula:        sample.Formula,
-		FileType:       sample.FileType,
-		CachedAt:       cachedAt,
-	}, nil
+	return storedResultFromHopperSample(sample)
 }
 
 // refreshFromHopper reloads a sample from hopper and writes it into the cache.
@@ -1719,10 +2253,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 // buildStructuredFindings converts cleave findings into structured display data grouped by category.
 // Findings are aggregated by directory path, keeping only the highest criticality/confidence per directory.
 //
-//nolint:gocognit // complex findings aggregation logic
 // fileSeverityRank returns a numeric rank for a file's severity, using the
 // litmus ML classification with a fallback to the cleave risk level.
 // Higher values = more severe.
+//
+//nolint:gocognit // complex findings aggregation logic
 func fileSeverityRank(f *cleaveFile) int {
 	switch f.Classification {
 	case "hostile":
@@ -2549,4 +3084,3 @@ func runLitmus(
 
 // v4: cleave output deserializes directly into cleaveReport via json tags.
 // parseAPIResponse and uploadToGCS removed.
-
