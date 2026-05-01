@@ -23,4 +23,3 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 )
 
-replace codeberg.org/atomdrift/hopper => ../hopper
