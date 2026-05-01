@@ -1,5 +1,5 @@
-codeberg.org/atomdrift/hopper v0.0.0-20260430164708-83d0980dab5e h1:qOHyvq+JAk6akGInPuNreht0fUDLqhoZWpG6a93bTjw=
-codeberg.org/atomdrift/hopper v0.0.0-20260430164708-83d0980dab5e/go.mod h1:xNCzBzBpm2g11lcAHGoPlzmZMx1UY8Hu7CGW2XZt4bg=
+codeberg.org/atomdrift/hopper v0.0.0-20260501015213-a488482dc47e h1:LyJ0oCzhShQuY4k91uCFPOaLijsnjksbAzsNH8P5LHE=
+codeberg.org/atomdrift/hopper v0.0.0-20260501015213-a488482dc47e/go.mod h1:xNCzBzBpm2g11lcAHGoPlzmZMx1UY8Hu7CGW2XZt4bg=
 github.com/codeGROOVE-dev/fido v1.11.0 h1:wmgvNElsz/CLbBvJQ6rJEeMicvMk8amFhmNTmTSKu+I=
 github.com/codeGROOVE-dev/fido v1.11.0/go.mod h1:DKaYkz0ikfVK6o0Yap1iFY2+ty7k4Kny4LOrqaTah6c=
 github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 h1:fcqJZrwHvA8ux7/gXCPOBYAc8F4SG/LJeWK72/v85Tw=
