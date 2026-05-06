@@ -113,6 +113,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            flex: 1 1 auto;
             min-width: 0;
         }
         .hero-body {
@@ -133,7 +134,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            max-width: 360px;
+            max-width: min(128ch, 100%);
         }
         .verdict-meta {
             font-family: 'SF Mono', Consolas, monospace;

@@ -18,6 +18,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -57,6 +58,8 @@ var (
 	poweredByTemplate *template.Template
 	litmusAddr        string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient      *http.Client // HTTP client for litmus server
+	hopperAPIAddr     string       // Address of hopper API server (e.g., "hopper-api:8081")
+	hopperClient      *http.Client // HTTP client for hopper API server
 	cache             *fido.TieredCache[string, storedResult]
 	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
 	logger            *slog.Logger
@@ -64,7 +67,8 @@ var (
 	hopperDB          *hopper.DB
 )
 
-const defaultHopperDSN = "postgres://hopper@hopper:5432/hopper?sslmode=disable"
+const defaultHopperDSN = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
+const defaultHopperAPIAddr = "hopper-api:8081"
 const frontpageFeedCacheKey = "feed-frontpage-v1"
 const frontpageFeedRefreshInterval = 90 * time.Second
 const frontpageFeedMaxAge = 3 * time.Minute
@@ -523,6 +527,10 @@ func main() {
 			litmusAddr = strings.TrimPrefix(arg, "--litmus-addr=")
 		case arg == "--litmus-addr" && i+1 < len(os.Args[1:]):
 			litmusAddr = os.Args[i+2]
+		case strings.HasPrefix(arg, "--hopper-api-addr="):
+			hopperAPIAddr = strings.TrimPrefix(arg, "--hopper-api-addr=")
+		case arg == "--hopper-api-addr" && i+1 < len(os.Args[1:]):
+			hopperAPIAddr = os.Args[i+2]
 		default:
 		}
 	}
@@ -749,6 +757,7 @@ func main() {
 	logger.Info("server starting",
 		"port", port,
 		"litmus_addr", litmusAddr,
+		"hopper_api_addr", hopperAPIAddr,
 	)
 
 	var lc net.ListenConfig
@@ -795,14 +804,24 @@ func loadConfig() error {
 	if litmusAddr == "" {
 		litmusAddr = "127.0.0.1:49999"
 	}
+	if hopperAPIAddr == "" {
+		hopperAPIAddr = os.Getenv("HOPPER_API_ADDR")
+	}
+	if hopperAPIAddr == "" {
+		hopperAPIAddr = defaultHopperAPIAddr
+	}
 
 	// Initialize HTTP client for litmus server
 	litmusClient = &http.Client{
 		Timeout: 150 * time.Second, // 120s analysis + buffer
 	}
+	hopperClient = &http.Client{
+		Timeout: 5 * time.Minute,
+	}
 
 	logger.Debug("configuration loaded",
 		"LITMUS_ADDR", litmusAddr,
+		"HOPPER_API_ADDR", hopperAPIAddr,
 		"PORT", os.Getenv("PORT"),
 	)
 
@@ -1478,6 +1497,10 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		serveFileJSON(w, r, bare, ip)
 		return
 	}
+	if bare, ok := strings.CutSuffix(sha, ".dl"); ok {
+		serveFileDownload(w, r, bare, ip)
+		return
+	}
 
 	if !validSHA256(sha) {
 		logger.Warn("invalid SHA256 in file request",
@@ -1626,6 +1649,93 @@ func refreshFromHopper(ctx context.Context, sha string, reqLogger *slog.Logger) 
 		return
 	}
 	reqLogger.Debug("background refresh from hopper completed")
+}
+
+func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
+	if !validSHA256(sha) {
+		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		return
+	}
+
+	reqLogger := logger.With("sha256", sha, "client_ip", ip)
+	_, res, err := lookupResult(r.Context(), sha, reqLogger)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, "not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hopperFileURL(sha), nil)
+	if err != nil {
+		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
+		return
+	}
+	resp, err := hopperClient.Do(req)
+	if err != nil {
+		reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
+		http.Error(w, "download unavailable", http.StatusBadGateway)
+		return
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			reqLogger.Debug("hopper download body close failed", "error", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			http.Error(w, "not found", http.StatusNotFound)
+		case http.StatusBadRequest:
+			http.Error(w, "invalid sha256", http.StatusBadRequest)
+		case http.StatusServiceUnavailable:
+			http.Error(w, "download unavailable", http.StatusServiceUnavailable)
+		default:
+			reqLogger.Warn("hopper download returned unexpected status", "status", resp.StatusCode)
+			http.Error(w, "download unavailable", http.StatusBadGateway)
+		}
+		return
+	}
+
+	filename := strings.TrimSpace(res.Filename)
+	if filename == "" {
+		filename = sha
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
+		"filename": filepath.Base(filename),
+	}))
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		w.Header().Set("Content-Length", contentLength)
+	}
+	if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
+		w.Header().Set("Last-Modified", lastModified)
+	}
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		reqLogger.Debug("download write failed", "error", err)
+	}
+}
+
+func hopperFileURL(sha string) string {
+	base := strings.TrimSpace(hopperAPIAddr)
+	if base == "" {
+		base = defaultHopperAPIAddr
+	}
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "http://" + defaultHopperAPIAddr + "/api/file/" + sha
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/file/" + sha
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {

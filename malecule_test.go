@@ -33,6 +33,22 @@ func TestRouteSetup(t *testing.T) {
 	newMux()
 }
 
+func TestHopperFileURL(t *testing.T) {
+	old := hopperAPIAddr
+	defer func() { hopperAPIAddr = old }()
+
+	sha := strings.Repeat("a", 64)
+	hopperAPIAddr = "hopper-api:8081"
+	if got, want := hopperFileURL(sha), "http://hopper-api:8081/api/file/"+sha; got != want {
+		t.Fatalf("hopperFileURL without scheme = %q, want %q", got, want)
+	}
+
+	hopperAPIAddr = "https://hopper.example/internal/"
+	if got, want := hopperFileURL(sha), "https://hopper.example/internal/api/file/"+sha; got != want {
+		t.Fatalf("hopperFileURL with path = %q, want %q", got, want)
+	}
+}
+
 func TestBuildMalecule_Empty(t *testing.T) {
 	mol := BuildMalecule(nil, "")
 	if len(mol.Atoms) != 0 {

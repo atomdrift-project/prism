@@ -7,8 +7,8 @@
 #                     persisted in jail via sysrc for subsequent runs)
 #
 # Prerequisites:
-#   - "hopper" must have an entry in /etc/hosts on this host
-#   - The hopper PostgreSQL database must be reachable from the run jail
+#   - "hopper-api" must have an entry in /etc/hosts on this host for the API
+#   - "hopper-db" must have an entry in /etc/hosts on this host for PostgreSQL
 
 set -ex
 
@@ -26,12 +26,16 @@ log() {
 
 [ -z "$BUILD" ] || [ -z "$RUN" ] && die "usage: $0 <build-jail> <run-jail>"
 
-# --- Resolve hopper hostname ---
-# Look up the hopper entry in /etc/hosts so the run jail can reach the database.
+# --- Resolve hopper hostnames ---
+# hopper-api serves the API; hopper-db serves PostgreSQL.
 
-HOPPER_LINE=$(awk '/[[:space:]]hopper([[:space:]]|$)/{print; exit}' /etc/hosts)
-[ -z "$HOPPER_LINE" ] && die "hopper not found in /etc/hosts — add an entry before deploying"
-log "Using hopper: $HOPPER_LINE"
+HOPPER_API_LINE=$(awk '/[[:space:]]hopper-api([[:space:]]|$)/{print; exit}' /etc/hosts)
+[ -z "$HOPPER_API_LINE" ] && die "hopper-api not found in /etc/hosts — add an entry before deploying"
+log "Using hopper-api: $HOPPER_API_LINE"
+
+HOPPER_DB_LINE=$(awk '/[[:space:]]hopper-db([[:space:]]|$)/{print; exit}' /etc/hosts)
+[ -z "$HOPPER_DB_LINE" ] && die "hopper-db not found in /etc/hosts — add an entry before deploying"
+log "Using hopper-db: $HOPPER_DB_LINE"
 
 # Verify jails are accessible
 doas bastille cmd "$BUILD" true || die "build jail '$BUILD' not accessible"
@@ -64,10 +68,14 @@ doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake test"
 
 # --- Run jail setup (all config before any restarts) ---
 
-# Ensure hopper hostname resolves inside the run jail.
-if ! doas bastille cmd "$RUN" grep -q 'hopper' /etc/hosts 2>/dev/null; then
-    doas bastille cmd "$RUN" sh -c "echo '$HOPPER_LINE' >> /etc/hosts"
-    log "Added hopper to jail /etc/hosts"
+# Ensure hopper hostnames resolve inside the run jail.
+if ! doas bastille cmd "$RUN" awk '/[[:space:]]hopper-api([[:space:]]|$)/{found=1} END{exit !found}' /etc/hosts 2>/dev/null; then
+    doas bastille cmd "$RUN" sh -c "echo '$HOPPER_API_LINE' >> /etc/hosts"
+    log "Added hopper-api to jail /etc/hosts"
+fi
+if ! doas bastille cmd "$RUN" awk '/[[:space:]]hopper-db([[:space:]]|$)/{found=1} END{exit !found}' /etc/hosts 2>/dev/null; then
+    doas bastille cmd "$RUN" sh -c "echo '$HOPPER_DB_LINE' >> /etc/hosts"
+    log "Added hopper-db to jail /etc/hosts"
 fi
 
 log "Ensuring run user exists"
@@ -94,14 +102,14 @@ doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism
 if doas bastille cmd "$RUN" sh -c "test -f /home/prism/.pgpass" 2>/dev/null; then
     log "Hopper credentials already present in prism jail, skipping copy"
 else
-    log "Copying hopper credentials from hopper jail"
-    doas bastille cmd hopper test -f /home/hopper/.pgpass || die "hopper jail pgpass not found at /home/hopper/.pgpass"
-    # Hoist the password from the hopper jail's pgpass (localhost entry) and write a
-    # remote entry for prism to use (connecting to the hopper host, not localhost).
+    log "Copying hopper credentials from hopper-db jail"
+    doas bastille cmd hopper-db test -f /home/hopper/.pgpass || die "hopper-db jail pgpass not found at /home/hopper/.pgpass"
+    # Hoist the password from the hopper-db jail's pgpass (localhost entry) and write a
+    # remote entry for prism to use (connecting to hopper-db, not localhost).
     set +x
-    HOPPER_PASS=$(doas bastille cmd hopper sh -c "cut -d: -f5 /home/hopper/.pgpass")
-    [ -z "$HOPPER_PASS" ] && die "could not read password from hopper jail pgpass"
-    doas bastille cmd "$RUN" su -l prism -c "printf 'hopper:5432:hopper:hopper:%s\n' '$HOPPER_PASS' > ~/.pgpass && chmod 600 ~/.pgpass"
+    HOPPER_PASS=$(doas bastille cmd hopper-db sh -c "cut -d: -f5 /home/hopper/.pgpass")
+    [ -z "$HOPPER_PASS" ] && die "could not read password from hopper-db jail pgpass"
+    doas bastille cmd "$RUN" su -l prism -c "printf 'hopper-db:5432:hopper:hopper:%s\n' '$HOPPER_PASS' > ~/.pgpass && chmod 600 ~/.pgpass"
     unset HOPPER_PASS
     set -x
 fi
@@ -124,12 +132,13 @@ load_rc_config $name
 
 : ${prism_enable:="NO"}
 : ${prism_litmus_addr:="litmus:49999"}
+: ${prism_hopper_api_addr:="hopper-api:8081"}
 
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
-prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_DSN=postgres://hopper@hopper/hopper"
+prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public"
 
 run_rc_command "$1"
