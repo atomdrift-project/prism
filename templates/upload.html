@@ -456,7 +456,7 @@
                             <span class="mono">-</span>
                             {{end}}
                         </td>
-                        <td><a class="cell-link mono" href="/file/{{.SHA256}}">{{.SHA256}}</a></td>
+                        <td><a class="cell-link mono" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer">{{.SHA256}}</a></td>
                     </tr>
                     {{else}}
                     <tr><td colspan="6" class="empty">No matching records.</td></tr>
@@ -470,6 +470,6 @@
 
         {{template "footer" .}}
     </main>
-    <script src="/static/upload.js"></script>
+    <script nonce="{{.Nonce}}" src="/static/upload.js"></script>
 </body>
 </html>

@@ -8,10 +8,15 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
+
+	"codeberg.org/atomdrift/hopper"
 )
 
 func init() {
@@ -33,6 +38,31 @@ func TestRouteSetup(t *testing.T) {
 	newMux()
 }
 
+func TestSecurityHeadersScriptNonce(t *testing.T) {
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce := getNonce(r)
+		if nonce == "" {
+			t.Fatal("nonce missing from request context")
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<script nonce="` + nonce + `" src="/static/upload.js"></script>`))
+	}))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rr.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
+		t.Fatalf("CSP missing script nonce: %q", csp)
+	}
+	if !strings.Contains(csp, "script-src-elem 'self' 'nonce-") {
+		t.Fatalf("CSP missing script-src-elem nonce: %q", csp)
+	}
+	if !strings.Contains(rr.Body.String(), `<script nonce="`) {
+		t.Fatalf("response missing script nonce: %q", rr.Body.String())
+	}
+}
+
 func TestHopperFileURL(t *testing.T) {
 	old := hopperAPIAddr
 	defer func() { hopperAPIAddr = old }()
@@ -46,6 +76,48 @@ func TestHopperFileURL(t *testing.T) {
 	hopperAPIAddr = "https://hopper.example/internal/"
 	if got, want := hopperFileURL(sha), "https://hopper.example/internal/api/file/"+sha; got != want {
 		t.Fatalf("hopperFileURL with path = %q, want %q", got, want)
+	}
+}
+
+func TestSampleTimeUsesNewestTimestamp(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mtime := created.Add(1 * time.Hour)
+	analyzed := created.Add(2 * time.Hour)
+	updated := created.Add(3 * time.Hour)
+
+	got := sampleTime(&hopper.Sample{
+		CreatedAt:  created,
+		Mtime:      &mtime,
+		AnalyzedAt: &analyzed,
+		UpdatedAt:  updated,
+	})
+	if !got.Equal(updated) {
+		t.Fatalf("sampleTime = %s, want newest timestamp %s", got, updated)
+	}
+}
+
+func TestPrepareResultDataSeparatesFirstSeenAndAnalyzed(t *testing.T) {
+	created := time.Now().UTC().Add(-48 * time.Hour)
+	analyzed := time.Now().UTC().Add(-2 * time.Hour)
+	raw := `{"ml":{"thresholds":[0.65,0.887],"fs":[{"id":0,"prob":0.1,"class":0}]},"raw":{"fs":[{"id":0,"sha":"` +
+		strings.Repeat("a", 64) + `","type":"pe","dp":0,"f":"K","sz":12}]}}`
+
+	data := prepareResultData("sample.exe", strings.Repeat("a", 64), &storedResult{
+		RawLitmus:      raw,
+		Classification: "benign",
+		CachedAt:       analyzed,
+		CreatedAt:      created,
+		AnalyzedAt:     analyzed,
+	})
+
+	if data.FirstSeenAt == "" || data.FirstSeenAgo == "" {
+		t.Fatalf("first seen fields missing: %+v", data)
+	}
+	if data.AnalyzedAt == "" || data.AnalyzedAgo == "" {
+		t.Fatalf("analyzed fields missing: %+v", data)
+	}
+	if data.FirstSeenAt == data.AnalyzedAt {
+		t.Fatalf("first seen and analyzed should be distinct, both are %q", data.FirstSeenAt)
 	}
 }
 

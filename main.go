@@ -349,6 +349,8 @@ type resultData struct {
 	IsArchive      bool    // true when result contains multiple analyzed files
 	TotalFiles     int     // total archive member count before truncation
 	ShownFiles     int     // number of files shown after truncation
+	FirstSeenAt    string  // human-readable UTC date when hopper first saw the sample
+	FirstSeenAgo   string  // relative time since first seen
 	AnalyzedAt     string  // human-readable UTC date of analysis
 	AnalyzedAgo    string  // relative time since analysis (e.g. "5 minutes ago")
 	ReportContent  string  // optional reverse-engineering report markdown
@@ -368,7 +370,9 @@ type storedResult struct {
 	Classification string    // "hostile", "suspicious", or "benign" from litmus
 	Formula        string    // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
 	FileType       string    // file type from litmus (e.g. "macho", "pe")
-	CachedAt       time.Time // when this result was first analyzed
+	CachedAt       time.Time // newest known hopper timestamp; used for cache freshness
+	CreatedAt      time.Time // when hopper first saw this sample
+	AnalyzedAt     time.Time // when hopper last analyzed this sample
 }
 
 type feedRow struct {
@@ -898,7 +902,8 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self'; "+
+				"script-src 'self' 'nonce-"+nonce+"'; "+
+				"script-src-elem 'self' 'nonce-"+nonce+"'; "+
 				"style-src 'self' 'nonce-"+nonce+"'; "+
 				"font-src 'self'; "+
 				"img-src 'self'; "+
@@ -1273,6 +1278,10 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 	if cachedAt.IsZero() {
 		cachedAt = time.Now().UTC()
 	}
+	var analyzedAt time.Time
+	if sample.AnalyzedAt != nil {
+		analyzedAt = *sample.AnalyzedAt
+	}
 
 	return storedResult{
 		Filename:       firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
@@ -1281,20 +1290,23 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		Formula:        sample.Formula,
 		FileType:       sample.FileType,
 		CachedAt:       cachedAt,
+		CreatedAt:      sample.CreatedAt,
+		AnalyzedAt:     analyzedAt,
 	}, nil
 }
 
 func sampleTime(sample *hopper.Sample) time.Time {
-	switch {
-	case sample.AnalyzedAt != nil && !sample.AnalyzedAt.IsZero():
-		return *sample.AnalyzedAt
-	case sample.Mtime != nil && !sample.Mtime.IsZero():
-		return *sample.Mtime
-	case !sample.UpdatedAt.IsZero():
-		return sample.UpdatedAt
-	default:
-		return sample.CreatedAt
+	newest := sample.CreatedAt
+	if sample.Mtime != nil && sample.Mtime.After(newest) {
+		newest = *sample.Mtime
 	}
+	if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(newest) {
+		newest = *sample.AnalyzedAt
+	}
+	if sample.UpdatedAt.After(newest) {
+		newest = sample.UpdatedAt
+	}
+	return newest
 }
 
 func shortSHA(sha string) string {
@@ -1994,13 +2006,16 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		now := time.Now().UTC()
 		return storedResult{
 			Filename:       filename,
 			RawLitmus:      lr.RawLitmus,
 			Classification: lr.Classification,
 			Formula:        lr.Formula,
 			FileType:       lr.FileType,
-			CachedAt:       time.Now().UTC(),
+			CachedAt:       now,
+			CreatedAt:      now,
+			AnalyzedAt:     now,
 		}, nil
 	})
 
@@ -2048,8 +2063,16 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	if !res.CachedAt.IsZero() {
-		data.AnalyzedAt = res.CachedAt.Format("2 Jan 2006 15:04 UTC")
-		data.AnalyzedAgo = timeAgo(time.Since(res.CachedAt))
+		analyzedAt := res.AnalyzedAt
+		if analyzedAt.IsZero() {
+			analyzedAt = res.CachedAt
+		}
+		data.AnalyzedAt = analyzedAt.Format("2 Jan 2006 15:04 UTC")
+		data.AnalyzedAgo = timeAgo(time.Since(analyzedAt))
+	}
+	if !res.CreatedAt.IsZero() {
+		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
+		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))
 	}
 
 	// Parse raw litmus response envelope: {"ml": {...}, "raw": {...}}.

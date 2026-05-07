@@ -880,6 +880,12 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">{{.Size}}</span>
                     </div>
+                    {{if .FirstSeenAt}}
+                    <div class="meta-row">
+                        <span class="meta-label">First seen</span>
+                        <span class="meta-value" title="{{.FirstSeenAt}}">{{.FirstSeenAgo}}</span>
+                    </div>
+                    {{end}}
                     {{if .AnalyzedAt}}
                     <div class="meta-row">
                         <span class="meta-label">Analyzed</span>
@@ -1148,8 +1154,8 @@
         {{template "footer" .}}
     </div>
 
-    <script id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
-    <script id="molecule-layout" type="application/json">"{{.Layout}}"</script>
-    <script type="module" src="/static/js/molecule.js"></script>
+    <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
+    <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js"></script>
 </body>
 </html>
