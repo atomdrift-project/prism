@@ -187,16 +187,11 @@
             flex: 0 0 auto;
         }
         .fallout-symbol .field {
-            fill: var(--white);
-            stroke: var(--carbon);
-            stroke-width: 5;
+            fill: var(--carbon);
         }
         .fallout-symbol .blade,
         .fallout-symbol .core {
             fill: var(--toxic);
-            stroke: var(--carbon);
-            stroke-width: 5;
-            stroke-linejoin: round;
         }
         .fallout-wordmark {
             font-family: "Oxanium", monospace;
@@ -384,10 +379,10 @@
                 <h1 class="fallout-lockup">
                     <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
                         <circle class="field" cx="50" cy="50" r="44"></circle>
-                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L58 36.14A16 16 0 0 0 42 36.14Z"></path>
-                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L58 63.86A16 16 0 0 0 66 50Z"></path>
-                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L34 50A16 16 0 0 0 42 63.86Z"></path>
-                        <circle class="core" cx="50" cy="50" r="10"></circle>
+                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
+                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
+                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
+                        <circle class="core" cx="50" cy="50" r="8"></circle>
                     </svg>
                     <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
                 </h1>

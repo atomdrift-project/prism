@@ -1332,6 +1332,30 @@ func ecosystemURL(ecosystem string) string {
 	return "/" + strings.ToLower(urlPathSegment(ecosystem)) + "/"
 }
 
+// knownEcosystems is the allowlist for the Fallout ecosystem dropdown — real
+// open-source software providers (package registries, OS distributions, and
+// extension marketplaces) that prism scans. Hopper's ecosystem field also
+// contains file extensions, malware-corpus repo names, and OS version strings
+// that are not useful as user-facing filters.
+var knownEcosystems = map[string]bool{
+	"alpine": true, "arch": true, "archlinux": true, "aur": true,
+	"debian": true, "fedora": true, "freebsd": true, "freebsd-ports": true,
+	"netbsd": true, "openbsd": true, "wolfi": true,
+
+	"cargo": true, "clojars": true, "conda": true, "cpan": true,
+	"cran": true, "crates": true, "hackage": true, "jfrog": true,
+	"luarocks": true, "maven": true, "npm": true, "nuget": true,
+	"packagist": true, "pub": true, "pypi": true, "rubygems": true,
+
+	"chocolatey": true, "homebrew": true, "scoop": true, "winget": true,
+
+	"chrome": true, "chrome_ext": true, "mozilla": true,
+	"open_vsx": true, "openvsx": true, "powershell_gallery": true,
+	"vscode": true,
+
+	"github_actions": true, "github-actions": true,
+}
+
 func formulaFromQuery(values url.Values) string {
 	if formula := strings.TrimSpace(values.Get("m")); formula != "" {
 		return resubscriptFormula(formula)
@@ -1445,6 +1469,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			})
 			return
 		}
+		filtered := data.Ecosystems[:0:0]
+		for _, e := range data.Ecosystems {
+			if knownEcosystems[strings.ToLower(e)] {
+				filtered = append(filtered, e)
+			}
+		}
+		data.Ecosystems = filtered
 		data.FilteredCount = len(data.Rows)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
