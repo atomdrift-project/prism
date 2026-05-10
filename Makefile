@@ -1,4 +1,4 @@
-.PHONY: build lint run test integration clean deploy check-deploy-deps rollout-bastille help
+.PHONY: build lint run test integration clean deploy help
 
 help:
 	@echo "Available targets:"
@@ -7,13 +7,21 @@ help:
 	@echo "  make test                   Run tests"
 	@echo "  make run                    Run locally (requires cleave in PATH)"
 	@echo "  make clean                  Clean build artifacts"
-	@echo "  make rollout-bastille       Deploy to Bastille jails (BUILD=build RUN=prism)"
+	@echo "  make deploy                 git pull + bastille rollout (BUILD=build RUN=prism)"
 	@echo ""
 
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 BUILD ?= build
 RUN ?= prism
+
+deploy: export MAKEFLAGS :=
+deploy:
+	git pull
+	@case "$$(uname -s)" in \
+		FreeBSD) ./hacks/rollout-bastille.sh "$(BUILD)" "$(RUN)" ;; \
+		*) echo "error: deploy is bastille-only; run from a FreeBSD host"; exit 1 ;; \
+	esac
 
 build:
 	CGO_ENABLED=0 go build -o prism -ldflags="-s -w -X main.buildCommit=$(GIT_COMMIT)" .
@@ -26,9 +34,6 @@ integration:
 
 run: build
 	PORT=8080 CLEAVE_PATH=cleave ./prism
-
-rollout-bastille:
-	./hacks/rollout-bastille.sh "$(BUILD)" "$(RUN)"
 
 clean:
 	rm -f prism
