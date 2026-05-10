@@ -57,25 +57,28 @@ func (s Severity) Color() string {
 // Top-level: O(bjectives) H(micro-behaviors) Md(metadata) K(nown) Th(ird-party)
 //
 // Objectives:  Al(anti-analysis) As(anti-static) C(2/c&c) Ca(credential-access)
-//   Co(llection) Dy(discoverY) Er(vasion) Eu(xfiltration) I(mpact) La(teral)
-//   P(ersistence) Pr(ivilege) S(upply-chain) Xe(xecution)
+//
+//	Co(llection) Dy(discoverY) Er(vasion) Eu(xfiltration) I(mpact) La(teral)
+//	P(ersistence) Pr(ivilege) S(upply-chain) Xe(xecution)
 //
 // Micro-behaviors: Cm(comms) Cr(ypto) Db(data) Ds(dylib/shared) F(ilesystem)
-//   Hf(hardware) Ho(st) Mg(memory) N(etwork) Os(operating-system) Po(process)
-//   Ti(me) U(I)
+//
+//	Hf(hardware) Ho(st) Mg(memory) N(etwork) Os(operating-system) Po(process)
+//	Ti(me) U(I)
 //
 // Metadata: Ar(ch) Bi(nary) Bk(build) Cf(config) He(hardening) In(import)
-//   Li(brary) Pa(ckage) Pd(ocument) Pt(lang) Rh(ights/entitlements) Si(gned)
-//   V(endor) + deeper: Ag(format) Au(quality) B(undle) Ce(compiler) Ne(archive)
+//
+//	Li(brary) Pa(ckage) Pd(ocument) Pt(lang) Rh(ights/entitlements) Si(gned)
+//	V(endor) + deeper: Ag(format) Au(quality) B(undle) Ce(compiler) Ne(archive)
 var (
-	// Top-level categories
+	// Top-level categories.
 	Oxygen      = Element{Number: 8, Symbol: "O", Name: "Oxygen"}         // Objectives
 	Hydrogen    = Element{Number: 1, Symbol: "H", Name: "Hydrogen"}       // Micro-behaviors
 	Mendelevium = Element{Number: 101, Symbol: "Md", Name: "Mendelevium"} // Metadata
 	Potassium   = Element{Number: 19, Symbol: "K", Name: "Potassium"}     // Well-known (K for Known)
 	Thorium     = Element{Number: 90, Symbol: "Th", Name: "Thorium"}      // Third-party
 
-	// Objective subcategories
+	// Objective subcategories.
 	Aluminum     = Element{Number: 13, Symbol: "Al", Name: "Aluminum"}     // Anti-analysis
 	Arsenic      = Element{Number: 33, Symbol: "As", Name: "Arsenic"}      // Anti-static
 	Carbon       = Element{Number: 6, Symbol: "C", Name: "Carbon"}         // Command & Control (C2)
@@ -91,22 +94,22 @@ var (
 	Sulfur       = Element{Number: 16, Symbol: "S", Name: "Sulfur"}        // Supply-chain
 	Xenon        = Element{Number: 54, Symbol: "Xe", Name: "Xenon"}        // Execution
 
-	// Micro-behavior subcategories
-	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}       // Communications
-	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}     // Crypto
-	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}     // Data
+	// Micro-behavior subcategories.
+	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}        // Communications
+	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}      // Crypto
+	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}      // Data
 	Darmstadtium = Element{Number: 110, Symbol: "Ds", Name: "Darmstadtium"} // Dylib
-	Fluorine     = Element{Number: 9, Symbol: "F", Name: "Fluorine"}       // Filesystem
-	Hafnium      = Element{Number: 72, Symbol: "Hf", Name: "Hafnium"}      // Hardware
-	Holmium      = Element{Number: 67, Symbol: "Ho", Name: "Holmium"}      // Host
-	Magnesium    = Element{Number: 12, Symbol: "Mg", Name: "Magnesium"}    // Memory
-	Nitrogen     = Element{Number: 7, Symbol: "N", Name: "Nitrogen"}       // Network
-	Osmium       = Element{Number: 76, Symbol: "Os", Name: "Osmium"}       // OS
-	Polonium     = Element{Number: 84, Symbol: "Po", Name: "Polonium"}     // Process
-	Titanium     = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}     // Time
-	Uranium      = Element{Number: 92, Symbol: "U", Name: "Uranium"}       // UI
+	Fluorine     = Element{Number: 9, Symbol: "F", Name: "Fluorine"}        // Filesystem
+	Hafnium      = Element{Number: 72, Symbol: "Hf", Name: "Hafnium"}       // Hardware
+	Holmium      = Element{Number: 67, Symbol: "Ho", Name: "Holmium"}       // Host
+	Magnesium    = Element{Number: 12, Symbol: "Mg", Name: "Magnesium"}     // Memory
+	Nitrogen     = Element{Number: 7, Symbol: "N", Name: "Nitrogen"}        // Network
+	Osmium       = Element{Number: 76, Symbol: "Os", Name: "Osmium"}        // OS
+	Polonium     = Element{Number: 84, Symbol: "Po", Name: "Polonium"}      // Process
+	Titanium     = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}      // Time
+	Uranium      = Element{Number: 92, Symbol: "U", Name: "Uranium"}        // UI
 
-	// Metadata subcategories (top-level under metadata/)
+	// Metadata subcategories (top-level under metadata/).
 	Argon       = Element{Number: 18, Symbol: "Ar", Name: "Argon"}       // Arch (Ar for ARchitecture)
 	Bismuth     = Element{Number: 83, Symbol: "Bi", Name: "Bismuth"}     // Binary
 	Berkelium   = Element{Number: 97, Symbol: "Bk", Name: "Berkelium"}   // Build
@@ -122,14 +125,14 @@ var (
 	Silicon      = Element{Number: 14, Symbol: "Si", Name: "Silicon"}      // Signed
 	Vanadium     = Element{Number: 23, Symbol: "V", Name: "Vanadium"}      // Vendor
 
-	// Metadata deeper-segment matches (3rd+ level)
+	// Metadata deeper-segment matches (3rd+ level).
 	Gold   = Element{Number: 79, Symbol: "Au", Name: "Gold"}   // Quality (gold standard)
 	Silver = Element{Number: 47, Symbol: "Ag", Name: "Silver"} // Format
 	Boron  = Element{Number: 5, Symbol: "B", Name: "Boron"}    // Bundle
 	Cerium = Element{Number: 58, Symbol: "Ce", Name: "Cerium"} // Compiler
 	Neon   = Element{Number: 10, Symbol: "Ne", Name: "Neon"}   // Archive
 
-	// Well-known subcategories
+	// Well-known subcategories.
 	Tellurium = Element{Number: 52, Symbol: "Te", Name: "Tellurium"} // Tools
 )
 
@@ -174,10 +177,10 @@ var categoryElements = map[string]Element{
 	"ui":             Uranium,
 
 	// Metadata subcategories (top-level under metadata/)
-	"arch":      Argon,
-	"binary":    Bismuth,
-	"build":     Berkelium,
-	"document":  Palladium,
+	"arch":     Argon,
+	"binary":   Bismuth,
+	"build":    Berkelium,
+	"document": Palladium,
 	// NOTE: "file" deliberately omitted — collides with micro-behaviors/fs/file path segments.
 	"hardening": Helium,
 	"import":    Indium,
@@ -209,20 +212,20 @@ func categoryToElement(category string) (Element, bool) {
 
 // MaleculeAtom represents an atom in the 3D visualization.
 type MaleculeAtom struct {
-	Severity  string    `json:"severity"`
-	Symbol    string    `json:"symbol"`
-	Category  string    `json:"category"`
-	TraitID   string    `json:"trait_id,omitempty"`
-	X         float64   `json:"x"`
-	Y         float64   `json:"y"`
-	Z         float64   `json:"z"`
-	Radius    float64   `json:"radius"`
-	ID        int       `json:"id"`
-	Ring      bool      `json:"ring,omitempty"`
-	ClusterOf int       `json:"cluster_of,omitempty"` // parent atom ID for buckyball satellite atoms
-	ClusterDx float64   `json:"cdx,omitempty"`        // offset from parent (preserved across layouts)
-	ClusterDy float64   `json:"cdy,omitempty"`
-	ClusterDz float64   `json:"cdz,omitempty"`
+	Severity  string  `json:"severity"`
+	Symbol    string  `json:"symbol"`
+	Category  string  `json:"category"`
+	TraitID   string  `json:"trait_id,omitempty"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Z         float64 `json:"z"`
+	Radius    float64 `json:"radius"`
+	ID        int     `json:"id"`
+	Ring      bool    `json:"ring,omitempty"`
+	ClusterOf int     `json:"cluster_of,omitempty"` // parent atom ID for buckyball satellite atoms
+	ClusterDx float64 `json:"cdx,omitempty"`        // offset from parent (preserved across layouts)
+	ClusterDy float64 `json:"cdy,omitempty"`
+	ClusterDz float64 `json:"cdz,omitempty"`
 }
 
 // TraitDetail holds display information for a trait, keyed by trait ID.
@@ -234,12 +237,12 @@ type TraitDetail struct {
 
 // MaleculeData contains the complete molecule data for 3D rendering.
 type MaleculeData struct {
+	Traits   map[string]*TraitDetail `json:"traits,omitempty"`
 	Filename string                  `json:"filename,omitempty"`
 	FileType string                  `json:"fileType,omitempty"`
 	Formula  string                  `json:"formula"`
 	Atoms    []MaleculeAtom          `json:"atoms"`
 	Bonds    [][2]int                `json:"bonds"`
-	Traits   map[string]*TraitDetail `json:"traits,omitempty"`
 }
 
 // FileMolecule represents a single file's molecule in a galaxy.
@@ -248,7 +251,7 @@ type FileMolecule struct {
 	Formula        string         `json:"formula"`
 	Risk           string         `json:"risk"`
 	Classification string         `json:"classification,omitempty"` // litmus ML classification
-	Findings       []string       `json:"findings"`                // Trait IDs for display on click
+	Findings       []string       `json:"findings"`                 // Trait IDs for display on click
 	Atoms          []MaleculeAtom `json:"atoms"`
 	Bonds          [][2]int       `json:"bonds"`
 	CenterX        float64        `json:"centerX"`
@@ -265,10 +268,10 @@ type GalaxyLink struct {
 
 // GalaxyData contains multiple molecules for archive visualization.
 type GalaxyData struct {
-	Molecules []FileMolecule          `json:"molecules"`
-	Links     []GalaxyLink            `json:"links"`  // Dropper relationships
-	IsGalaxy  bool                    `json:"isGalaxy"`
 	Traits    map[string]*TraitDetail `json:"traits,omitempty"`
+	Molecules []FileMolecule          `json:"molecules"`
+	Links     []GalaxyLink            `json:"links"`
+	IsGalaxy  bool                    `json:"isGalaxy"`
 }
 
 // FindingForFormula is a simplified finding for formula generation.
@@ -581,9 +584,18 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 			// 12 vertices of an icosahedron, normalized to unit sphere.
 			phi := (1 + math.Sqrt(5)) / 2
 			icoVerts := [][3]float64{
-				{0, 1, phi}, {0, -1, phi}, {0, 1, -phi}, {0, -1, -phi},
-				{1, phi, 0}, {-1, phi, 0}, {1, -phi, 0}, {-1, -phi, 0},
-				{phi, 0, 1}, {-phi, 0, 1}, {phi, 0, -1}, {-phi, 0, -1},
+				{0, 1, phi},
+				{0, -1, phi},
+				{0, 1, -phi},
+				{0, -1, -phi},
+				{1, phi, 0},
+				{-1, phi, 0},
+				{1, -phi, 0},
+				{-1, -phi, 0},
+				{phi, 0, 1},
+				{-phi, 0, 1},
+				{phi, 0, -1},
+				{-phi, 0, -1},
 			}
 			for vi := range icoVerts {
 				mag := math.Sqrt(icoVerts[vi][0]*icoVerts[vi][0] + icoVerts[vi][1]*icoVerts[vi][1] + icoVerts[vi][2]*icoVerts[vi][2])
@@ -591,11 +603,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 				icoVerts[vi][1] /= mag
 				icoVerts[vi][2] /= mag
 			}
-			satCount := len(n.traitIDs) - 1
-			if satCount > maxSatellites {
-				satCount = maxSatellites
-			}
-			for ci := 0; ci < satCount; ci++ {
+			satCount := min(len(n.traitIDs)-1, maxSatellites)
+			for ci := range satCount {
 				shell := ci / len(icoVerts)
 				vi := ci % len(icoVerts)
 				r := shellR * (1.0 + float64(shell)*0.5)
@@ -762,11 +771,11 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 type FileFindings struct {
 	Path           string
 	Risk           string
-	Classification string  // litmus ML classification
-	Formula        string  // Formula from cleave
+	Classification string // litmus ML classification
+	Formula        string // Formula from cleave
 	Findings       []FindingForFormula
-	Strings        []string  // Extracted strings for dropper detection
-	Probability    float64 // litmus ML probability
+	Strings        []string // Extracted strings for dropper detection
+	Probability    float64  // litmus ML probability
 }
 
 // BuildGalaxy creates a galaxy of molecules from multiple files.

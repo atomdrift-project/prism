@@ -761,3 +761,121 @@ document.querySelectorAll('.archive-toc-item').forEach(item => {
         }
     });
 });
+
+// Files tab — two-pane archive explorer
+(() => {
+    const tree = document.getElementById('files-tree');
+    const detail = document.getElementById('files-detail');
+    if (!tree || !detail) return;
+
+    const empty = detail.querySelector('.files-detail-empty');
+    const headers = Array.from(detail.querySelectorAll('.files-detail-header-block'));
+    const sectionBlocks = Array.from(detail.querySelectorAll('.files-detail-block'));
+    const rows = Array.from(tree.querySelectorAll('.files-tree-row'));
+
+    function placeholder(section) {
+        const div = document.createElement('div');
+        div.className = 'no-findings files-detail-placeholder';
+        const labels = { findings: 'No traits.', strings: 'No strings extracted.',
+            symbols: 'No symbols found.', metrics: 'No metrics available.',
+            kv: 'No key/value data available.' };
+        div.textContent = labels[section] || 'No data.';
+        return div;
+    }
+
+    function showSection(sha, section) {
+        if (empty) empty.hidden = true;
+
+        // Highlight the row.
+        for (const r of rows) {
+            r.classList.toggle('selected', r.dataset.fileSha === sha);
+        }
+        // Show only the matching header.
+        for (const h of headers) {
+            h.hidden = h.dataset.fileSha !== sha;
+        }
+
+        // Sub-tab active state — buttons live inside the matching header.
+        const header = headers.find(h => h.dataset.fileSha === sha);
+        if (header) {
+            for (const btn of header.querySelectorAll('.files-subtab')) {
+                btn.classList.toggle('active', btn.dataset.sub === section);
+            }
+        }
+
+        // Show only the matching section block; if none exists, render placeholder.
+        let shown = null;
+        for (const b of sectionBlocks) {
+            const match = b.dataset.fileSha === sha && b.dataset.section === section;
+            b.hidden = !match;
+            if (match) shown = b;
+        }
+
+        // Remove any previous placeholders.
+        for (const n of detail.querySelectorAll('.files-detail-placeholder')) {
+            n.remove();
+        }
+        if (!shown && header) {
+            header.parentNode.insertBefore(placeholder(section), header.nextSibling);
+        }
+    }
+
+    // Row click → select file (default sub-tab: findings).
+    for (const row of rows) {
+        row.addEventListener('click', () => {
+            const sha = row.dataset.fileSha;
+            location.hash = `file=${sha}`;
+            showSection(sha, 'findings');
+        });
+    }
+
+    // Sub-tab click — bubbles up from any header block.
+    detail.addEventListener('click', ev => {
+        const btn = ev.target.closest('.files-subtab');
+        if (!btn) return;
+        const headerBlock = btn.closest('.files-detail-header-block');
+        if (!headerBlock) return;
+        showSection(headerBlock.dataset.fileSha, btn.dataset.sub);
+    });
+
+    // Copy SHA256 to clipboard.
+    detail.addEventListener('click', ev => {
+        const el = ev.target.closest('.files-detail-sha');
+        if (!el) return;
+        const full = el.dataset.sha || '';
+        if (!full || !navigator.clipboard?.writeText) return;
+        navigator.clipboard.writeText(full).then(() => {
+            el.classList.add('copied');
+            setTimeout(() => el.classList.remove('copied'), 1200);
+        }).catch(() => {
+            /* clipboard write rejected — silently ignore */
+        });
+    });
+
+    // Search filter (case-insensitive substring on the display path).
+    const search = document.getElementById('files-search-input');
+    if (search) {
+        search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            for (const r of rows) {
+                if (!q) { r.hidden = false; continue; }
+                r.hidden = !((r.dataset.display || '').toLowerCase().includes(q));
+            }
+        });
+    }
+
+    // Hash fragment: /file/<archive>#file=<childsha>
+    function applyHash() {
+        const m = location.hash.replace(/^#/, '').match(/file=([0-9a-f]{8,64})/i);
+        if (!m) return;
+        const sha = m[1];
+        const row = rows.find(r => r.dataset.fileSha === sha);
+        if (!row) return;
+        const filesTab = document.querySelector('.tab[data-tab="files"]');
+        if (filesTab && !filesTab.classList.contains('active')) filesTab.click();
+        showSection(sha, 'findings');
+        row.scrollIntoView({ block: 'nearest' });
+    }
+    window.addEventListener('hashchange', applyHash);
+    applyHash();
+})();

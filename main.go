@@ -67,11 +67,13 @@ var (
 	hopperDB          *hopper.DB
 )
 
-const defaultHopperDSN = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
-const defaultHopperAPIAddr = "hopper-api:8081"
-const frontpageFeedCacheKey = "feed-frontpage-v1"
-const frontpageFeedRefreshInterval = 90 * time.Second
-const frontpageFeedMaxAge = 3 * time.Minute
+const (
+	defaultHopperDSN             = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
+	defaultHopperAPIAddr         = "hopper-api:8081"
+	frontpageFeedCacheKey        = "feed-frontpage-v1"
+	frontpageFeedRefreshInterval = 90 * time.Second
+	frontpageFeedMaxAge          = 3 * time.Minute
+)
 
 var frontpageFeedRefreshMu sync.Mutex
 
@@ -224,12 +226,12 @@ type FileFindingsDisplay struct {
 	Path           string
 	Basename       string
 	Risk           string
-	Classification string // litmus ML classification: "hostile", "suspicious", "benign"
+	Classification string
 	SHA256         string
 	Formula        string
 	FileType       string
-	Probability    float64 // litmus ML probability [0.0, 1.0]
 	Categories     []CategoryGroup
+	Probability    float64
 }
 
 // FileStringsDisplay represents strings for a single file.
@@ -240,10 +242,10 @@ type FileStringsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Probability    float64
 	Strings        []StringDisplay
-	Sections       []StringSectionGroup // strings grouped by section (when section data available)
-	HasSections    bool                 // true when at least one string has section info
+	Sections       []StringSectionGroup
+	Probability    float64
+	HasSections    bool
 }
 
 type StringDisplay struct {
@@ -266,9 +268,9 @@ type FileSymbolsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Probability    float64
 	Imports        []SymbolDisplay
 	Exports        []SymbolDisplay
+	Probability    float64
 }
 
 type SymbolDisplay struct {
@@ -284,8 +286,8 @@ type FileSectionsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Probability    float64
 	Sections       []SectionDisplay
+	Probability    float64
 }
 
 type SectionDisplay struct {
@@ -316,98 +318,139 @@ type FileMetricsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Probability    float64
 	Groups         []metricGroup
+	Probability    float64
+}
+
+// KVPair is a single row in the KV tab: dotted-path key ("package.name",
+// "archive.member_count[0]") → string-rendered value.
+type KVPair struct {
+	Key   string
+	Value string
+}
+
+// FileKVDisplay holds a single file's flat structural kv map for display.
+type FileKVDisplay struct {
+	Basename       string
+	Risk           string
+	Classification string
+	SHA256         string
+	Formula        string
+	FileType       string
+	Pairs          []KVPair
+	Probability    float64
+}
+
+// FileTreeEntry is a single row in the archive Files tab tree. It carries
+// just enough info to render the left-pane row (risk dot, basename, size,
+// formula, sha) and identify which detail block to swap into the right pane.
+type FileTreeEntry struct {
+	Path           string // full path within the archive (e.g. "archive.tgz!!package/index.js")
+	Display        string // path stripped of the archive prefix, used for tree building
+	Basename       string // last path segment
+	SHA256         string // 64-char lowercase hex
+	SHA256Short    string // first 8 chars, for compact display
+	Classification string // "hostile", "suspicious", "benign", or ""
+	Risk           string // critIntToString of max trait crit ("hostile"/"suspicious"/"notable"/"")
+	Formula        string // chemical formula chip
+	FileType       string // "JS", "PE", "TAR.GZ", ...
+	SizeStr        string // human-readable, e.g. "2.0 KB"
+	Size           int64
+	Probability    float64
+	Depth          int
+	IsContainer    bool // true for the archive container (depth 0)
 }
 
 type resultData struct {
-	RiskLabel      string
-	Size           string
+	SHA256Short    string
+	Filename       string
 	SHA256         string
 	Verdict        string
 	Formula        template.HTML
 	FileType       string
 	MoleculeJSON   template.JS
-	RiskLevel      string
-	Filename       string
-	Nonce          string
-	SHA256Short    string
-	FindingCount   string
 	Duration       string
-	FileFindings   []FileFindingsDisplay
-	FileStrings    []FileStringsDisplay
-	FileSymbols    []FileSymbolsDisplay
-	FileSections   []FileSectionsDisplay
-	FileMetrics    []FileMetricsDisplay
-	LimitedInfo    bool
-	Probability    float64 // top-level litmus ML probability [0.0, 1.0]
-	Layout         string  // molecule layout: "tetrahedral", "helix", "organic" (default: "tetrahedral")
-	BuildCommit    string  // git commit short hash, set at build time
-	SuspiciousT    float64 // litmus suspicious threshold
-	HostileT       float64 // litmus hostile threshold
-	TraitColWidth  string  // CSS width for trait ID column, computed from longest trait
-	IsArchive      bool    // true when result contains multiple analyzed files
-	TotalFiles     int     // total archive member count before truncation
-	ShownFiles     int     // number of files shown after truncation
-	FirstSeenAt    string  // human-readable UTC date when hopper first saw the sample
-	FirstSeenAgo   string  // relative time since first seen
-	AnalyzedAt     string  // human-readable UTC date of analysis
-	AnalyzedAgo    string  // relative time since analysis (e.g. "5 minutes ago")
-	ReportContent  string  // optional reverse-engineering report markdown
-	ReportProvider string
+	FindingCount   string
+	Nonce          string
+	Size           string
+	TraitColWidth  string
+	RiskLevel      string
 	ReportCreated  string
+	ReportProvider string
+	ReportContent  string
+	AnalyzedAgo    string
+	AnalyzedAt     string
+	RiskLabel      string
+	FirstSeenAgo   string
+	FirstSeenAt    string
+	Layout         string
+	BuildCommit    string
+	Files          []FileTreeEntry
+	FileMetrics    []FileMetricsDisplay
+	FileSections   []FileSectionsDisplay
+	FileSymbols    []FileSymbolsDisplay
+	FileStrings    []FileStringsDisplay
+	FileFindings   []FileFindingsDisplay
+	FileKVs        []FileKVDisplay
+	HostileT       float64
+	SuspiciousT    float64
+	TotalFiles     int
+	ShownFiles     int
+	Probability    float64
+	IsArchive      bool
+	LimitedInfo    bool
 }
 
 // storedResult is what we persist in fido/datastore.
 type storedResult struct {
-	Filename       string
-	RawLitmus      string // raw JSON body from the litmus /analyze response
-	Traits         string
-	Strings        string
+	CachedAt       time.Time
+	AnalyzedAt     time.Time
+	CreatedAt      time.Time
+	Metrics        string
 	Symbols        string
 	Sections       string
-	Metrics        string
-	Classification string    // "hostile", "suspicious", or "benign" from litmus
-	Formula        string    // top-level formula from litmus (e.g. "Os₂Np"), fallback when per-file formula is absent
-	FileType       string    // file type from litmus (e.g. "macho", "pe")
-	CachedAt       time.Time // newest known hopper timestamp; used for cache freshness
-	CreatedAt      time.Time // when hopper first saw this sample
-	AnalyzedAt     time.Time // when hopper last analyzed this sample
+	Filename       string
+	Classification string
+	Formula        string
+	FileType       string
+	Strings        string
+	Traits         string
+	RawLitmus      string
 }
 
 type feedRow struct {
-	SHA256         string
-	SHA256Short    string
-	Filename       string
+	AnalyzedAt     time.Time
+	Source         string
+	EcosystemURL   string
 	Classification string
-	Probability    float64
-	SuspiciousT    float64
-	HostileT       float64
+	TimeAgo        string
+	AnalyzedDate   string
+	SHA256Short    string
 	Formula        string
 	FileType       string
-	Source         string
+	SHA256         string
 	Ecosystem      string
-	EcosystemURL   string
-	AnalyzedAt     time.Time
-	AnalyzedDate   string
-	TimeAgo        string
+	Filename       string
+	HostileT       float64
+	SuspiciousT    float64
+	Probability    float64
 }
 
 type feedPageData struct {
-	CSRFToken       string
-	Nonce           string
-	BuildCommit     string // appended to /static/ asset URLs to bust caches on deploy
-	Refresh         bool
-	Rows            []feedRow
-	Ecosystems      []string
-	Domains         []string
-	SelectedEco     string
 	SelectedDomain  string
-	SelectedCrit    string
-	SelectedFormula string
+	Nonce           string
+	BuildCommit     string
 	Title           string
+	SelectedFormula string
+	SelectedCrit    string
+	CSRFToken       string
+	SelectedEco     string
+	Domains         []string
+	Ecosystems      []string
+	Rows            []feedRow
 	TotalCount      int
 	FilteredCount   int
+	Refresh         bool
 	HasHopper       bool
 }
 
@@ -419,17 +462,17 @@ type cachedFeedSnapshot struct {
 }
 
 type cachedFeedSample struct {
+	CreatedAt      time.Time
 	SHA256         string
 	Filename       string
 	Classification string
-	Probability    float64
-	SuspiciousT    float64
-	HostileT       float64
 	Formula        string
 	FileType       string
 	Source         string
 	Ecosystem      string
-	CreatedAt      time.Time
+	Probability    float64
+	SuspiciousT    float64
+	HostileT       float64
 }
 
 // cleaveReport is constructed from JSONL output (multiple lines).
@@ -440,21 +483,22 @@ type cleaveReport struct {
 // cleaveFile represents a file entry in cleave v4 output.
 // Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
-	Path           string            `json:"path"`
-	FileType       string            `json:"type"`
-	SHA256         string            `json:"sha"`
-	Classification string            `json:"-"` // populated from ml.fs after parsing
-	Formula        string            `json:"f,omitempty"`
-	Metrics        json.RawMessage   `json:"ms,omitempty"`
-	Findings       []finding         `json:"ts,omitempty"`
-	Strings        []json.RawMessage `json:"ss,omitempty"` // v4 tuples: [offset, value] or [offset, enc, value]
-	Imports        []string          `json:"is,omitempty"` // v4: bare symbol strings
-	Exports        []symbolInfo      `json:"exports,omitempty"`
-	Sections       []sectionInfo     `json:"sections,omitempty"`
-	Size           int64             `json:"sz"`
-	Probability    float64           `json:"-"` // populated from ml.fs after parsing
-	ID             int               `json:"id"`
-	Depth          int               `json:"dp"`
+	Path           string                     `json:"path"`
+	FileType       string                     `json:"type"`
+	SHA256         string                     `json:"sha"`
+	Classification string                     `json:"-"` // populated from ml.fs after parsing
+	Formula        string                     `json:"f,omitempty"`
+	Metrics        json.RawMessage            `json:"ms,omitempty"`
+	Findings       []finding                  `json:"ts,omitempty"`
+	Strings        []json.RawMessage          `json:"ss,omitempty"` // v4 tuples: [offset, value] or [offset, enc, value]
+	Imports        []string                   `json:"is,omitempty"` // v4: bare symbol strings
+	Exports        []symbolInfo               `json:"exports,omitempty"`
+	Sections       []sectionInfo              `json:"sections,omitempty"`
+	KV             map[string]json.RawMessage `json:"k,omitempty"` // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
+	Size           int64                      `json:"sz"`
+	Probability    float64                    `json:"-"` // populated from ml.fs after parsing
+	ID             int                        `json:"id"`
+	Depth          int                        `json:"dp"`
 }
 
 type stringInfo struct {
@@ -491,8 +535,8 @@ type findingCounts struct {
 type finding struct {
 	ID       string   `json:"i"`
 	Desc     string   `json:"d,omitempty"`
+	Evidence []string `json:"e,omitempty"`
 	Crit     int      `json:"l"`
-	Evidence []string `json:"e,omitempty"` // v4: flat value strings
 	Conf     float64  `json:"c,omitempty"`
 }
 
@@ -640,7 +684,6 @@ func main() {
 		// block colors at the current band progress. Thresholds come from
 		// the litmus response.
 		"bandGradient": func(p, suspT, hostT float64) template.CSS {
-
 			type rgb struct{ r, g, b float64 }
 			mix := func(a, b rgb, t float64) rgb {
 				return rgb{a.r + t*(b.r-a.r), a.g + t*(b.g-a.g), a.b + t*(b.b-a.b)}
@@ -1671,6 +1714,11 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 // storedResult shape expected by the rest of prism. Returns an error whose
 // message contains "not found" when the sample is absent, so HTTP handlers
 // render a 404 instead of a 500.
+//
+// When the sample's stored cleave result has been compacted (children
+// stripped — see hopper.compactCleaveResultForStorage), reassemble children
+// from sibling rows so downstream display and JSON export see a full archive
+// view. The reassembled envelope is what gets cached.
 func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	sample, err := hopperDB.SampleBySHA256(ctx, sha)
 	if err != nil {
@@ -1680,7 +1728,276 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
 	}
 
-	return storedResultFromHopperSample(sample)
+	res, err := storedResultFromHopperSample(sample)
+	if err != nil {
+		return res, err
+	}
+	if hopperWasCompacted(sample.CleaveResult) {
+		children, cerr := hopperDB.SamplesByParent(ctx, sha)
+		if cerr != nil {
+			logger.Debug("samples by parent failed", "sha", sha, "error", cerr)
+		} else if len(children) > 0 {
+			enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename)
+			if eerr != nil {
+				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
+			} else {
+				res.RawLitmus = string(enriched)
+			}
+		}
+	}
+	return res, nil
+}
+
+// hopperWasCompacted reports whether the cleave result was stripped of
+// child entries by hopper's compactCleaveResultForStorage. Callers should
+// query hopper for samples whose parent matches and splice them back in.
+func hopperWasCompacted(cleaveResult []byte) bool {
+	if len(cleaveResult) == 0 {
+		return false
+	}
+	var env struct {
+		Truncated    bool `json:"truncated"`
+		OmittedFiles int  `json:"omitted_files"`
+	}
+	if err := json.Unmarshal(cleaveResult, &env); err != nil {
+		return false
+	}
+	return env.Truncated || env.OmittedFiles > 0
+}
+
+// reassembleEnvelope takes a parent's litmus envelope (containing ml + raw)
+// and a list of child hopper samples, and produces a new envelope where the
+// child entries are spliced back into raw.fs[] and ml.fs[]. The returned
+// envelope drops the truncated/omitted_files markers because they are no
+// longer accurate after reassembly.
+//
+// Each child contributes its own top-level fs entry (depth 0 in the child's
+// own report) which is appended to the parent's fs[] with depth bumped to 1
+// and Path prefixed by parentPath + "!!". Child IDs are renumbered so they
+// stay unique across the merged report; the same renumbering is mirrored
+// into the merged ml.fs entries so per-file ML stays correctly attributed.
+//
+// The function is best-effort: a child whose CleaveResult or LitmusResult
+// fails to parse is logged and skipped so a single bad child does not break
+// the whole archive view.
+func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath string) ([]byte, error) {
+	if len(envelope) == 0 {
+		return envelope, nil
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(envelope, &env); err != nil {
+		return nil, fmt.Errorf("parse envelope: %w", err)
+	}
+
+	parentRaw, parentFS, err := extractFS(env, "raw")
+	if err != nil {
+		return nil, err
+	}
+	parentML, parentMLFS, err := extractFS(env, "ml")
+	if err != nil {
+		return nil, err
+	}
+
+	parentFS, parentMLFS = mergeChildren(parentFS, parentMLFS, children, parentPath)
+
+	// The truncation markers are no longer accurate after reassembly.
+	delete(parentRaw, "truncated")
+	delete(parentRaw, "omitted_files")
+	if b, err := json.Marshal(parentFS); err == nil {
+		parentRaw["fs"] = b
+	}
+	if b, err := json.Marshal(parentRaw); err == nil {
+		env["raw"] = b
+	}
+	if b, err := json.Marshal(parentMLFS); err == nil {
+		parentML["fs"] = b
+	}
+	if b, err := json.Marshal(parentML); err == nil {
+		env["ml"] = b
+	}
+	return json.Marshal(env)
+}
+
+// extractFS pulls env[key] (a JSON object) and the "fs" array within it.
+// Missing values yield empty results so callers can append unconditionally.
+func extractFS(env map[string]json.RawMessage, key string) (map[string]json.RawMessage, []json.RawMessage, error) {
+	inner := map[string]json.RawMessage{}
+	if blob, ok := env[key]; ok && len(blob) > 0 {
+		if err := json.Unmarshal(blob, &inner); err != nil {
+			return nil, nil, fmt.Errorf("parse %s: %w", key, err)
+		}
+	}
+	var entries []json.RawMessage
+	if blob, ok := inner["fs"]; ok && len(blob) > 0 {
+		if err := json.Unmarshal(blob, &entries); err != nil {
+			return nil, nil, fmt.Errorf("parse %s.fs: %w", key, err)
+		}
+	}
+	return inner, entries, nil
+}
+
+// mergeChildren splices each child's top-level fs entry (and its mirrored
+// ml entry) into the parent's lists, renumbering ids so they stay unique.
+// Errors on individual children are logged and skipped.
+func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sample, parentPath string) (mergedFS, mergedMLFS []json.RawMessage) {
+	nextID := 1
+	for _, raw := range parentFS {
+		var f struct {
+			ID int `json:"id"`
+		}
+		if json.Unmarshal(raw, &f) == nil && f.ID >= nextID {
+			nextID = f.ID + 1
+		}
+	}
+	for _, child := range children {
+		if len(child.CleaveResult) == 0 {
+			continue
+		}
+		topRaw, oldID, ok := childTopEntry(child)
+		if !ok {
+			continue
+		}
+		newID := nextID
+		nextID++
+		rewritten, err := rewriteChildEntry(topRaw, parentPath, child.Path, child.Filename, newID)
+		if err != nil {
+			logger.Debug("reassemble: rewrite child entry failed", "sha", child.SHA256, "error", err)
+			continue
+		}
+		parentFS = append(parentFS, rewritten)
+		if updated, ok := renumberedMLEntry(child.LitmusResult, oldID, newID); ok {
+			parentMLFS = append(parentMLFS, updated)
+		}
+	}
+	return parentFS, parentMLFS
+}
+
+// childTopEntry parses the child sample's cleave envelope and returns its
+// representative fs entry — preferring sha-match, then depth-0, then the
+// first entry — along with the entry's original id.
+func childTopEntry(child *hopper.Sample) (entry json.RawMessage, id int, ok bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(child.CleaveResult, &raw); err != nil {
+		logger.Debug("reassemble: parse child cleave failed", "sha", child.SHA256, "error", err)
+		return nil, 0, false
+	}
+	var entries []json.RawMessage
+	if blob, ok := raw["fs"]; ok && len(blob) > 0 {
+		if err := json.Unmarshal(blob, &entries); err != nil {
+			logger.Debug("reassemble: parse child fs failed", "sha", child.SHA256, "error", err)
+			return nil, 0, false
+		}
+	}
+	if len(entries) == 0 {
+		return nil, 0, false
+	}
+
+	type stub struct {
+		SHA   string `json:"sha"`
+		ID    int    `json:"id"`
+		Depth int    `json:"dp"`
+	}
+	var fallback json.RawMessage
+	var fallbackID int
+	for _, e := range entries {
+		var s stub
+		if json.Unmarshal(e, &s) != nil {
+			continue
+		}
+		if s.SHA == child.SHA256 {
+			return e, s.ID, true
+		}
+		if s.Depth == 0 && fallback == nil {
+			fallback = e
+			fallbackID = s.ID
+		}
+	}
+	if fallback != nil {
+		return fallback, fallbackID, true
+	}
+	// No depth-0 found; fall back to the first entry. A parse failure here
+	// just means the renumber loop later assigns a fresh id — nothing to
+	// surface to the caller.
+	var s stub
+	_ = json.Unmarshal(entries[0], &s) //nolint:errcheck // best-effort; failure is fine
+	return entries[0], s.ID, true
+}
+
+// renumberedMLEntry locates the child's own ml.fs[] row for oldID and
+// rewrites its id to newID. The boolean reports whether the row was
+// found and successfully re-marshalled.
+func renumberedMLEntry(litmus []byte, oldID, newID int) (json.RawMessage, bool) {
+	if len(litmus) == 0 {
+		return nil, false
+	}
+	var ml struct {
+		Files []json.RawMessage `json:"fs"`
+	}
+	if json.Unmarshal(litmus, &ml) != nil || len(ml.Files) == 0 {
+		return nil, false
+	}
+	entry := ml.Files[0]
+	for _, raw := range ml.Files {
+		var stub struct {
+			ID int `json:"id"`
+		}
+		if json.Unmarshal(raw, &stub) == nil && stub.ID == oldID {
+			entry = raw
+			break
+		}
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &obj); err != nil {
+		logger.Debug("reassemble: rewrite child ml entry failed", "error", err)
+		return nil, false
+	}
+	if b, err := json.Marshal(newID); err == nil {
+		obj["id"] = b
+	}
+	updated, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return updated, true
+}
+
+// rewriteChildEntry mutates a single fs entry to fit the parent archive's
+// view: prefixes the path with "<parentPath>!!", marks depth=1, and assigns
+// the supplied id. We prefer the entry's own path (cleave's view), falling
+// back to the child's stored path/filename so the tree shows something
+// readable instead of a long upload temp path.
+func rewriteChildEntry(entry json.RawMessage, parentPath, childPath, childFilename string, newID int) (json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &obj); err != nil {
+		return nil, err
+	}
+	displayPath := ""
+	if rawPath, ok := obj["path"]; ok {
+		_ = json.Unmarshal(rawPath, &displayPath) //nolint:errcheck // best-effort; falls through to childPath/Filename below
+	}
+	if displayPath == "" {
+		displayPath = childPath
+	}
+	if displayPath == "" {
+		displayPath = childFilename
+	}
+	if displayPath == "" {
+		displayPath = "(unnamed)"
+	}
+	// Strip any parentPath!! prefix the child may already carry, then add ours.
+	if i := strings.LastIndex(displayPath, "!!"); i >= 0 {
+		displayPath = displayPath[i+2:]
+	}
+	if b, err := json.Marshal(parentPath + "!!" + displayPath); err == nil {
+		obj["path"] = b
+	}
+	if b, err := json.Marshal(1); err == nil {
+		obj["dp"] = b
+	}
+	if b, err := json.Marshal(newID); err == nil {
+		obj["id"] = b
+	}
+	return json.Marshal(obj)
 }
 
 // refreshFromHopper reloads a sample from hopper and writes it into the cache.
@@ -1721,7 +2038,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hopperFileURL(sha), nil)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hopperFileURL(sha), http.NoBody)
 	if err != nil {
 		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
 		return
@@ -2305,6 +2622,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FileSymbols = buildStructuredSymbols(report.Files)
 	data.FileSections = buildStructuredSections(report.Files)
 	data.FileMetrics = buildStructuredMetrics(report.Files)
+	data.FileKVs = buildStructuredKV(report.Files)
+	data.Files = buildFileTree(report.Files, filename)
 
 	// Compute trait column width from longest trait ID across all files.
 	maxTraitLen := 0
@@ -2319,7 +2638,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 	// ~0.65em per character in monospace at 12px, with 2em padding
 	data.TraitColWidth = fmt.Sprintf("%.1fem", float64(maxTraitLen)*0.65+2)
-	data.IsArchive = len(data.FileFindings) > 1
+	// IsArchive reflects the underlying file set, not the findings count: an
+	// archive whose children are all clean still has multiple files and
+	// should render the file-tree view.
+	data.IsArchive = len(report.Files) > 1
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
@@ -2431,7 +2753,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 // litmus ML classification with a fallback to the cleave risk level.
 // Higher values = more severe.
 //
-//nolint:gocognit // complex findings aggregation logic
+
 func fileSeverityRank(f *cleaveFile) int {
 	switch f.Classification {
 	case "hostile":
@@ -2457,7 +2779,7 @@ func maxCritInFile(f *cleaveFile) int {
 }
 
 // parseStringTupleValue extracts the value from a v4 string tuple.
-// Format: [offset, value] or [offset, encoding, value]
+// Format: [offset, value] or [offset, encoding, value].
 func parseStringTupleValue(raw json.RawMessage) []string {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
@@ -2499,8 +2821,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			evidence map[string]bool
 			dirPath  string
 			topLevel string
-			crit     int
 			desc     string
+			crit     int
 			conf     float64
 		}
 		aggregated := make(map[string]*aggregatedFinding)
@@ -2963,6 +3285,69 @@ func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 	return result
 }
 
+// buildStructuredKV converts each file's flat structural kv map into
+// sorted display rows. Values are rendered as plain strings — strings keep
+// their text, numbers/bools format directly, and arrays/objects fall back
+// to their compact JSON form so callers can still see the shape.
+func buildStructuredKV(files []cleaveFile) []FileKVDisplay {
+	var result []FileKVDisplay
+	for i := range files {
+		file := &files[i]
+		if len(file.KV) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(file.KV))
+		for k := range file.KV {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		pairs := make([]KVPair, 0, len(keys))
+		for _, k := range keys {
+			pairs = append(pairs, KVPair{Key: k, Value: kvValueString(file.KV[k])})
+		}
+		result = append(result, FileKVDisplay{
+			Basename:       extractBasename(file.Path),
+			Risk:           critIntToString(maxCritInFile(file)),
+			Classification: file.Classification,
+			Probability:    file.Probability,
+			SHA256:         file.SHA256,
+			Formula:        file.Formula,
+			FileType:       strings.ToUpper(file.FileType),
+			Pairs:          pairs,
+		})
+	}
+	return result
+}
+
+// kvValueString renders a JSON-encoded leaf as a human-friendly string.
+// Strings unwrap; integers and floats stringify; booleans become
+// "true"/"false"; null becomes the empty string. Arrays and objects fall
+// through to the compact JSON form so the shape is still visible.
+func kvValueString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		if x == float64(int64(x)) {
+			return strconv.FormatInt(int64(x), 10)
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	default:
+		return strings.TrimSpace(string(raw))
+	}
+}
+
 // timeAgo returns a human-readable relative time string (e.g. "5 minutes ago").
 func timeAgo(d time.Duration) string {
 	switch {
@@ -3001,6 +3386,47 @@ func extractBasename(path string) string {
 	return path
 }
 
+// buildFileTree converts cleave files into FileTreeEntry rows for the
+// archive Files tab. Order matches the input (already sorted by severity in
+// prepareResultData), so the left-pane tree shows risky files first within
+// each directory's group.
+func buildFileTree(files []cleaveFile, archiveFilename string) []FileTreeEntry {
+	out := make([]FileTreeEntry, 0, len(files))
+	for i := range files {
+		f := &files[i]
+		display := f.Path
+		if idx := strings.Index(display, "!!"); idx >= 0 {
+			display = display[idx+2:]
+		}
+		isContainer := f.Depth == 0
+		if isContainer {
+			display = archiveFilename
+		}
+		risk := critIntToString(maxCritInFile(f))
+		short := f.SHA256
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		out = append(out, FileTreeEntry{
+			Path:           f.Path,
+			Display:        display,
+			Basename:       extractBasename(f.Path),
+			SHA256:         f.SHA256,
+			SHA256Short:    short,
+			Classification: f.Classification,
+			Risk:           risk,
+			Formula:        f.Formula,
+			FileType:       strings.ToUpper(f.FileType),
+			Size:           f.Size,
+			SizeStr:        formatBytes(f.Size),
+			Probability:    f.Probability,
+			Depth:          f.Depth,
+			IsContainer:    isContainer,
+		})
+	}
+	return out
+}
+
 // formatBytes formats bytes into human-readable format.
 func formatBytes(b int64) string {
 	const unit = 1024
@@ -3028,17 +3454,17 @@ type litmusFullResponse struct {
 
 // litmusMlResponse matches the ml section of the litmus response.
 type litmusMlResponse struct {
-	V              string     `json:"v"`
-	Classification int        `json:"class"` // 0=benign, 1=suspicious, 2=hostile
-	Probability    float64    `json:"prob"`
-	Thresholds     [2]float64 `json:"thresholds"` // [suspicious, hostile]
-	Version        string     `json:"version"`
-	AnalyzedAt     string     `json:"analyzed_at"`
-	Files          []struct {
+	V          string `json:"v"`
+	Version    string `json:"version"`
+	AnalyzedAt string `json:"analyzed_at"`
+	Files      []struct {
 		ID    int     `json:"id"`
 		Class int     `json:"class"`
 		Prob  float64 `json:"prob"`
 	} `json:"fs"`
+	Thresholds     [2]float64 `json:"thresholds"`
+	Classification int        `json:"class"`
+	Probability    float64    `json:"prob"`
 }
 
 // classificationNames maps integer classification to display string.
@@ -3081,12 +3507,12 @@ func primaryFile(raw json.RawMessage) (formula, fileType, sha256 string) {
 
 // litmusResult holds the output of a runLitmus call.
 type litmusResult struct {
-	RawLitmus      string // full litmus JSON response (served as-is from .json endpoint)
-	CleaveJSON     []byte // raw cleave report (litmus response .cleave field)
-	LitmusEnvelope []byte // litmus classification envelope (without cleave)
+	RawLitmus      string
 	Classification string
 	Formula        string
 	FileType       string
+	CleaveJSON     []byte
+	LitmusEnvelope []byte
 }
 
 // runLitmus sends a file to the litmus server for analysis.
@@ -3097,7 +3523,7 @@ func runLitmus(
 ) (litmusResult, error) {
 	startTime := time.Now()
 
-	fileInfo, err := os.Stat(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
+	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return litmusResult{}, fmt.Errorf("failed to stat file: %w", err)
 	}
@@ -3108,7 +3534,7 @@ func runLitmus(
 		"file_size", fileInfo.Size(),
 	)
 
-	file, err := os.Open(filePath) //nolint:gosec // filePath is an internal temp file path, not user input
+	file, err := os.Open(filePath)
 	if err != nil {
 		return litmusResult{}, fmt.Errorf("failed to open file: %w", err)
 	}

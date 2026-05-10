@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -22,7 +21,7 @@ import (
 func init() {
 	// prepareResultData uses the package-level logger; main() normally sets it.
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 	}
 }
 
@@ -49,7 +48,7 @@ func TestSecurityHeadersScriptNonce(t *testing.T) {
 	}))
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 
 	csp := rr.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "script-src 'self' 'nonce-") {
@@ -902,12 +901,18 @@ func TestPrepareResultData_SingleFileArchiveCollapses(t *testing.T) {
 func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
 	raw := map[string]any{
 		"fs": []map[string]any{
-			{"id": 1, "dp": 0, "path": "/tmp/bundle.zip", "type": "zip", "sha": "aaaa", "sz": 1024,
-				"ts": []map[string]any{{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3}}},
-			{"id": 2, "dp": 1, "path": "/tmp/bundle.zip!!a.exe", "type": "pe", "sha": "bbbb", "sz": 2048,
-				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}}},
-			{"id": 3, "dp": 1, "path": "/tmp/bundle.zip!!b.exe", "type": "pe", "sha": "cccc", "sz": 2048,
-				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}}},
+			{
+				"id": 1, "dp": 0, "path": "/tmp/bundle.zip", "type": "zip", "sha": "aaaa", "sz": 1024,
+				"ts": []map[string]any{{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3}},
+			},
+			{
+				"id": 2, "dp": 1, "path": "/tmp/bundle.zip!!a.exe", "type": "pe", "sha": "bbbb", "sz": 2048,
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}},
+			},
+			{
+				"id": 3, "dp": 1, "path": "/tmp/bundle.zip!!b.exe", "type": "pe", "sha": "cccc", "sz": 2048,
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}},
+			},
 		},
 	}
 	rawBytes, _ := json.Marshal(raw)

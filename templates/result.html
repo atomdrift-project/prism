@@ -531,6 +531,176 @@
             text-align: center;
         }
 
+        /* Files tab — two-pane archive explorer */
+        .files-explorer {
+            display: grid;
+            grid-template-columns: minmax(220px, 320px) 1fr;
+            min-height: 480px;
+        }
+        .files-tree-pane {
+            border-right: 1px solid var(--border);
+            background: var(--mist);
+            overflow-y: auto;
+            max-height: 720px;
+        }
+        .files-search {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            background: var(--white);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .files-search input {
+            width: 100%;
+            padding: 6px 10px;
+            font: inherit;
+            font-size: 13px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--white);
+            color: var(--carbon);
+            outline: none;
+        }
+        .files-search input:focus {
+            border-color: var(--toxic-muted);
+            box-shadow: 0 0 0 2px var(--toxic-dim);
+        }
+        .files-tree {
+            list-style: none;
+            margin: 0;
+            padding: 4px 0;
+        }
+        .files-tree-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            color: var(--carbon);
+            border-bottom: 1px solid transparent;
+            transition: background 0.1s;
+        }
+        .files-tree-row:hover { background: rgba(0, 0, 0, 0.04); }
+        .files-tree-row.selected { background: rgba(208, 255, 0, 0.18); }
+        .files-tree-row[hidden] { display: none; }
+        .files-tree-container {
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+        }
+        .files-tree-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .files-tree-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .files-tree-type {
+            flex-shrink: 0;
+        }
+        .files-tree-size {
+            flex-shrink: 0;
+            font-size: 11px;
+            color: var(--slate);
+            font-variant-numeric: tabular-nums;
+        }
+        .files-detail-pane {
+            padding: 16px 20px;
+            overflow-y: auto;
+            max-height: 720px;
+        }
+        .files-detail-empty {
+            padding: 64px 24px;
+            text-align: center;
+            color: var(--slate);
+        }
+        .files-detail-empty-title {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--carbon);
+            margin-bottom: 8px;
+        }
+        .files-detail-empty-sub {
+            font-size: 14px;
+            max-width: 420px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+        .files-detail-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .files-detail-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--carbon);
+        }
+        .files-detail-formula {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--iron);
+            background: var(--mist);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .files-detail-sha {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--slate);
+            cursor: pointer;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+        .files-detail-sha:hover { color: var(--carbon); }
+        .files-detail-sha.copied { color: var(--toxic-muted); border-color: var(--toxic-muted); }
+        .files-detail-open {
+            font-size: 14px;
+            color: var(--slate);
+            padding: 2px 6px;
+        }
+        .files-detail-open:hover { color: var(--carbon); }
+        .files-detail-subtabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 12px;
+        }
+        .files-subtab {
+            padding: 8px 14px;
+            font: inherit;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--slate);
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+        }
+        .files-subtab:hover { color: var(--carbon); }
+        .files-subtab.active {
+            color: var(--carbon);
+            font-weight: 600;
+            border-bottom-color: var(--toxic-muted);
+        }
+        .files-detail-block[hidden] { display: none; }
+        .files-detail-body[hidden] { display: none; }
+
         .category-section {
             margin-bottom: 12px;
         }
@@ -796,6 +966,32 @@
             font-weight: 500;
             color: var(--carbon);
         }
+        /* KV tab — flat structural key→value rows */
+        .kv-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .kv-table td {
+            padding: 6px 14px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+        }
+        .kv-table tr:last-child td { border-bottom: none; }
+        .kv-table tr:hover { background: rgba(0, 0, 0, 0.02); }
+        .kv-key {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--iron);
+            white-space: nowrap;
+            width: 1%;
+        }
+        .kv-value {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            color: var(--carbon);
+            word-break: break-word;
+        }
         .report-meta {
             display: flex;
             gap: 12px;
@@ -927,10 +1123,15 @@
         <section class="tabs-section">
             <div class="tabs">
                 <button class="tab active" data-tab="traits">Traits</button>
+                {{if .IsArchive}}
+                <button class="tab" data-tab="files">Files</button>
+                {{else}}
                 <button class="tab" data-tab="strings">Strings</button>
                 <button class="tab" data-tab="symbols">Symbols</button>
                 {{if .FileSections}}<button class="tab" data-tab="sections">Sections</button>{{end}}
                 <button class="tab" data-tab="metrics">Metrics</button>
+                {{end}}
+                <button class="tab" data-tab="kv">KV</button>
                 {{if .ReportContent}}<button class="tab" data-tab="report">Report</button>{{end}}
             </div>
 
@@ -975,6 +1176,7 @@
                 {{end}}
             </div>
 
+            {{if not .IsArchive}}
             <div class="tab-content" id="tab-strings">
                 {{if .FileStrings}}
                     {{range .FileStrings}}
@@ -1132,6 +1334,196 @@
                     {{end}}
                 {{else}}
                     <div class="no-findings">No metrics available</div>
+                {{end}}
+            </div>
+            {{end}}{{/* end if not .IsArchive */}}
+
+            {{if .IsArchive}}
+            <div class="tab-content" id="tab-files">
+                <div class="files-explorer">
+                    <div class="files-tree-pane">
+                        <div class="files-search">
+                            <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" />
+                        </div>
+                        <ul class="files-tree" id="files-tree" role="tree">
+                            {{range .Files}}
+                            <li class="files-tree-row{{if .IsContainer}} files-tree-container{{end}}" role="treeitem"
+                                data-file-sha="{{.SHA256}}"
+                                data-display="{{.Display}}"
+                                data-classification="{{.Classification}}"
+                                data-risk="{{.Risk}}">
+                                <span class="files-tree-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                                <span class="files-tree-name" title="{{.Display}}">{{if .IsContainer}}{{.Display}}{{else}}{{.Basename}}{{end}}</span>
+                                {{if .FileType}}<span class="files-tree-type filetype-tag">{{.FileType}}</span>{{end}}
+                                <span class="files-tree-size">{{.SizeStr}}</span>
+                            </li>
+                            {{end}}
+                        </ul>
+                    </div>
+                    <div class="files-detail-pane" id="files-detail">
+                        <div class="files-detail-empty" data-default="1">
+                            <div class="files-detail-empty-title">{{.Filename}}</div>
+                            <div class="files-detail-empty-sub">Archive of {{.TotalFiles}} file{{if ne .TotalFiles 1}}s{{end}}. Select a file to inspect its strings, symbols, metrics, and key-values.</div>
+                        </div>
+                        {{range .Files}}{{if not .IsContainer}}
+                        <div class="files-detail-header-block" data-file-sha="{{.SHA256}}" hidden>
+                            <div class="files-detail-header">
+                                <span class="files-detail-name">{{.Basename}}</span>
+                                {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                                {{if .Classification}}<span class="file-eval-badge">{{.Classification}}</span>{{end}}
+                                {{if .Formula}}<span class="files-detail-formula" title="formula">{{.Formula}}</span>{{end}}
+                                <span class="files-detail-sha" title="copy SHA256" data-sha="{{.SHA256}}">{{.SHA256Short}}</span>
+                                <a class="files-detail-open" href="/file/{{.SHA256}}" title="open in own page">↗</a>
+                                <span class="files-detail-size">{{.SizeStr}}</span>
+                            </div>
+                            <div class="files-detail-subtabs">
+                                <button class="files-subtab active" data-sub="findings">Traits</button>
+                                <button class="files-subtab" data-sub="strings">Strings</button>
+                                <button class="files-subtab" data-sub="symbols">Symbols</button>
+                                <button class="files-subtab" data-sub="metrics">Metrics</button>
+                                <button class="files-subtab" data-sub="kv">KV</button>
+                            </div>
+                        </div>
+                        {{end}}{{end}}
+                        {{range .FileFindings}}
+                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="findings" hidden>
+                            {{if .Categories}}
+                            {{range .Categories}}
+                            <div class="category-section">
+                                <div class="category-title">{{.Name}}</div>
+                                <table class="findings-table">
+                                    <tbody>
+                                        {{range .Findings}}
+                                        <tr>
+                                            <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
+                                            <td class="col-trait trait-id">{{.ID}}</td>
+                                            <td><div class="trait-desc">{{.Desc}}</div></td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {{end}}
+                            {{else}}
+                            <div class="no-findings">No notable behaviors detected.</div>
+                            {{end}}
+                        </div>
+                        {{end}}
+                        {{range .FileStrings}}
+                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="strings" hidden>
+                            {{if .HasSections}}
+                                {{range .Sections}}
+                                <div class="category-section">
+                                    <div class="category-title">{{.Section}}</div>
+                                    <table class="strings-table">
+                                        <tbody>
+                                            {{range .Strings}}
+                                            <tr>
+                                                {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
+                                                <td>{{.Value}}</td>
+                                            </tr>
+                                            {{end}}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {{end}}
+                            {{else}}
+                                <table class="strings-table">
+                                    <tbody>
+                                        {{range .Strings}}
+                                        <tr>
+                                            {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
+                                            <td>{{.Value}}</td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            {{end}}
+                        </div>
+                        {{end}}
+                        {{range .FileSymbols}}
+                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="symbols" hidden>
+                            {{if .Imports}}
+                            <div class="category-section">
+                                <div class="category-title">Imports</div>
+                                <div class="symbols-list">
+                                    {{range .Imports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
+                                </div>
+                            </div>
+                            {{end}}
+                            {{if .Exports}}
+                            <div class="category-section">
+                                <div class="category-title">Exports</div>
+                                <div class="symbols-list">
+                                    {{range .Exports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
+                                </div>
+                            </div>
+                            {{end}}
+                            {{if and (not .Imports) (not .Exports)}}<div class="no-findings">No symbols found</div>{{end}}
+                        </div>
+                        {{end}}
+                        {{range .FileMetrics}}
+                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="metrics" hidden>
+                            {{if .Groups}}
+                            {{range .Groups}}
+                            <div class="category-section">
+                                <div class="category-title">{{.Name}}</div>
+                                <table class="metrics-table">
+                                    <tbody>
+                                        {{range .Fields}}
+                                        <tr>
+                                            <td class="metric-label">{{.Label}}</td>
+                                            <td class="metric-value">{{.Value}}</td>
+                                        </tr>
+                                        {{end}}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {{end}}
+                            {{else}}
+                            <div class="no-findings">No metrics available</div>
+                            {{end}}
+                        </div>
+                        {{end}}
+                        {{range .FileKVs}}
+                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="kv" hidden>
+                            {{if .Pairs}}
+                            <table class="kv-table">
+                                <tbody>
+                                    {{range .Pairs}}
+                                    <tr>
+                                        <td class="kv-key">{{.Key}}</td>
+                                        <td class="kv-value">{{.Value}}</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                            {{else}}
+                            <div class="no-findings">No key/value data available.</div>
+                            {{end}}
+                        </div>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+            {{end}}{{/* end if .IsArchive */}}
+
+            <div class="tab-content" id="tab-kv">
+                {{if and (not .IsArchive) .FileKVs}}
+                    {{range .FileKVs}}
+                    <table class="kv-table">
+                        <tbody>
+                            {{range .Pairs}}
+                            <tr>
+                                <td class="kv-key">{{.Key}}</td>
+                                <td class="kv-value">{{.Value}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                    {{end}}
+                {{else}}
+                    <div class="no-findings">{{if .IsArchive}}Open the Files tab and select a file to view its key/value data.{{else}}No key/value data available for this file.{{end}}</div>
                 {{end}}
             </div>
             {{if .ReportContent}}
