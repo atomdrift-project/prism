@@ -1030,24 +1030,16 @@
                 <button class="tab" data-tab="symbols">Symbols</button>
                 {{if .FileSections}}<button class="tab" data-tab="sections">Sections</button>{{end}}
                 <button class="tab" data-tab="metrics">Metrics</button>
-                {{end}}
                 <button class="tab" data-tab="kv">KV</button>
+                {{end}}
                 {{if .ReportContent}}<button class="tab" data-tab="report">Report</button>{{end}}
             </div>
 
             <div class="tab-content active" id="tab-traits">
-                {{if .FileFindings}}
+                {{if .IsArchive}}
+                    <div class="no-findings">Open the Files tab to see traits for each file in this archive.</div>
+                {{else if .FileFindings}}
                     {{range .FileFindings}}
-                    {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
-                        <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                            {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                        </div>
-                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                    </div>
-                    {{end}}
                     {{range .Categories}}
                     <div class="category-section">
                         <div class="category-title">{{.Name}}</div>
@@ -1408,8 +1400,9 @@
             </div>
             {{end}}{{/* end if .IsArchive */}}
 
+            {{if not .IsArchive}}
             <div class="tab-content" id="tab-kv">
-                {{if and (not .IsArchive) .FileKVs}}
+                {{if .FileKVs}}
                     {{range .FileKVs}}
                     <table class="kv-table">
                         <tbody>
@@ -1423,9 +1416,10 @@
                     </table>
                     {{end}}
                 {{else}}
-                    <div class="no-findings">{{if .IsArchive}}Open the Files tab and select a file to view its key/value data.{{else}}No key/value data available for this file.{{end}}</div>
+                    <div class="no-findings">No key/value data available for this file.</div>
                 {{end}}
             </div>
+            {{end}}
             {{if .ReportContent}}
             <div class="tab-content" id="tab-report">
                 {{if or .ReportProvider .ReportCreated}}
