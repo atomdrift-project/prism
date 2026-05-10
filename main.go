@@ -684,6 +684,7 @@ func main() {
 	// can switch branding and banners without per-handler plumbing.
 	funcs := template.FuncMap{
 		"isPublic":         func() bool { return publicMode },
+		"buildCommit":      func() string { return buildCommit },
 		"buildCommitShort": func() string { return shortBuildCommit() },
 		"mul":      func(a, b float64) float64 { return a * b },
 		"formulaQuery": func(formula string) string {

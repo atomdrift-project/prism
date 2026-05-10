@@ -14,6 +14,7 @@ import (
 func TestResultTemplateParses(t *testing.T) {
 	funcs := template.FuncMap{
 		"isPublic":         func() bool { return false },
+		"buildCommit":      func() string { return "abcdef0123456789" },
 		"buildCommitShort": func() string { return "abcde" },
 		"mul":              func(a, b float64) float64 { return a * b },
 		"formulaQuery":     func(s string) string { return s },
