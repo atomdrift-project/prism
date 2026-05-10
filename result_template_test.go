@@ -13,9 +13,10 @@ import (
 // would otherwise crash the server at startup.
 func TestResultTemplateParses(t *testing.T) {
 	funcs := template.FuncMap{
-		"isPublic":     func() bool { return false },
-		"mul":          func(a, b float64) float64 { return a * b },
-		"formulaQuery": func(s string) string { return s },
+		"isPublic":         func() bool { return false },
+		"buildCommitShort": func() string { return "abcde" },
+		"mul":              func(a, b float64) float64 { return a * b },
+		"formulaQuery":     func(s string) string { return s },
 		"bandGradient": func(_, _, _ float64) template.CSS {
 			return template.CSS("linear-gradient(90deg, #fff, #000)")
 		},

@@ -50,6 +50,16 @@ var staticFS embed.FS
 // buildCommit is set via -ldflags at build time (see Makefile).
 var buildCommit = "dev"
 
+// shortBuildCommit returns the first 5 characters of buildCommit, or the
+// full string if it is shorter (e.g. the "dev" placeholder). Used in the
+// page footer so visitors can pin issues to a specific deploy.
+func shortBuildCommit() string {
+	if len(buildCommit) > 5 {
+		return buildCommit[:5]
+	}
+	return buildCommit
+}
+
 var (
 	uploadTemplate    *template.Template
 	resultTemplate    *template.Template
@@ -673,7 +683,8 @@ func main() {
 	// Parse templates. isPublic is available in all templates so base.html
 	// can switch branding and banners without per-handler plumbing.
 	funcs := template.FuncMap{
-		"isPublic": func() bool { return publicMode },
+		"isPublic":         func() bool { return publicMode },
+		"buildCommitShort": func() string { return shortBuildCommit() },
 		"mul":      func(a, b float64) float64 { return a * b },
 		"formulaQuery": func(formula string) string {
 			return desubscriptFormula(formula)
@@ -1702,12 +1713,43 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 	if err != nil {
 		return false, storedResult{}, err
 	}
+	// Self-heal stale cache entries from before the enrichment deploy: if a
+	// cache hit still has truncated/omitted_files markers in its raw envelope,
+	// it predates fetchFromHopper's reassembly. Re-fetch synchronously so the
+	// caller gets the enriched view this request — without this, users would
+	// see the un-enriched page until the TTL-based refresh below kicked in.
+	if cacheHit && hopperDB != nil && envelopeNeedsEnrichment(res.RawLitmus) {
+		reqLogger.Debug("cached envelope still compacted, re-enriching")
+		if fresh, ferr := fetchFromHopper(ctx, sha); ferr == nil {
+			res = fresh
+			if err := cache.SetAsync(ctx, sha, fresh); err != nil {
+				reqLogger.Debug("post-enrichment cache update failed", "error", err)
+			}
+		} else {
+			reqLogger.Debug("re-enrichment fetch failed; serving cached value", "error", ferr)
+		}
+	}
 	if cacheHit && hopperDB != nil && time.Since(res.CachedAt) > hopperCacheTTL {
 		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
 			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
 		}
 	}
 	return cacheHit, res, nil
+}
+
+// envelopeNeedsEnrichment reports whether a cached storedResult's raw
+// litmus envelope still carries the truncated/omitted_files markers that
+// hopper's compactor writes. Used to detect cache entries that predate
+// the enrichment deploy and need to be reassembled on read.
+func envelopeNeedsEnrichment(rawLitmus string) bool {
+	if rawLitmus == "" {
+		return false
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawLitmus), &env); err != nil {
+		return false
+	}
+	return hopperWasCompacted(env["raw"])
 }
 
 // fetchFromHopper loads a sample from hopper and reshapes it into the
