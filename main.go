@@ -396,6 +396,7 @@ type feedRow struct {
 type feedPageData struct {
 	CSRFToken       string
 	Nonce           string
+	BuildCommit     string // appended to /static/ asset URLs to bust caches on deploy
 	Refresh         bool
 	Rows            []feedRow
 	Ecosystems      []string
@@ -1453,6 +1454,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	data := feedPageData{
 		CSRFToken:       csrfToken(),
 		Nonce:           getNonce(r),
+		BuildCommit:     buildCommit,
 		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
 		SelectedDomain:  strings.TrimSpace(r.URL.Query().Get("domain")),

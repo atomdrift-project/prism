@@ -474,6 +474,6 @@
 
         {{template "footer" .}}
     </main>
-    <script nonce="{{.Nonce}}" src="/static/upload.js"></script>
+    <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
 </body>
 </html>
