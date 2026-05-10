@@ -867,15 +867,29 @@ document.querySelectorAll('.archive-toc-item').forEach(item => {
     // Hash fragment: /file/<archive>#file=<childsha>
     function applyHash() {
         const m = location.hash.replace(/^#/, '').match(/file=([0-9a-f]{8,64})/i);
-        if (!m) return;
+        if (!m) return false;
         const sha = m[1];
         const row = rows.find(r => r.dataset.fileSha === sha);
-        if (!row) return;
+        if (!row) return false;
         const filesTab = document.querySelector('.tab[data-tab="files"]');
         if (filesTab && !filesTab.classList.contains('active')) filesTab.click();
         showSection(sha, 'findings');
         row.scrollIntoView({ block: 'nearest' });
+        return true;
     }
     window.addEventListener('hashchange', applyHash);
-    applyHash();
+
+    // On load, prefer the URL fragment; otherwise auto-select the most
+    // suspicious file so the Strings/Symbols/Metrics/KV sub-tabs land on
+    // useful content. Rows are pre-sorted by prepareResultData with the
+    // container first (when present) and children by severity, so the
+    // first non-container row is the highest-risk inner file. For
+    // single-file archives the container has been collapsed away — the
+    // only row left is that lone payload, and we select it directly.
+    if (!applyHash()) {
+        const target = rows.find(r => !r.classList.contains('files-tree-container')) || rows[0];
+        if (target) {
+            showSection(target.dataset.fileSha, 'findings');
+        }
+    }
 })();

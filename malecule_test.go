@@ -807,10 +807,11 @@ func absPath(path string) string {
 	return path
 }
 
-// TestPrepareResultData_SingleFileArchiveCollapses verifies that when a zipfile
-// wraps exactly one inner file, the archive container is dropped so traits,
-// strings, symbols, sections, and metrics aren't duplicated.
-func TestPrepareResultData_SingleFileArchiveCollapses(t *testing.T) {
+// TestPrepareResultData_SingleFileArchive verifies that when a zipfile wraps
+// exactly one inner file the container is collapsed (so per-file data
+// isn't duplicated), but the archive view still renders so the user lands
+// in the Files tab with the lone inner file auto-selected by the JS.
+func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 	raw := map[string]any{
 		"fs": []map[string]any{
 			{
@@ -869,9 +870,16 @@ func TestPrepareResultData_SingleFileArchiveCollapses(t *testing.T) {
 
 	data := prepareResultData("wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
 
-	if data.IsArchive {
-		t.Error("IsArchive should be false for single-inner-file zip (container collapsed)")
+	if !data.IsArchive {
+		t.Error("IsArchive should be true so the Files tab still renders for the container")
 	}
+	if len(data.Files) != 1 {
+		t.Errorf("Files tree got %d entries, want 1 (container collapsed away)", len(data.Files))
+	}
+	if len(data.Files) == 1 && data.Files[0].Basename != "payload.exe" {
+		t.Errorf("Files[0].Basename = %q, want payload.exe", data.Files[0].Basename)
+	}
+	// Per-file display structures should not double up on the container.
 	checks := []struct {
 		name string
 		n    int
@@ -884,15 +892,11 @@ func TestPrepareResultData_SingleFileArchiveCollapses(t *testing.T) {
 	}
 	for _, c := range checks {
 		if c.n > 1 {
-			t.Errorf("%s: got %d entries, want <=1 (inner file only, no container duplication)", c.name, c.n)
+			t.Errorf("%s: got %d entries, want <=1 (container collapsed)", c.name, c.n)
 		}
 	}
-	// The single remaining entry must be the inner file, not the zip container.
 	if len(data.FileFindings) == 1 && data.FileFindings[0].Basename != "payload.exe" {
 		t.Errorf("FileFindings kept %q; expected inner basename payload.exe", data.FileFindings[0].Basename)
-	}
-	if len(data.FileStrings) == 1 && data.FileStrings[0].Basename != "payload.exe" {
-		t.Errorf("FileStrings kept %q; expected inner basename payload.exe", data.FileStrings[0].Basename)
 	}
 }
 

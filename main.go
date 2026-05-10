@@ -2495,9 +2495,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		return data
 	}
 
-	// Collapse single-file archives: if the archive container wraps exactly one
-	// inner file, drop the container so results are shown only once. Mirrors
-	// BuildGalaxy's handling of the same case.
+	// Collapse single-file archives: if the archive container wraps exactly
+	// one inner file, drop the container so per-file data isn't duplicated.
+	// The Files tab still renders (hadInnerFiles is sticky), so the user
+	// can see the archive context even when only the inner file remains.
 	innerCount := 0
 	containerIdx := -1
 	for i := range report.Files {
@@ -2507,6 +2508,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			containerIdx = i
 		}
 	}
+	hadInnerFiles := innerCount > 0
 	if innerCount == 1 && containerIdx >= 0 {
 		report.Files = append(report.Files[:containerIdx], report.Files[containerIdx+1:]...)
 	}
@@ -2640,8 +2642,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.TraitColWidth = fmt.Sprintf("%.1fem", float64(maxTraitLen)*0.65+2)
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
-	// should render the file-tree view.
-	data.IsArchive = len(report.Files) > 1
+	// should render the file-tree view. hadInnerFiles is sticky across the
+	// single-file collapse so a tar.gz/npm-package wrapping one payload
+	// still gets the Files tab — the user can then see the container's
+	// metadata next to the lone inner file rather than being silently
+	// rerouted to a single-file view.
+	data.IsArchive = hadInnerFiles || len(report.Files) > 1
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
