@@ -3,7 +3,7 @@ module codeberg.org/atomdrift/prism
 go 1.25.4
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260510030002-691fd435c230
+	codeberg.org/atomdrift/hopper v0.0.0-20260510095742-681029467e5d
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/null v1.11.0
