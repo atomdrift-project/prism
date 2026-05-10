@@ -410,6 +410,15 @@
                         {{end}}
                     </select>
                 </div>
+                <div class="field">
+                    <label for="domain">Domain</label>
+                    <select name="domain" id="domain-filter">
+                        <option value="" {{if not .SelectedDomain}}selected{{end}}>Any</option>
+                        {{range .Domains}}
+                        <option value="{{.}}" {{if eq $.SelectedDomain .}}selected{{end}}>{{.}}</option>
+                        {{end}}
+                    </select>
+                </div>
             </form>
             <div class="count">{{.FilteredCount}} shown{{if .TotalCount}} from {{.TotalCount}}{{end}}</div>
         </section>

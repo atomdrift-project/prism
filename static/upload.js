@@ -4,6 +4,7 @@ const uploadStatus = document.getElementById('upload-status');
 const filterForm = document.getElementById('filter-form');
 const criticalityFilter = document.getElementById('criticality');
 const ecosystemFilter = document.getElementById('ecosystem-filter');
+const domainFilter = document.getElementById('domain-filter');
 const maxSize = 100 * 1024 * 1024; // 100 MB
 
 document.querySelectorAll('[data-gradient]').forEach(el => { el.style.background = el.getAttribute('data-gradient'); });
@@ -25,12 +26,21 @@ if (ecosystemFilter) {
         if (criticalityFilter && criticalityFilter.value) {
             url.searchParams.set('criticality', criticalityFilter.value);
         }
+        if (domainFilter && domainFilter.value) {
+            url.searchParams.set('domain', domainFilter.value);
+        }
         window.location = url.toString();
     });
 }
 
 if (criticalityFilter && filterForm) {
     criticalityFilter.addEventListener('change', function() {
+        filterForm.submit();
+    });
+}
+
+if (domainFilter && filterForm) {
+    domainFilter.addEventListener('change', function() {
         filterForm.submit();
     });
 }

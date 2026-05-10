@@ -399,7 +399,9 @@ type feedPageData struct {
 	Refresh         bool
 	Rows            []feedRow
 	Ecosystems      []string
+	Domains         []string
 	SelectedEco     string
+	SelectedDomain  string
 	SelectedCrit    string
 	SelectedFormula string
 	Title           string
@@ -974,55 +976,60 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 
 const feedLimit = 100
 
-func loadFeedRows(ctx context.Context, ecosystem, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
-	if ecosystem == "" && criticality == "" && formula == "" && feedCache != nil {
-		return loadFrontpageFeedRows(ctx, reqLogger)
+func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, []string, int, error) {
+	if ecosystem == "" && domain == "" && criticality == "" && formula == "" && feedCache != nil {
+		rows, ecos, total, err := loadFrontpageFeedRows(ctx, reqLogger)
+		// Frontpage cache predates the domain filter; fetch domains live
+		// so the dropdown still populates on the cached path.
+		var domains []string
+		if err == nil && hopperDB != nil {
+			if d, derr := hopperDB.FeedDomains(ctx, "", ""); derr == nil {
+				domains = d
+			}
+		}
+		return rows, ecos, domains, total, err
 	}
-	return loadFeedRowsFromHopper(ctx, ecosystem, criticality, formula, reqLogger)
+	return loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, ecosystem, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
-	ecosystems, err := hopperDB.FeedEcosystems(ctx, "harvest", "")
+func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, []string, int, error) {
+	// Source="" spans every Source value (legacy "harvest" rows from
+	// before the rename, new "forager" rows, manual "upload"s) so the
+	// dropdowns and the result set both work across the transition.
+	ecosystems, err := hopperDB.FeedEcosystems(ctx, "", "")
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
+	}
+	domains, err := hopperDB.FeedDomains(ctx, "", "")
+	if err != nil {
+		return nil, nil, nil, 0, err
 	}
 
-	var samples []*hopper.Sample
-	var total int
-	for _, source := range []string{"harvest", "upload"} {
-		q := hopper.FeedQuery{
-			Source:       source,
-			OrderBy:      "created_at",
-			Formula:      formula,
-			TopLevelOnly: true,
-			Limit:        feedLimit,
-		}
-		if ecosystem != "" {
-			q.Ecosystems = []string{ecosystem}
-		}
-		if class, ok := criticalityClass(criticality); ok {
-			q.LitmusClasses = []int{class}
-		} else {
-			q.RequireLitmus = true
-		}
-
-		sourceSamples, err := hopperDB.FeedSamples(ctx, q)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		sourceCount, err := hopperDB.FeedSamplesCount(ctx, q)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		total += sourceCount
-		samples = append(samples, sourceSamples...)
+	q := hopper.FeedQuery{
+		OrderBy:      "created_at",
+		Formula:      formula,
+		TopLevelOnly: true,
+		Limit:        feedLimit,
+	}
+	if ecosystem != "" {
+		q.Ecosystems = []string{ecosystem}
+	}
+	if domain != "" {
+		q.Domains = []string{domain}
+	}
+	if class, ok := criticalityClass(criticality); ok {
+		q.LitmusClasses = []int{class}
+	} else {
+		q.RequireLitmus = true
 	}
 
-	sort.SliceStable(samples, func(i, j int) bool {
-		return samples[i].CreatedAt.After(samples[j].CreatedAt)
-	})
-	if len(samples) > feedLimit {
-		samples = samples[:feedLimit]
+	samples, err := hopperDB.FeedSamples(ctx, q)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	total, err := hopperDB.FeedSamplesCount(ctx, q)
+	if err != nil {
+		return nil, nil, nil, 0, err
 	}
 
 	rows := make([]feedRow, 0, len(samples))
@@ -1065,7 +1072,7 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, criticality, formula
 		})
 	}
 
-	return rows, ecosystems, total, nil
+	return rows, ecosystems, domains, total, nil
 }
 
 func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
@@ -1137,7 +1144,7 @@ func refreshFrontpageFeed(ctx context.Context, reqLogger *slog.Logger) (cachedFe
 		return snapshot, nil
 	}
 
-	rows, ecosystems, total, err := loadFeedRowsFromHopper(ctx, "", "", "", reqLogger)
+	rows, ecosystems, _, total, err := loadFeedRowsFromHopper(ctx, "", "", "", "", reqLogger)
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
@@ -1448,6 +1455,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		Nonce:           getNonce(r),
 		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
+		SelectedDomain:  strings.TrimSpace(r.URL.Query().Get("domain")),
 		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		Title:           "Fallout",
@@ -1459,7 +1467,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 
 	if hopperDB != nil {
 		var err error
-		data.Rows, data.Ecosystems, data.TotalCount, err = loadFeedRows(r.Context(), data.SelectedEco, data.SelectedCrit, data.SelectedFormula, logger)
+		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(r.Context(), data.SelectedEco, data.SelectedDomain, data.SelectedCrit, data.SelectedFormula, logger)
 		if err != nil {
 			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
 			renderError(w, r, http.StatusInternalServerError, errorData{

@@ -3,7 +3,7 @@ module codeberg.org/atomdrift/prism
 go 1.25.4
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260507080004-3a6b094f9062
+	codeberg.org/atomdrift/hopper v0.0.0-20260510030002-691fd435c230
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/null v1.11.0
@@ -20,5 +20,5 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.44 // indirect
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )
