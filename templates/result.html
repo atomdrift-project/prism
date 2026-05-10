@@ -1037,7 +1037,28 @@
 
             <div class="tab-content active" id="tab-traits">
                 {{if .IsArchive}}
-                    <div class="no-findings">Open the Files tab to see traits for each file in this archive.</div>
+                    {{if .ArchiveCategories}}
+                        {{range .ArchiveCategories}}
+                        <div class="category-section">
+                            <div class="category-title">{{.Name}}</div>
+                            <table class="findings-table">
+                                <tbody>
+                                    {{range .Findings}}
+                                    <tr>
+                                        <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
+                                        <td class="col-trait trait-id">{{.ID}}</td>
+                                        <td>
+                                            <div class="trait-desc">{{.Desc}}</div>
+                                        </td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                        {{end}}
+                    {{else}}
+                        <div class="no-findings">No notable behaviors detected across this archive.</div>
+                    {{end}}
                 {{else if .FileFindings}}
                     {{range .FileFindings}}
                     {{range .Categories}}

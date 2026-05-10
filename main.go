@@ -402,13 +402,17 @@ type resultData struct {
 	FileStrings    []FileStringsDisplay
 	FileFindings   []FileFindingsDisplay
 	FileKVs        []FileKVDisplay
-	HostileT       float64
-	SuspiciousT    float64
-	TotalFiles     int
-	ShownFiles     int
-	Probability    float64
-	IsArchive      bool
-	LimitedInfo    bool
+	// ArchiveCategories is the aggregated trait categories across every
+	// file in an archive (deduped by trait ID). The archive Traits tab
+	// shows this summary; per-file breakdowns live behind the Files tab.
+	ArchiveCategories []CategoryGroup
+	HostileT          float64
+	SuspiciousT       float64
+	TotalFiles        int
+	ShownFiles        int
+	Probability       float64
+	IsArchive         bool
+	LimitedInfo       bool
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -686,7 +690,7 @@ func main() {
 		"isPublic":         func() bool { return publicMode },
 		"buildCommit":      func() string { return buildCommit },
 		"buildCommitShort": func() string { return shortBuildCommit() },
-		"mul":      func(a, b float64) float64 { return a * b },
+		"mul":              func(a, b float64) float64 { return a * b },
 		"formulaQuery": func(formula string) string {
 			return desubscriptFormula(formula)
 		},
@@ -840,6 +844,25 @@ func main() {
 }
 
 func newMux() *http.ServeMux {
+	// Force the MIME types we serve. Some hosts (FreeBSD jails, minimal
+	// containers) ship a /etc/mime.types that maps .js to text/plain, which
+	// causes the browser to refuse ES module loads with a "disallowed MIME
+	// type" error. AddExtensionType wins over the system file because it's
+	// applied to the runtime registry after mime.init().
+	for ext, ctype := range map[string]string{
+		".js":    "application/javascript",
+		".mjs":   "application/javascript",
+		".css":   "text/css; charset=utf-8",
+		".json":  "application/json; charset=utf-8",
+		".woff2": "font/woff2",
+		".webp":  "image/webp",
+		".svg":   "image/svg+xml",
+	} {
+		if err := mime.AddExtensionType(ext, ctype); err != nil {
+			logger.Warn("mime registration failed", "ext", ext, "error", err)
+		}
+	}
+
 	mux := http.NewServeMux()
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -2669,6 +2692,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FileMetrics = buildStructuredMetrics(report.Files)
 	data.FileKVs = buildStructuredKV(report.Files)
 	data.Files = buildFileTree(report.Files, filename)
+	data.ArchiveCategories = aggregateArchiveCategories(report.Files)
 
 	// Compute trait column width from longest trait ID across all files.
 	maxTraitLen := 0
@@ -2844,6 +2868,27 @@ func parseStringTupleValue(raw json.RawMessage) []string {
 		return nil
 	}
 	return []string{val}
+}
+
+// aggregateArchiveCategories merges every file's findings into one category
+// list, deduped by trait ID. Used by the archive Traits tab to show a single
+// archive-level summary instead of a per-file breakdown — the latter lives
+// behind the Files tab. We achieve dedup by feeding all findings through
+// buildStructuredFindings via a single synthetic file: that path already
+// aggregates by directory key and sorts by criticality.
+func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
+	var all []finding
+	for i := range files {
+		all = append(all, files[i].Findings...)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	out := buildStructuredFindings([]cleaveFile{{Findings: all, Path: "archive"}})
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Categories
 }
 
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
