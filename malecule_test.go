@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,11 +19,12 @@ import (
 	"codeberg.org/atomdrift/hopper"
 )
 
-func init() {
+func TestMain(m *testing.M) {
 	// prepareResultData uses the package-level logger; main() normally sets it.
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	os.Exit(m.Run())
 }
 
 // TestRouteSetup ensures all route patterns are valid.
@@ -44,7 +46,9 @@ func TestSecurityHeadersScriptNonce(t *testing.T) {
 			t.Fatal("nonce missing from request context")
 		}
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<script nonce="` + nonce + `" src="/static/upload.js"></script>`))
+		if _, err := w.Write([]byte(`<script nonce="` + nonce + `" src="/static/upload.js"></script>`)); err != nil {
+			t.Errorf("write: %v", err)
+		}
 	}))
 
 	rr := httptest.NewRecorder()
@@ -101,7 +105,7 @@ func TestPrepareResultDataSeparatesFirstSeenAndAnalyzed(t *testing.T) {
 	raw := `{"ml":{"thresholds":[0.65,0.887],"fs":[{"id":0,"prob":0.1,"class":0}]},"raw":{"fs":[{"id":0,"sha":"` +
 		strings.Repeat("a", 64) + `","type":"pe","dp":0,"f":"K","sz":12}]}}`
 
-	data := prepareResultData("sample.exe", strings.Repeat("a", 64), &storedResult{
+	data := prepareResultData(context.Background(), "sample.exe", strings.Repeat("a", 64), &storedResult{
 		RawLitmus:      raw,
 		Classification: "benign",
 		CachedAt:       analyzed,
@@ -767,7 +771,7 @@ func TestRenderHTMLPage(t *testing.T) {
 	}
 
 	// Prepare template data
-	resultData := prepareResultData("midd.zip", sha256Hex, res)
+	resultData := prepareResultData(context.Background(), "midd.zip", sha256Hex, res)
 
 	// Log what we got
 	t.Logf("Formula: %s", resultData.Formula)
@@ -868,7 +872,7 @@ func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 		t.Fatalf("marshal envelope: %v", err)
 	}
 
-	data := prepareResultData("wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
+	data := prepareResultData(context.Background(), "wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
 
 	if !data.IsArchive {
 		t.Error("IsArchive should be true so the Files tab still renders for the container")
@@ -919,12 +923,21 @@ func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
 			},
 		},
 	}
-	rawBytes, _ := json.Marshal(raw)
+	rawBytes, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal raw: %v", err)
+	}
 	ml := map[string]any{"class": 2, "prob": 0.9, "thresholds": []float64{0.65, 0.887}}
-	mlBytes, _ := json.Marshal(ml)
-	envelope, _ := json.Marshal(map[string]json.RawMessage{"ml": mlBytes, "raw": rawBytes})
+	mlBytes, err := json.Marshal(ml)
+	if err != nil {
+		t.Fatalf("marshal ml: %v", err)
+	}
+	envelope, err := json.Marshal(map[string]json.RawMessage{"ml": mlBytes, "raw": rawBytes})
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
 
-	data := prepareResultData("bundle.zip", strings.Repeat("b", 64), &storedResult{RawLitmus: string(envelope)})
+	data := prepareResultData(context.Background(), "bundle.zip", strings.Repeat("b", 64), &storedResult{RawLitmus: string(envelope)})
 
 	if !data.IsArchive {
 		t.Error("IsArchive should be true for multi-inner-file archive")

@@ -70,15 +70,17 @@ func (s Severity) Color() string {
 //
 //	Li(brary) Pa(ckage) Pd(ocument) Pt(lang) Rh(ights/entitlements) Si(gned)
 //	V(endor) + deeper: Ag(format) Au(quality) B(undle) Ce(compiler) Ne(archive)
+//
+//nolint:godoclint // section-divider comments inside a var block; first identifier in each group can't sensibly be the lead word
 var (
-	// Top-level categories.
+	// Section: top-level categories.
 	Oxygen      = Element{Number: 8, Symbol: "O", Name: "Oxygen"}         // Objectives
 	Hydrogen    = Element{Number: 1, Symbol: "H", Name: "Hydrogen"}       // Micro-behaviors
 	Mendelevium = Element{Number: 101, Symbol: "Md", Name: "Mendelevium"} // Metadata
 	Potassium   = Element{Number: 19, Symbol: "K", Name: "Potassium"}     // Well-known (K for Known)
 	Thorium     = Element{Number: 90, Symbol: "Th", Name: "Thorium"}      // Third-party
 
-	// Objective subcategories.
+	// Section: objective subcategories.
 	Aluminum     = Element{Number: 13, Symbol: "Al", Name: "Aluminum"}     // Anti-analysis
 	Arsenic      = Element{Number: 33, Symbol: "As", Name: "Arsenic"}      // Anti-static
 	Carbon       = Element{Number: 6, Symbol: "C", Name: "Carbon"}         // Command & Control (C2)
@@ -94,7 +96,7 @@ var (
 	Sulfur       = Element{Number: 16, Symbol: "S", Name: "Sulfur"}        // Supply-chain
 	Xenon        = Element{Number: 54, Symbol: "Xe", Name: "Xenon"}        // Execution
 
-	// Micro-behavior subcategories.
+	// Section: micro-behavior subcategories.
 	Curium       = Element{Number: 96, Symbol: "Cm", Name: "Curium"}        // Communications
 	Chromium     = Element{Number: 24, Symbol: "Cr", Name: "Chromium"}      // Crypto
 	Dubnium      = Element{Number: 105, Symbol: "Db", Name: "Dubnium"}      // Data
@@ -109,7 +111,7 @@ var (
 	Titanium     = Element{Number: 22, Symbol: "Ti", Name: "Titanium"}      // Time
 	Uranium      = Element{Number: 92, Symbol: "U", Name: "Uranium"}        // UI
 
-	// Metadata subcategories (top-level under metadata/).
+	// Section: metadata subcategories (top-level under metadata/).
 	Argon       = Element{Number: 18, Symbol: "Ar", Name: "Argon"}       // Arch (Ar for ARchitecture)
 	Bismuth     = Element{Number: 83, Symbol: "Bi", Name: "Bismuth"}     // Binary
 	Berkelium   = Element{Number: 97, Symbol: "Bk", Name: "Berkelium"}   // Build
@@ -125,14 +127,14 @@ var (
 	Silicon      = Element{Number: 14, Symbol: "Si", Name: "Silicon"}      // Signed
 	Vanadium     = Element{Number: 23, Symbol: "V", Name: "Vanadium"}      // Vendor
 
-	// Metadata deeper-segment matches (3rd+ level).
+	// Section: metadata deeper-segment matches (3rd+ level).
 	Gold   = Element{Number: 79, Symbol: "Au", Name: "Gold"}   // Quality (gold standard)
 	Silver = Element{Number: 47, Symbol: "Ag", Name: "Silver"} // Format
 	Boron  = Element{Number: 5, Symbol: "B", Name: "Boron"}    // Bundle
 	Cerium = Element{Number: 58, Symbol: "Ce", Name: "Cerium"} // Compiler
 	Neon   = Element{Number: 10, Symbol: "Ne", Name: "Neon"}   // Archive
 
-	// Well-known subcategories.
+	// Section: well-known subcategories.
 	Tellurium = Element{Number: 52, Symbol: "Te", Name: "Tellurium"} // Tools
 )
 
@@ -515,8 +517,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	for len(queue) > 0 {
 		item := queue[0]
 		queue = queue[1:]
-		n := item.node
-		p := nodePos[n]
+		n := item.node  //nolint:varnamelen // tight loop body, paired with `p` below
+		p := nodePos[n] //nolint:varnamelen // tight loop body, paired with `n` above
 		atomIdx := len(atoms)
 
 		if item.isL1 {
@@ -660,8 +662,8 @@ func BuildMalecule(findings []FindingForFormula, formula string) MaleculeData {
 	// Build traitID→atomIdx so we can find composite atoms and detect refs that are
 	// already present as notable+ findings in the molecule.
 	traitIDToAtomIdx := make(map[string]int, len(atoms))
-	for i, a := range atoms {
-		for tid := range strings.SplitSeq(a.TraitID, ", ") {
+	for i := range atoms {
+		for tid := range strings.SplitSeq(atoms[i].TraitID, ", ") {
 			if tid != "" {
 				traitIDToAtomIdx[tid] = i
 			}
@@ -781,7 +783,7 @@ type FileFindings struct {
 // BuildGalaxy creates a galaxy of molecules from multiple files.
 //
 //nolint:gocognit,maintidx // complex galaxy layout algorithm
-func BuildGalaxy(files []FileFindings) GalaxyData {
+func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // galaxy construction is a single coherent algorithm; splitting would obscure the pipeline rather than simplify it
 	if len(files) <= 1 {
 		// Single file or empty - not a galaxy
 		return GalaxyData{IsGalaxy: false}

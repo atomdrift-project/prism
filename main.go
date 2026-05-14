@@ -1,4 +1,6 @@
 // Package main implements the prism malware analysis web service.
+//
+//nolint:revive // max-public-structs: prism is a single-binary web service; the structs are the page-data shape and exporting them is what html/template needs.
 package main
 
 import (
@@ -72,6 +74,7 @@ var (
 	hopperClient      *http.Client // HTTP client for hopper API server
 	cache             *fido.TieredCache[string, storedResult]
 	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
+	contentCache      *fido.TieredCache[string, cachedContent]
 	logger            *slog.Logger
 	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
 	hopperDB          *hopper.DB
@@ -371,6 +374,25 @@ type FileTreeEntry struct {
 	IsContainer    bool // true for the archive container (depth 0)
 }
 
+// ParentArchive is one archive that contains the currently-viewed file. It
+// powers the "found in" backlinks shown on standalone child pages so users
+// can navigate up to the archive context they came from.
+type ParentArchive struct {
+	SHA256         string
+	SHA256Short    string
+	Filename       string
+	Path           string // path of this child within the parent (from sample_locations)
+	Classification string // "hostile" / "suspicious" / "benign" / ""
+	AnalyzedAt     string // human-readable UTC date
+	AnalyzedAgo    string // relative time
+}
+
+// resultData is the page-data shape consumed by result.html. Field order is
+// readability-driven (grouped by what the template renders, not packed for
+// minimum size); the savings from reordering are negligible against page-
+// render cost, and a packed layout would obscure the per-tab grouping.
+//
+//nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
 	SHA256Short    string
 	Filename       string
@@ -402,6 +424,10 @@ type resultData struct {
 	FileStrings    []FileStringsDisplay
 	FileFindings   []FileFindingsDisplay
 	FileKVs        []FileKVDisplay
+	// Parents lists archives that contain this file. Populated only on
+	// standalone child pages (non-archive views) so the user can navigate
+	// up to the archive context the file came from.
+	Parents []ParentArchive
 	// ArchiveCategories is the aggregated trait categories across every
 	// file in an archive (deduped by trait ID). The archive Traits tab
 	// shows this summary; per-file breakdowns live behind the Files tab.
@@ -412,7 +438,31 @@ type resultData struct {
 	ShownFiles        int
 	Probability       float64
 	IsArchive         bool
+	IsText            bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
 	LimitedInfo       bool
+	// Contents holds the rendered text body of a text file, broken into
+	// annotated lines. Empty for non-text files and archives.
+	Contents []ContentLine
+	// ContentTooLarge is set when the file is text but exceeds
+	// maxContentBytes; the template shows a download link instead.
+	ContentTooLarge bool
+	// ContentSizeStr is the human-readable size of an oversized content,
+	// shown alongside the "too large" message.
+	ContentSizeStr string
+}
+
+// ContentLine is one rendered line of a text file's body. Risk and Traits
+// power the per-line crit dots and hover tooltips on the Contents tab.
+type ContentLine struct {
+	Text string
+	// Risk is "hostile"/"suspicious"/"notable"/"baseline"/"component"/"".
+	// Computed from the highest-crit finding whose evidence appears on
+	// this line.
+	Risk string
+	// Traits is the dedup'd list of finding IDs whose evidence appears
+	// on this line, used for the hover tooltip.
+	Traits []string
+	Number int
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -497,29 +547,22 @@ type cleaveReport struct {
 // cleaveFile represents a file entry in cleave v4 output.
 // Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
+	Metrics        json.RawMessage            `json:"ms,omitempty"`
+	KV             map[string]json.RawMessage `json:"k,omitempty"` // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
 	Path           string                     `json:"path"`
 	FileType       string                     `json:"type"`
 	SHA256         string                     `json:"sha"`
 	Classification string                     `json:"-"` // populated from ml.fs after parsing
 	Formula        string                     `json:"f,omitempty"`
-	Metrics        json.RawMessage            `json:"ms,omitempty"`
 	Findings       []finding                  `json:"ts,omitempty"`
 	Strings        []json.RawMessage          `json:"ss,omitempty"` // v4 tuples: [offset, value] or [offset, enc, value]
 	Imports        []string                   `json:"is,omitempty"` // v4: bare symbol strings
 	Exports        []symbolInfo               `json:"exports,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
-	KV             map[string]json.RawMessage `json:"k,omitempty"` // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
-	Size           int64                      `json:"sz"`
 	Probability    float64                    `json:"-"` // populated from ml.fs after parsing
+	Size           int64                      `json:"sz"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
-}
-
-type stringInfo struct {
-	Value    string `json:"value"`
-	Offset   string `json:"offset,omitempty"`
-	Section  string `json:"section,omitempty"`
-	Encoding string `json:"encoding,omitempty"`
 }
 
 type symbolInfo struct {
@@ -540,12 +583,6 @@ type sectionInfo struct {
 	Entropy float64 `json:"entropy,omitempty"`
 }
 
-type findingCounts struct {
-	Hostile    int `json:"hostile"`
-	Suspicious int `json:"suspicious"`
-	Notable    int `json:"notable"`
-}
-
 type finding struct {
 	ID       string   `json:"i"`
 	Desc     string   `json:"d,omitempty"`
@@ -554,15 +591,7 @@ type finding struct {
 	Conf     float64  `json:"c,omitempty"`
 }
 
-type cleaveSummary struct {
-	FilesAnalyzed      int   `json:"files_analyzed"`
-	Hostile            int   `json:"hostile"`
-	Suspicious         int   `json:"suspicious"`
-	Notable            int   `json:"notable"`
-	AnalysisDurationMs int64 `json:"analysis_duration_ms"`
-}
-
-//nolint:maintidx // main is inherently complex: flag parsing, config, template init, server setup
+//nolint:maintidx,gocognit // main is inherently complex: flag parsing, config, template init, server setup
 func main() {
 	// Initialize structured logger with JSON output for production
 	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -628,10 +657,7 @@ func main() {
 	ctx, cancelApp := context.WithCancel(context.Background())
 
 	// Load configuration from environment
-	if err := loadConfig(); err != nil {
-		logger.Error("configuration error", "error", err)
-		os.Exit(1)
-	}
+	loadConfig()
 
 	// Initialize fido cache
 	var cacheErr error
@@ -648,6 +674,12 @@ func main() {
 		feedCache, cacheErr = fido.NewTiered(nullFeedStore)
 		if cacheErr != nil {
 			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
+			os.Exit(1)
+		}
+		nullContentStore := null.New[string, cachedContent]()
+		contentCache, cacheErr = fido.NewTiered(nullContentStore)
+		if cacheErr != nil {
+			logger.Error("failed to initialize fido content cache", "error", cacheErr)
 			os.Exit(1)
 		}
 	} else {
@@ -682,6 +714,16 @@ func main() {
 			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
 			os.Exit(1)
 		}
+		contentStore, contentStoreErr := localfs.New[string, cachedContent]("prism-content", cacheDir)
+		if contentStoreErr != nil {
+			logger.Error("failed to initialize fido content store", "error", contentStoreErr)
+			os.Exit(1)
+		}
+		contentCache, cacheErr = fido.NewTiered(contentStore)
+		if cacheErr != nil {
+			logger.Error("failed to initialize fido content cache", "error", cacheErr)
+			os.Exit(1)
+		}
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -689,11 +731,9 @@ func main() {
 	funcs := template.FuncMap{
 		"isPublic":         func() bool { return publicMode },
 		"buildCommit":      func() string { return buildCommit },
-		"buildCommitShort": func() string { return shortBuildCommit() },
+		"buildCommitShort": shortBuildCommit,
 		"mul":              func(a, b float64) float64 { return a * b },
-		"formulaQuery": func(formula string) string {
-			return desubscriptFormula(formula)
-		},
+		"formulaQuery":     desubscriptFormula,
 		// bandGradient returns a CSS linear-gradient matching litmus's
 		// two-block confidence indicator. Each classification band has its
 		// own color ramp, and the two gradient stops represent left/right
@@ -734,7 +774,7 @@ func main() {
 				right = mix(rgb{70, 215, 135}, rgb{195, 210, 60}, t)
 			}
 
-			return template.CSS(fmt.Sprintf(
+			return template.CSS(fmt.Sprintf( //nolint:gosec // input is rgb derived from in-package floats, no user content
 				"linear-gradient(90deg, %s, %s)", css(left), css(right),
 			))
 		},
@@ -881,7 +921,7 @@ func newMux() *http.ServeMux {
 }
 
 // loadConfig loads configuration from environment variables.
-func loadConfig() error {
+func loadConfig() {
 	// LITMUS_ADDR from env (flag takes precedence)
 	if litmusAddr == "" {
 		litmusAddr = os.Getenv("LITMUS_ADDR")
@@ -909,8 +949,6 @@ func loadConfig() error {
 		"HOPPER_API_ADDR", hopperAPIAddr,
 		"PORT", os.Getenv("PORT"),
 	)
-
-	return nil
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code and bytes written.
@@ -1055,7 +1093,7 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 
 const feedLimit = 100
 
-func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, []string, int, error) {
+func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	if ecosystem == "" && domain == "" && criticality == "" && formula == "" && feedCache != nil {
 		rows, ecos, total, err := loadFrontpageFeedRows(ctx, reqLogger)
 		// Frontpage cache predates the domain filter; fetch domains live
@@ -1071,15 +1109,15 @@ func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula s
 	return loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) ([]feedRow, []string, []string, int, error) {
+func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	// Source="" spans every Source value (legacy "harvest" rows from
 	// before the rename, new "forager" rows, manual "upload"s) so the
 	// dropdowns and the result set both work across the transition.
-	ecosystems, err := hopperDB.FeedEcosystems(ctx, "", "")
+	ecosystems, err = hopperDB.FeedEcosystems(ctx, "", "")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	domains, err := hopperDB.FeedDomains(ctx, "", "")
+	domains, err = hopperDB.FeedDomains(ctx, "", "")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -1106,18 +1144,23 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	total, err := hopperDB.FeedSamplesCount(ctx, q)
+	total, err = hopperDB.FeedSamplesCount(ctx, q)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
 
-	rows := make([]feedRow, 0, len(samples))
+	rows = make([]feedRow, 0, len(samples))
 	now := time.Now()
 	for _, sample := range samples {
 		res, err := cachedResultForSample(ctx, sample, reqLogger)
 		if err != nil {
 			reqLogger.Debug("feed cache unavailable, rendering hopper sample directly", "sha256", sample.SHA256, "error", err)
-			res, _ = storedResultFromHopperSample(sample)
+			fresh, ferr := storedResultFromHopperSample(sample)
+			if ferr != nil {
+				reqLogger.Debug("hopper sample fallback failed", "sha256", sample.SHA256, "error", ferr)
+				continue
+			}
+			res = fresh
 		}
 		classification := res.Classification
 		if classification == "" {
@@ -1154,7 +1197,7 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 	return rows, ecosystems, domains, total, nil
 }
 
-func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) ([]feedRow, []string, int, error) {
+func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) (rows []feedRow, ecosystems []string, total int, err error) {
 	snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey)
 	if err != nil {
 		reqLogger.Debug("frontpage feed cache read failed", "error", err)
@@ -1162,11 +1205,10 @@ func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) ([]feedR
 	if !found || time.Since(snapshot.GeneratedAt) > frontpageFeedMaxAge {
 		snapshot, err = refreshFrontpageFeed(ctx, reqLogger)
 		if err != nil {
-			if found {
-				reqLogger.Warn("frontpage feed refresh failed, serving stale cache", "error", err, "age", time.Since(snapshot.GeneratedAt))
-			} else {
+			if !found {
 				return nil, nil, 0, err
 			}
+			reqLogger.Warn("frontpage feed refresh failed, serving stale cache", "error", err, "age", time.Since(snapshot.GeneratedAt))
 		}
 	}
 	return feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, snapshot.TotalCount, nil
@@ -1175,7 +1217,8 @@ func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) ([]feedR
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 	rows := make([]feedRow, 0, len(snapshot.Rows))
 	now := time.Now()
-	for _, sample := range snapshot.Rows {
+	for i := range snapshot.Rows {
+		sample := &snapshot.Rows[i]
 		rows = append(rows, feedRow{
 			SHA256:         sample.SHA256,
 			SHA256Short:    shortSHA(sample.SHA256),
@@ -1219,8 +1262,10 @@ func refreshFrontpageFeed(ctx context.Context, reqLogger *slog.Logger) (cachedFe
 	frontpageFeedRefreshMu.Lock()
 	defer frontpageFeedRefreshMu.Unlock()
 
-	if snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey); err == nil && found && time.Since(snapshot.GeneratedAt) <= frontpageFeedRefreshInterval {
-		return snapshot, nil
+	if snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey); err == nil && found {
+		if time.Since(snapshot.GeneratedAt) <= frontpageFeedRefreshInterval {
+			return snapshot, nil
+		}
 	}
 
 	rows, ecosystems, _, total, err := loadFeedRowsFromHopper(ctx, "", "", "", "", reqLogger)
@@ -1242,7 +1287,8 @@ func refreshFrontpageFeed(ctx context.Context, reqLogger *slog.Logger) (cachedFe
 
 func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 	samples := make([]cachedFeedSample, 0, len(rows))
-	for _, row := range rows {
+	for i := range rows {
+		row := &rows[i]
 		samples = append(samples, cachedFeedSample{
 			SHA256:         row.SHA256,
 			Filename:       row.Filename,
@@ -1261,8 +1307,10 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 }
 
 func feedDate(t, now time.Time) string {
-	localTime := t.Local()
-	localNow := now.Local()
+	// Server-local time is the best approximation we have for the deployer's
+	// timezone; server is generally co-located with operators viewing the feed.
+	localTime := t.Local()  //nolint:gosmopolitan // server-local rendering is intentional for the public feed
+	localNow := now.Local() //nolint:gosmopolitan // server-local rendering is intentional for the public feed
 	if localTime.Year() == localNow.Year() && localTime.YearDay() == localNow.YearDay() {
 		return timeAgo(now.Sub(t))
 	}
@@ -1277,9 +1325,12 @@ func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger
 	if err != nil {
 		return storedResult{}, err
 	}
-	if shouldRefreshCachedSample(res, sample) {
+	if shouldRefreshCachedSample(&res, sample) {
 		fresh, err := storedResultFromHopperSample(sample)
 		if err != nil {
+			// Refresh failed: serve the stale cached value rather than fail
+			// the whole feed render. Logged at Debug for diagnostics.
+			reqLogger.Debug("feed cache refresh failed; serving stale", "sha256", sample.SHA256, "error", err)
 			return res, nil
 		}
 		if err := cache.SetAsync(ctx, sample.SHA256, fresh); err != nil {
@@ -1312,7 +1363,7 @@ func normalizeCriticality(criticality string) string {
 	return ""
 }
 
-func sampleThresholds(sample *hopper.Sample) (float64, float64) {
+func sampleThresholds(sample *hopper.Sample) (suspiciousT, hostileT float64) {
 	const (
 		defaultSuspiciousT = 0.65
 		defaultHostileT    = 0.887
@@ -1329,7 +1380,7 @@ func sampleThresholds(sample *hopper.Sample) (float64, float64) {
 	return defaultSuspiciousT, defaultHostileT
 }
 
-func shouldRefreshCachedSample(res storedResult, sample *hopper.Sample) bool {
+func shouldRefreshCachedSample(res *storedResult, sample *hopper.Sample) bool {
 	sampleUpdated := sampleTime(sample)
 	if !sampleUpdated.IsZero() && sampleUpdated.After(res.CachedAt) {
 		return true
@@ -1547,7 +1598,11 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 
 	if hopperDB != nil {
 		var err error
-		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(r.Context(), data.SelectedEco, data.SelectedDomain, data.SelectedCrit, data.SelectedFormula, logger)
+		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(
+			r.Context(),
+			data.SelectedEco, data.SelectedDomain, data.SelectedCrit, data.SelectedFormula,
+			logger,
+		)
 		if err != nil {
 			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
 			renderError(w, r, http.StatusInternalServerError, errorData{
@@ -1675,7 +1730,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		"cache_hit", cacheHit,
 		"duration_ms", time.Since(requestStart).Milliseconds(),
 	)
-	data := prepareResultData(res.Filename, sha, &res)
+	data := prepareResultData(r.Context(), res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
 	if hopperDB != nil {
@@ -1688,6 +1743,11 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if !errors.Is(err, hopper.ErrNotFound) {
 			reqLogger.Debug("failed to load reverse-engineering report", "error", err)
+		}
+		// Parent archives: only meaningful on a standalone child view, not
+		// when the user is already looking at the archive itself.
+		if !data.IsArchive {
+			data.Parents = lookupParentArchives(r.Context(), sha, reqLogger)
 		}
 	}
 	switch r.URL.Query().Get("layout") {
@@ -1706,6 +1766,148 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 		)
 	}
+}
+
+// maxParentArchives caps how many "found in" backlinks a child page renders.
+// A single popular file (e.g. a stock package.json) can appear in hundreds
+// of archives; showing all of them would dominate the page.
+const maxParentArchives = 10
+
+// lookupParentArchives finds archives that contain childSHA, sorted by
+// most recent analysis. Returns nil on error (best-effort metadata).
+//
+// Implementation: walk sample_locations rows for childSHA, dedup by parent
+// SHA, then resolve each parent's display fields. The fido cache short-
+// circuits the per-parent SampleBySHA256 calls when a parent's already
+// been viewed recently. A request-bound timeout caps the worst case so a
+// slow hopper-db doesn't block page render: when the deadline fires we
+// return whatever we've collected so far.
+func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
+	if hopperDB == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, parentLookupTimeout)
+	defer cancel()
+	locs, err := hopperDB.LocationsForSHA(ctx, childSHA)
+	if err != nil {
+		log.Debug("parent archive lookup: locations failed", "error", err)
+		return nil
+	}
+	seen := make(map[string]bool, len(locs))
+	out := make([]ParentArchive, 0, maxParentArchives)
+	for _, loc := range locs {
+		if ctx.Err() != nil {
+			// Deadline hit mid-loop — return what we have so the page
+			// renders something rather than nothing.
+			break
+		}
+		if loc.ParentSHA256 == "" || seen[loc.ParentSHA256] {
+			continue
+		}
+		seen[loc.ParentSHA256] = true
+		parent, err := hopperDB.SampleBySHA256(ctx, loc.ParentSHA256)
+		if err != nil {
+			// Missing parent rows are normal (e.g. extracted-then-deleted);
+			// skip silently. A real DB error logs once and continues.
+			if !errors.Is(err, hopper.ErrNotFound) {
+				log.Debug("parent archive lookup: sample fetch failed",
+					"parent_sha", loc.ParentSHA256, "error", err)
+			}
+			continue
+		}
+		entry := ParentArchive{
+			SHA256:      parent.SHA256,
+			SHA256Short: shortSHA(parent.SHA256),
+			Filename:    firstNonEmpty(parent.Filename, filepath.Base(parent.Path)),
+			Path:        loc.Path,
+		}
+		if len(parent.LitmusResult) > 0 {
+			var ml litmusMlResponse
+			if json.Unmarshal(parent.LitmusResult, &ml) == nil {
+				entry.Classification = classificationName(ml.Classification)
+			}
+		}
+		if parent.AnalyzedAt != nil {
+			entry.AnalyzedAt = parent.AnalyzedAt.Format("2 Jan 2006 15:04 UTC")
+			entry.AnalyzedAgo = timeAgo(time.Since(*parent.AnalyzedAt))
+		}
+		out = append(out, entry)
+		if len(out) >= maxParentArchives {
+			break
+		}
+	}
+	return out
+}
+
+// Content fetch budgets. hopper-api now resolves archive members on its
+// side (extracts inner files from parent archives), so prism just fetches
+// what hopper returns and caches that — never the parent.
+const (
+	maxContentBytes     = 256 * 1024       // displayable inline content
+	maxContentLines     = 4000             // line cap to keep the DOM tractable
+	contentFetchTimeout = 10 * time.Second // per-request bound; the upstream client's 5-min default is too lenient for the page-render path
+	parentLookupTimeout = 2 * time.Second  // budget for the N+1 SampleBySHA256 lookups behind ParentArchives
+)
+
+// cachedContent wraps file bytes for fido's JSON-encoded localfs store.
+// Body is base64-encoded by the JSON layer.
+type cachedContent struct {
+	FetchedAt time.Time
+	Body      []byte
+}
+
+// fetchFileBytes returns up to maxContentBytes for a sample SHA, going
+// through the fido cache. hopper-api handles both top-level samples and
+// archive members behind one URL; we treat them identically here.
+//
+// Errors degrade gracefully: callers in the page-render path log and fall
+// back to a "no contents" message rather than failing the whole page.
+// Recognisable error substrings: "sample not found", "too large".
+func fetchFileBytes(ctx context.Context, sha string) ([]byte, error) {
+	c, err := contentCache.Fetch(ctx, sha, func(lctx context.Context) (cachedContent, error) {
+		body, err := downloadFromHopperAPI(lctx, sha, maxContentBytes)
+		if err != nil {
+			return cachedContent{}, err
+		}
+		return cachedContent{Body: body, FetchedAt: time.Now().UTC()}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return c.Body, nil
+}
+
+// downloadFromHopperAPI streams up to maxBytes of the sample identified by
+// sha from the hopper-api file endpoint. The endpoint resolves archive
+// members on its side, so we don't need to know whether sha is a top-level
+// sample or an inner file.
+func downloadFromHopperAPI(ctx context.Context, sha string, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hopperFileURL(sha), http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("prepare request: %w", err)
+	}
+	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
+	if err != nil {
+		return nil, fmt.Errorf("hopper-api request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort close on a response body we've already drained
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("sample bytes not found: status %d", resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, fmt.Errorf("file too large: status %d", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("hopper-api status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("file too large (>%d bytes)", maxBytes)
+	}
+	return body, nil
 }
 
 // hopperCacheTTL is how long a cached result is served without consulting
@@ -2109,7 +2311,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
 		return
 	}
-	resp, err := hopperClient.Do(req)
+	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
 	if err != nil {
 		reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
 		http.Error(w, "download unavailable", http.StatusBadGateway)
@@ -2410,6 +2612,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		// filename is the only user-meaningful identifier we have, and
 		// re-uploads of the same content just bump last_seen_at on the
 		// matching sample_locations row.
+		//nolint:contextcheck // hopper writes share the analysis lctx (decoupled from request) so they can complete after a client disconnect
 		if hopperDB != nil {
 			if insertErr := hopperDB.InsertSample(lctx, &hopper.Sample{
 				SHA256:      sha256Hex,
@@ -2423,10 +2626,14 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Debug("hopper insert failed", "error", insertErr)
 			}
 			if len(lr.CleaveJSON) > 0 {
-				hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, "") //nolint:errcheck
+				if err := hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, ""); err != nil {
+					reqLogger.Debug("hopper UpdateCleaveResult failed", "error", err)
+				}
 			}
 			if len(lr.LitmusEnvelope) > 0 {
-				hopperDB.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope) //nolint:errcheck
+				if err := hopperDB.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope); err != nil {
+					reqLogger.Debug("hopper UpdateLitmusResult failed", "error", err)
+				}
 			}
 		}
 
@@ -2468,7 +2675,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 // prepareResultData converts raw cleave output to template data.
 //
 //nolint:gocognit,maintidx // inherently complex data assembly
-func prepareResultData(filename, sha256Hex string, res *storedResult) resultData {
+func prepareResultData(ctx context.Context, filename, sha256Hex string, res *storedResult) resultData {
 	data := resultData{
 		Filename:     html.EscapeString(filename),
 		SHA256:       sha256Hex,
@@ -2703,9 +2910,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 	// Compute trait column width from longest trait ID across all files.
 	maxTraitLen := 0
-	for _, ff := range data.FileFindings {
-		for _, cat := range ff.Categories {
-			for _, f := range cat.Findings {
+	for i := range data.FileFindings {
+		ff := &data.FileFindings[i]
+		for ci := range ff.Categories {
+			for _, f := range ff.Categories[ci].Findings {
 				if len(f.ID) > maxTraitLen {
 					maxTraitLen = len(f.ID)
 				}
@@ -2722,6 +2930,27 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// metadata next to the lone inner file rather than being silently
 	// rerouted to a single-file view.
 	data.IsArchive = hadArchive || len(report.Files) > 1
+
+	// Contents tab: for non-archive text files, fetch the body and render
+	// it with per-line trait annotations. fido caches the bytes by SHA so
+	// repeat views (and parent-archive recursion for inner children) are
+	// cheap. The fetch is bounded so a slow or down hopper-api degrades
+	// gracefully — the page renders without contents instead of hanging.
+	if !data.IsArchive && len(report.Files) > 0 && isTextFileType(report.Files[0].FileType) {
+		data.IsText = true
+		fetchCtx, cancel := context.WithTimeout(ctx, contentFetchTimeout)
+		body, err := fetchFileBytes(fetchCtx, sha256Hex)
+		cancel()
+		switch {
+		case err == nil:
+			data.Contents = renderTextContent(body, report.Files[0].Findings)
+		case strings.Contains(err.Error(), "too large"):
+			data.ContentTooLarge = true
+			data.ContentSizeStr = formatBytes(report.Files[0].Size)
+		default:
+			logger.Debug("contents fetch failed", "sha256", sha256Hex, "error", err)
+		}
+	}
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
@@ -2849,27 +3078,29 @@ func fileSeverityRank(f *cleaveFile) int {
 
 // maxCritInFile returns the highest criticality ordinal from a file's traits.
 func maxCritInFile(f *cleaveFile) int {
-	max := 0
+	best := 0
 	for _, t := range f.Findings {
-		if t.Crit > max {
-			max = t.Crit
+		if t.Crit > best {
+			best = t.Crit
 		}
 	}
-	return max
+	return best
 }
 
 // parseStringTupleValue extracts the value from a v4 string tuple.
-// Format: [offset, value] or [offset, encoding, value].
+// Format: [offset, value] or [offset, encoding, value]. Errors are
+// silently swallowed: a malformed tuple just yields an empty result.
 func parseStringTupleValue(raw json.RawMessage) []string {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
 		return nil
 	}
 	var val string
-	if len(arr) == 2 {
-		json.Unmarshal(arr[1], &val)
-	} else if len(arr) >= 3 {
-		json.Unmarshal(arr[2], &val)
+	switch {
+	case len(arr) == 2:
+		_ = json.Unmarshal(arr[1], &val) //nolint:errcheck // tuple shape known; bad data → empty val handled below
+	case len(arr) >= 3:
+		_ = json.Unmarshal(arr[2], &val) //nolint:errcheck // tuple shape known; bad data → empty val handled below
 	}
 	if val == "" {
 		return nil
@@ -2898,6 +3129,7 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	return out[0].Categories
 }
 
+//nolint:gocognit // inherently complex: multi-stage aggregation with category/criticality grouping; refactor would split into helpers without simplifying the logic
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 	var result []FileFindingsDisplay
 
@@ -3120,25 +3352,27 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 				sectionRanges = append(sectionRanges, sectionRange{
 					name:  sec.Name,
 					start: *sec.Offset,
-					end:   *sec.Offset + uint64(sec.Size),
+					end:   *sec.Offset + uint64(sec.Size), //nolint:gosec // sec.Size guarded > 0 above; cleave never emits negative section sizes
 				})
 			}
 		}
 
 		var strs []StringDisplay
 		for _, raw := range file.Strings {
-			// v4 string tuples: [offset, value] or [offset, encoding, value]
+			// v4 string tuples: [offset, value] or [offset, encoding, value].
+			// Sub-element parse errors degrade to zero values — bad tuples
+			// just render with an empty string or offset 0.
 			var arr []json.RawMessage
 			if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
 				continue
 			}
 			var offset uint64
-			json.Unmarshal(arr[0], &offset)
+			_ = json.Unmarshal(arr[0], &offset) //nolint:errcheck // offset 0 fallback acceptable
 			var value string
 			if len(arr) == 2 {
-				json.Unmarshal(arr[1], &value)
+				_ = json.Unmarshal(arr[1], &value) //nolint:errcheck // empty-string fallback acceptable
 			} else {
-				json.Unmarshal(arr[2], &value)
+				_ = json.Unmarshal(arr[2], &value) //nolint:errcheck // empty-string fallback acceptable
 			}
 
 			// Compute section from offset
@@ -3158,10 +3392,12 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 			})
 		}
 
-		// Sort by offset
+		// Sort by offset. Parse failures sort as 0, which is fine — the
+		// offset string was produced by fmt.Sprintf("0x%x", uint64) above
+		// so this is effectively unreachable.
 		sort.Slice(strs, func(i, j int) bool {
-			oi, _ := strconv.ParseUint(strings.TrimPrefix(strs[i].Offset, "0x"), 16, 64)
-			oj, _ := strconv.ParseUint(strings.TrimPrefix(strs[j].Offset, "0x"), 16, 64)
+			oi, _ := strconv.ParseUint(strings.TrimPrefix(strs[i].Offset, "0x"), 16, 64) //nolint:errcheck // self-produced format; parse won't fail
+			oj, _ := strconv.ParseUint(strings.TrimPrefix(strs[j].Offset, "0x"), 16, 64) //nolint:errcheck // self-produced format; parse won't fail
 			return oi < oj
 		})
 
@@ -3475,6 +3711,97 @@ func timeAgo(d time.Duration) string {
 	}
 }
 
+// renderTextContent splits body into lines and tags each with the highest-
+// crit finding whose evidence appears on that line. Multiple matching
+// findings contribute their IDs to the line's hover tooltip; the dot color
+// reflects only the worst hit so the visual stays readable.
+//
+// Evidence matching is plain substring search — cleave's evidence strings
+// are usually exact line fragments, so this catches most cases without
+// pulling in regex. Empty evidence strings are skipped to avoid matching
+// every line.
+//
+// The output is capped at maxContentLines so a pathological 256KB file of
+// 1-byte lines doesn't blow up the rendered DOM. A truncation marker tells
+// the user the body was cut off.
+func renderTextContent(body []byte, findings []finding) []ContentLine {
+	rawLines := strings.Split(string(body), "\n")
+	truncated := false
+	if len(rawLines) > maxContentLines {
+		rawLines = rawLines[:maxContentLines]
+		truncated = true
+	}
+	out := make([]ContentLine, 0, len(rawLines)+1)
+	for i, line := range rawLines {
+		// Strip trailing CR so Windows-style CRLF files don't render
+		// stray glyphs and substring matching against evidence (which
+		// usually doesn't carry CR) still works.
+		line = strings.TrimRight(line, "\r")
+		cl := ContentLine{Number: i + 1, Text: line}
+		if line == "" {
+			out = append(out, cl)
+			continue
+		}
+		bestCrit := 0
+		seen := make(map[string]bool)
+		for _, f := range findings {
+			matched := false
+			for _, e := range f.Evidence {
+				if e == "" {
+					continue
+				}
+				if strings.Contains(line, e) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if f.Crit > bestCrit {
+				bestCrit = f.Crit
+			}
+			if !seen[f.ID] {
+				seen[f.ID] = true
+				cl.Traits = append(cl.Traits, f.ID)
+			}
+		}
+		if bestCrit > 0 {
+			cl.Risk = critIntToString(bestCrit)
+		}
+		out = append(out, cl)
+	}
+	if truncated {
+		out = append(out, ContentLine{
+			Number: maxContentLines + 1,
+			Text:   fmt.Sprintf("… file truncated to first %d lines; download to see the rest", maxContentLines),
+		})
+	}
+	return out
+}
+
+// textFileTypes is the set of cleave file_type values whose content is
+// displayable as plain text. The Contents tab shows the file body for these
+// types; the Metadata tab is hidden because most don't carry useful kv yet.
+var textFileTypes = map[string]bool{
+	"javascript": true, "python": true, "ruby": true, "perl": true,
+	"php": true, "go": true, "rust": true, "c": true, "cpp": true,
+	"csharp": true, "java": true, "kotlin": true, "scala": true,
+	"swift": true, "elixir": true, "shell": true, "powershell": true,
+	"lua": true, "r": true, "haskell": true, "ocaml": true, "clojure": true,
+	"erlang": true, "dart": true, "objective-c": true, "groovy": true,
+	"makefile": true, "dockerfile": true, "cmake": true, "yaml": true,
+	"toml": true, "ini": true, "xml": true, "html": true, "css": true,
+	"text": true, "markdown": true, "package.json": true, "pkg-info": true,
+	"json": true, "sql": true, "vue": true, "svelte": true, "typescript": true,
+}
+
+// isTextFileType reports whether cleave's file_type names a body the
+// Contents tab can render directly.
+func isTextFileType(t string) bool {
+	return textFileTypes[strings.ToLower(strings.TrimSpace(t))]
+}
+
 // extractBasename extracts the filename from a path, handling archive paths.
 func extractBasename(path string) string {
 	if strings.Contains(path, "!!") {
@@ -3581,9 +3908,9 @@ func classificationName(c int) string {
 func (r *litmusMlResponse) suspiciousT() float64 { return r.Thresholds[0] }
 func (r *litmusMlResponse) hostileT() float64    { return r.Thresholds[1] }
 
-// primaryFile extracts formula, file_type, and sha256 from the first (dp=0)
+// primaryFile extracts formula, file_type, and sha from the first (dp=0)
 // entry in the raw cleave report.
-func primaryFile(raw json.RawMessage) (formula, fileType, sha256 string) {
+func primaryFile(raw json.RawMessage) (formula, fileType, sha string) {
 	var report struct {
 		Files []struct {
 			Formula  string `json:"f"`

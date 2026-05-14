@@ -694,6 +694,84 @@
             color: var(--isotope);
             text-decoration: underline;
         }
+
+        /* "Found in N archives" backlinks shown on standalone child pages */
+        .parents-panel {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .parents-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 10px 16px;
+            background: var(--mist);
+            border-bottom: 1px solid var(--border);
+        }
+        .parents-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .parents-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .parents-item:last-child { border-bottom: none; }
+        .parents-item:hover { background: rgba(0, 0, 0, 0.02); }
+        .parents-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex: 1 1 auto;
+            color: var(--carbon);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .parents-link:hover { color: var(--isotope); }
+        .parents-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .parents-badge {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .parents-badge.hostile { color: var(--hostile); }
+        .parents-badge.suspicious { color: #92400e; }
+        .parents-badge.benign { color: #4d7c0f; }
+        .parents-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--slate);
+            flex-shrink: 0;
+        }
+        .parents-sha {
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .parents-when {
+            font-variant-numeric: tabular-nums;
+        }
         .feedback-prompt {
             text-align: center;
             font-size: 14px;
@@ -887,6 +965,62 @@
             font-weight: 500;
             color: var(--carbon);
         }
+        /* Contents tab — line-numbered file body with crit dots */
+        .contents-body {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            background: var(--white);
+            padding: 12px 0;
+            overflow-x: auto;
+            max-height: 720px;
+            overflow-y: auto;
+        }
+        .content-line {
+            display: grid;
+            grid-template-columns: 48px 14px 1fr;
+            align-items: start;
+            gap: 6px;
+            padding: 0 16px 0 8px;
+            white-space: pre;
+            border-left: 3px solid transparent;
+        }
+        .content-line:hover { background: rgba(0, 0, 0, 0.03); }
+        .content-line.crit-hostile { background: rgba(239, 68, 68, 0.08); border-left-color: var(--hostile); }
+        .content-line.crit-suspicious { background: rgba(234, 179, 8, 0.08); border-left-color: var(--suspicious); }
+        .content-line.crit-notable { background: rgba(59, 130, 246, 0.06); border-left-color: var(--notable); }
+        .content-line.crit-baseline { background: rgba(120, 120, 120, 0.04); border-left-color: rgba(120, 120, 120, 0.4); }
+        .content-line.crit-component { border-left-color: rgba(120, 120, 120, 0.2); }
+        .content-num {
+            color: var(--slate);
+            font-variant-numeric: tabular-nums;
+            text-align: right;
+            user-select: none;
+            opacity: 0.7;
+        }
+        .content-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-top: 6px;
+            justify-self: center;
+            flex-shrink: 0;
+        }
+        .content-dot.crit-hostile { background: var(--hostile); }
+        .content-dot.crit-suspicious { background: var(--suspicious); }
+        .content-dot.crit-notable { background: var(--notable); }
+        .content-dot.crit-baseline { background: rgba(120, 120, 120, 0.55); width: 5px; height: 5px; margin-top: 7.5px; }
+        .content-dot.crit-component { background: rgba(120, 120, 120, 0.3); width: 4px; height: 4px; margin-top: 8px; }
+        .content-dot.crit-none { background: transparent; }
+        .content-text {
+            color: var(--carbon);
+            background: transparent;
+            font-family: inherit;
+            font-size: inherit;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         /* KV tab — flat structural key→value rows */
         .kv-table {
             width: 100%;
@@ -1020,17 +1154,41 @@
         </div>
         {{end}}
 
+        {{if .Parents}}
+        <div class="parents-panel">
+            <div class="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</div>
+            <ul class="parents-list">
+                {{range .Parents}}
+                <li class="parents-item">
+                    <a class="parents-link" href="/file/{{.SHA256}}#file={{$.SHA256}}" title="open archive view">
+                        {{if .Classification}}<span class="parents-badge {{.Classification}}">{{.Classification}}</span>{{end}}
+                        <span class="parents-name">{{.Filename}}</span>
+                    </a>
+                    <span class="parents-meta">
+                        <span class="parents-sha" title="{{.SHA256}}">{{.SHA256Short}}</span>
+                        {{if .AnalyzedAgo}}<span class="parents-when" title="{{.AnalyzedAt}}">analyzed {{.AnalyzedAgo}}</span>{{end}}
+                    </span>
+                </li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+
         <section class="tabs-section">
             <div class="tabs">
                 <button class="tab active" data-tab="traits">Traits</button>
                 {{if .IsArchive}}
                 <button class="tab" data-tab="files">Files</button>
                 {{else}}
+                {{if .IsText}}
+                <button class="tab" data-tab="contents">Contents</button>
+                {{else}}
                 <button class="tab" data-tab="strings">Strings</button>
+                {{end}}
                 <button class="tab" data-tab="symbols">Symbols</button>
                 {{if .FileSections}}<button class="tab" data-tab="sections">Sections</button>{{end}}
                 <button class="tab" data-tab="metrics">Metrics</button>
-                <button class="tab" data-tab="kv">KV</button>
+                {{if not .IsText}}<button class="tab" data-tab="kv">Metadata</button>{{end}}
                 {{end}}
                 {{if .ReportContent}}<button class="tab" data-tab="report">Report</button>{{end}}
             </div>
@@ -1090,6 +1248,28 @@
             </div>
 
             {{if not .IsArchive}}
+            {{if .IsText}}
+            <div class="tab-content" id="tab-contents">
+                {{if .ContentTooLarge}}
+                    <div class="no-findings">
+                        File is {{.ContentSizeStr}} — too large to display inline.
+                        <a href="/file/{{.SHA256}}.dl">Download</a> to view.
+                    </div>
+                {{else if .Contents}}
+                    <div class="contents-body">
+                        {{range .Contents}}
+                        <div class="content-line{{if .Risk}} crit-{{.Risk}}{{end}}"{{if .Traits}} title="{{range $i, $t := .Traits}}{{if $i}}, {{end}}{{$t}}{{end}}"{{end}}>
+                            <span class="content-num">{{.Number}}</span>
+                            <span class="content-dot crit-{{if .Risk}}{{.Risk}}{{else}}none{{end}}"></span>
+                            <code class="content-text">{{.Text}}</code>
+                        </div>
+                        {{end}}
+                    </div>
+                {{else}}
+                    <div class="no-findings">Content unavailable. <a href="/file/{{.SHA256}}.dl">Download</a> to view.</div>
+                {{end}}
+            </div>
+            {{else}}
             <div class="tab-content" id="tab-strings">
                 {{if .FileStrings}}
                     {{range .FileStrings}}
@@ -1135,6 +1315,7 @@
                     <div class="no-findings">No strings extracted</div>
                 {{end}}
             </div>
+            {{end}}{{/* end if .IsText / else */}}
 
             <div class="tab-content" id="tab-symbols">
                 {{if .FileSymbols}}
@@ -1276,7 +1457,7 @@
                     <div class="files-detail-pane" id="files-detail">
                         <div class="files-detail-empty" data-default="1">
                             <div class="files-detail-empty-title">{{.Filename}}</div>
-                            <div class="files-detail-empty-sub">Archive of {{.TotalFiles}} file{{if ne .TotalFiles 1}}s{{end}}. Select a file to inspect its strings, symbols, metrics, and key-values.</div>
+                            <div class="files-detail-empty-sub">Archive of {{.TotalFiles}} file{{if ne .TotalFiles 1}}s{{end}}. Select a file to inspect its contents, symbols, metrics, and metadata.</div>
                         </div>
                         {{range .Files}}{{if not .IsContainer}}
                         <div class="files-detail-header-block" data-file-sha="{{.SHA256}}" hidden>
@@ -1294,7 +1475,7 @@
                                 <button class="files-subtab" data-sub="strings">Strings</button>
                                 <button class="files-subtab" data-sub="symbols">Symbols</button>
                                 <button class="files-subtab" data-sub="metrics">Metrics</button>
-                                <button class="files-subtab" data-sub="kv">KV</button>
+                                <button class="files-subtab" data-sub="kv">Metadata</button>
                             </div>
                         </div>
                         {{end}}{{end}}
@@ -1412,7 +1593,7 @@
                                 </tbody>
                             </table>
                             {{else}}
-                            <div class="no-findings">No key/value data available.</div>
+                            <div class="no-findings">No metadata available.</div>
                             {{end}}
                         </div>
                         {{end}}
@@ -1421,7 +1602,7 @@
             </div>
             {{end}}{{/* end if .IsArchive */}}
 
-            {{if not .IsArchive}}
+            {{if and (not .IsArchive) (not .IsText)}}
             <div class="tab-content" id="tab-kv">
                 {{if .FileKVs}}
                     {{range .FileKVs}}

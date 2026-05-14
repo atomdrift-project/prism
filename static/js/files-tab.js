@@ -15,7 +15,7 @@ if (tree && detail) {
         strings: 'No strings extracted.',
         symbols: 'No symbols found.',
         metrics: 'No metrics available.',
-        kv: 'No key/value data available.',
+        kv: 'No metadata available.',
     };
 
     function placeholder(section) {
