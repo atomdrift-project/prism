@@ -647,7 +647,7 @@ canvas.addEventListener('mousemove', (event) => {
 // ============================================================
 // Build scene
 // ============================================================
-if (moleculeData && moleculeData.isGalaxy && moleculeData.molecules) {
+if (moleculeData && moleculeData.isGalaxy && moleculeData.molecules && moleculeData.molecules.length > 0) {
     // Galaxy mode - multiple molecules for archives
     moleculeData.molecules.forEach((mol, molIndex) => {
         if (mol.atoms && mol.atoms.length > 0) {

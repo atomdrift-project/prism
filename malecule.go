@@ -800,13 +800,36 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	}
 
 	if hasArchiveContents {
-		filtered := make([]FileFindings, 0, len(files))
+		inner := make([]FileFindings, 0, len(files))
+		outer := make([]FileFindings, 0, len(files))
 		for _, file := range files {
 			if strings.Contains(file.Path, "!!") {
-				filtered = append(filtered, file)
+				inner = append(inner, file)
+			} else {
+				outer = append(outer, file)
 			}
 		}
-		files = filtered
+		// Keep outer containers only when no inner file has findings the
+		// include filter would later accept (Notable+). Otherwise the
+		// outer's findings (e.g. polyglot, archive-level traits) would be
+		// dropped entirely and the galaxy would render empty.
+		innerHasNotable := false
+		for _, f := range inner {
+			for _, find := range f.Findings {
+				if find.Severity >= SeverityNotable {
+					innerHasNotable = true
+					break
+				}
+			}
+			if innerHasNotable {
+				break
+			}
+		}
+		if innerHasNotable {
+			files = inner
+		} else {
+			files = append(inner, outer...)
+		}
 	}
 
 	if len(files) <= 1 {
@@ -1031,6 +1054,12 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 				})
 			}
 		}
+	}
+
+	// Filter rejected every file — fall back to single-molecule rendering
+	// so callers don't get IsGalaxy=true with an empty Molecules slice.
+	if len(galaxy.Molecules) == 0 {
+		return GalaxyData{IsGalaxy: false}
 	}
 
 	return galaxy
