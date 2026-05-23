@@ -226,6 +226,16 @@ type FindingDisplay struct {
 	Crit     string
 	Desc     string
 	Evidence []string
+	// Sources lists the files that contributed to this aggregated trait. Only
+	// populated for archive-level aggregation; nil for per-file findings.
+	Sources []FindingSource
+}
+
+// FindingSource attributes an aggregated trait back to the file that fired it.
+type FindingSource struct {
+	Path   string
+	SHA256 string
+	Count  int
 }
 
 // CategoryGroup groups findings by top-level category.
@@ -544,11 +554,12 @@ type cleaveReport struct {
 	Files []cleaveFile `json:"fs"`
 }
 
-// cleaveFile represents a file entry in cleave v4 output.
+// cleaveFile represents a file entry in cleave compact output.
 // Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
 	Metrics        json.RawMessage            `json:"ms,omitempty"`
 	KV             map[string]json.RawMessage `json:"k,omitempty"` // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
+	Facts          cleaveFacts                `json:"ff,omitempty"`
 	Path           string                     `json:"path"`
 	FileType       string                     `json:"type"`
 	SHA256         string                     `json:"sha"`
@@ -563,6 +574,122 @@ type cleaveFile struct {
 	Size           int64                      `json:"sz"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
+}
+
+type cleaveFacts struct {
+	Metrics   json.RawMessage            `json:"m,omitempty"`
+	KV        map[string]json.RawMessage `json:"v,omitempty"`
+	Strings   []json.RawMessage          `json:"s,omitempty"`
+	Imports   []json.RawMessage          `json:"i,omitempty"`
+	Exports   []json.RawMessage          `json:"x,omitempty"`
+	Functions []json.RawMessage          `json:"fn,omitempty"`
+	Sections  []json.RawMessage          `json:"sc,omitempty"`
+}
+
+func (f *cleaveFile) UnmarshalJSON(data []byte) error {
+	type alias cleaveFile
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*f = cleaveFile(a)
+	f.applyFacts()
+	return nil
+}
+
+func (f *cleaveFile) applyFacts() {
+	if len(f.Metrics) == 0 && len(f.Facts.Metrics) > 0 {
+		f.Metrics = f.Facts.Metrics
+	}
+	if len(f.KV) == 0 && len(f.Facts.KV) > 0 {
+		f.KV = f.Facts.KV
+	}
+	if len(f.Strings) == 0 && len(f.Facts.Strings) > 0 {
+		f.Strings = f.Facts.Strings
+	}
+	if len(f.Imports) == 0 && len(f.Facts.Imports) > 0 {
+		f.Imports = compactImports(f.Facts.Imports)
+	}
+	if len(f.Exports) == 0 && len(f.Facts.Exports) > 0 {
+		f.Exports = compactExports(f.Facts.Exports)
+	}
+	if len(f.Sections) == 0 && len(f.Facts.Sections) > 0 {
+		f.Sections = compactSections(f.Facts.Sections)
+	}
+}
+
+func compactImports(raw []json.RawMessage) []string {
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		var tuple []json.RawMessage
+		if json.Unmarshal(item, &tuple) != nil || len(tuple) == 0 {
+			continue
+		}
+		if len(tuple) == 1 {
+			var name string
+			_ = json.Unmarshal(tuple[0], &name) //nolint:errcheck // best-effort display field
+			if name != "" {
+				out = append(out, name)
+			}
+			continue
+		}
+		var lib, name string
+		_ = json.Unmarshal(tuple[0], &lib)  //nolint:errcheck // best-effort display field
+		_ = json.Unmarshal(tuple[1], &name) //nolint:errcheck // best-effort display field
+		switch {
+		case lib != "" && name != "":
+			out = append(out, lib+"!"+name)
+		case name != "":
+			out = append(out, name)
+		case lib != "":
+			out = append(out, lib)
+		}
+	}
+	return out
+}
+
+func compactExports(raw []json.RawMessage) []symbolInfo {
+	out := make([]symbolInfo, 0, len(raw))
+	for _, item := range raw {
+		var tuple []json.RawMessage
+		if json.Unmarshal(item, &tuple) != nil || len(tuple) == 0 {
+			continue
+		}
+		var name, forward string
+		_ = json.Unmarshal(tuple[0], &name) //nolint:errcheck // best-effort display field
+		if len(tuple) > 1 {
+			_ = json.Unmarshal(tuple[1], &forward) //nolint:errcheck // best-effort display field
+		}
+		if name != "" {
+			out = append(out, symbolInfo{Symbol: name, Library: forward})
+		}
+	}
+	return out
+}
+
+func compactSections(raw []json.RawMessage) []sectionInfo {
+	out := make([]sectionInfo, 0, len(raw))
+	for _, item := range raw {
+		var tuple []json.RawMessage
+		if json.Unmarshal(item, &tuple) != nil || len(tuple) < 3 {
+			continue
+		}
+		var name, flags string
+		var offset uint64
+		var size int64
+		var entropy float64
+		_ = json.Unmarshal(tuple[0], &name)   //nolint:errcheck // best-effort display field
+		_ = json.Unmarshal(tuple[1], &offset) //nolint:errcheck // best-effort display field
+		_ = json.Unmarshal(tuple[2], &size)   //nolint:errcheck // best-effort display field
+		if len(tuple) > 3 {
+			_ = json.Unmarshal(tuple[3], &entropy) //nolint:errcheck // best-effort display field
+		}
+		if len(tuple) > 4 {
+			_ = json.Unmarshal(tuple[4], &flags) //nolint:errcheck // best-effort display field
+		}
+		out = append(out, sectionInfo{Name: name, Offset: &offset, Size: size, Entropy: entropy, Flags: flags})
+	}
+	return out
 }
 
 type symbolInfo struct {
@@ -2876,9 +3003,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		)
 	}
 
-	// Sort archive files by severity (hostile first) so all tabs show the most
-	// interesting files at the top. Depth-0 (the archive container itself) stays
-	// first regardless of severity.
+	// Sort archive files by ML probability so all tabs show the most interesting
+	// files at the top. Depth-0 (the archive container itself) stays first
+	// regardless of score.
 	sort.SliceStable(report.Files, func(i, j int) bool {
 		if report.Files[i].Depth == 0 {
 			return true
@@ -2886,12 +3013,12 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		if report.Files[j].Depth == 0 {
 			return false
 		}
-		return fileSeverityRank(&report.Files[i]) > fileSeverityRank(&report.Files[j])
+		return report.Files[i].Probability > report.Files[j].Probability
 	})
 
-	// For large archives, truncate to the top 25 most critical files.
+	// For large archives, truncate to the top 100 most critical files.
 	// The depth-0 container is always first (guaranteed by the sort above).
-	const maxArchiveFiles = 25
+	const maxArchiveFiles = 100
 	data.TotalFiles = len(report.Files)
 	if len(report.Files) > maxArchiveFiles {
 		report.Files = report.Files[:maxArchiveFiles]
@@ -3057,24 +3184,6 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 
 // buildStructuredFindings converts cleave findings into structured display data grouped by category.
 // Findings are aggregated by directory path, keeping only the highest criticality/confidence per directory.
-//
-// fileSeverityRank returns a numeric rank for a file's severity, using the
-// litmus ML classification with a fallback to the cleave risk level.
-// Higher values = more severe.
-//
-
-func fileSeverityRank(f *cleaveFile) int {
-	switch f.Classification {
-	case "hostile":
-		return 3
-	case "suspicious":
-		return 2
-	case "notable":
-		return 1
-	default:
-		return 0
-	}
-}
 
 // maxCritInFile returns the highest criticality ordinal from a file's traits.
 func maxCritInFile(f *cleaveFile) int {
@@ -3109,24 +3218,135 @@ func parseStringTupleValue(raw json.RawMessage) []string {
 }
 
 // aggregateArchiveCategories merges every file's findings into one category
-// list, deduped by trait ID. Used by the archive Traits tab to show a single
-// archive-level summary instead of a per-file breakdown — the latter lives
-// behind the Files tab. We achieve dedup by feeding all findings through
-// buildStructuredFindings via a single synthetic file: that path already
-// aggregates by directory key and sorts by criticality.
+// list, deduped by trait-ID directory prefix. Used by the archive Traits tab.
+// Unlike per-file aggregation, this version attributes every aggregated trait
+// back to the files that contributed, so the UI can expand a trait to show
+// "fired in N files" and link to each.
 func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
-	var all []finding
+	categoryNames := map[string]string{
+		"objectives":      "Objectives",
+		"micro-behaviors": "Micro-behaviors",
+		"metadata":        "Metadata",
+		"well-known":      "Well-known",
+		"third_party":     "Third-party",
+	}
+
+	type aggregated struct {
+		evidence map[string]bool
+		// sources keyed by SHA so multiple findings from the same file collapse
+		// into one entry with a count.
+		sources  map[string]*FindingSource
+		dirPath  string
+		topLevel string
+		desc     string
+		crit     int
+		conf     float64
+	}
+	bucket := make(map[string]*aggregated)
+
 	for i := range files {
-		all = append(all, files[i].Findings...)
+		file := &files[i]
+		if file.Depth == 0 {
+			continue // skip the container itself
+		}
+		for _, f := range file.Findings {
+			if f.Crit < 3 {
+				continue
+			}
+			parts := strings.Split(f.ID, "/")
+			if len(parts) < 2 {
+				continue
+			}
+			topLevel := parts[0]
+			var dirPath string
+			if len(parts) > 2 {
+				dirPath = strings.Join(parts[1:len(parts)-1], "/")
+			} else {
+				dirPath = parts[1]
+			}
+			key := topLevel + "/" + dirPath
+
+			agg, ok := bucket[key]
+			if !ok {
+				agg = &aggregated{
+					dirPath:  dirPath,
+					topLevel: topLevel,
+					crit:     f.Crit,
+					conf:     f.Conf,
+					desc:     f.Desc,
+					evidence: make(map[string]bool),
+					sources:  make(map[string]*FindingSource),
+				}
+				bucket[key] = agg
+			} else if f.Crit > agg.crit || (f.Crit == agg.crit && f.Conf > agg.conf) {
+				agg.crit = f.Crit
+				agg.conf = f.Conf
+				agg.desc = f.Desc
+			}
+			for _, e := range f.Evidence {
+				agg.evidence[e] = true
+			}
+			src, ok := agg.sources[file.SHA256]
+			if !ok {
+				agg.sources[file.SHA256] = &FindingSource{
+					Path:   file.Path,
+					SHA256: file.SHA256,
+					Count:  1,
+				}
+			} else {
+				src.Count++
+			}
+		}
 	}
-	if len(all) == 0 {
+	if len(bucket) == 0 {
 		return nil
 	}
-	out := buildStructuredFindings([]cleaveFile{{Findings: all, Path: "archive"}})
-	if len(out) == 0 {
-		return nil
+
+	categoryMap := make(map[string][]FindingDisplay)
+	for _, agg := range bucket {
+		evidence := make([]string, 0, len(agg.evidence))
+		for e := range agg.evidence {
+			evidence = append(evidence, e)
+		}
+		sort.Strings(evidence)
+		if len(evidence) > 4 {
+			evidence = evidence[:4]
+		}
+		sources := make([]FindingSource, 0, len(agg.sources))
+		for _, s := range agg.sources {
+			sources = append(sources, *s)
+		}
+		sort.Slice(sources, func(i, j int) bool {
+			if sources[i].Count != sources[j].Count {
+				return sources[i].Count > sources[j].Count
+			}
+			return sources[i].Path < sources[j].Path
+		})
+		categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], FindingDisplay{
+			ID:       agg.dirPath,
+			Crit:     critIntToString(agg.crit),
+			Desc:     agg.desc,
+			Evidence: evidence,
+			Sources:  sources,
+		})
 	}
-	return out[0].Categories
+
+	critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
+	var categories []CategoryGroup
+	for cat, findings := range categoryMap {
+		sort.SliceStable(findings, func(i, j int) bool {
+			return critRank[findings[i].Crit] > critRank[findings[j].Crit]
+		})
+		name, ok := categoryNames[cat]
+		if !ok {
+			name = cat
+		}
+		categories = append(categories, CategoryGroup{Name: name, Findings: findings})
+	}
+	sort.Slice(categories, func(i, j int) bool {
+		return categories[i].Name < categories[j].Name
+	})
+	return categories
 }
 
 //nolint:gocognit // inherently complex: multi-stage aggregation with category/criticality grouping; refactor would split into helpers without simplifying the logic

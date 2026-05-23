@@ -487,6 +487,14 @@
             border-color: var(--toxic-muted);
             box-shadow: 0 0 0 2px var(--toxic-dim);
         }
+        .files-truncated-notice {
+            padding: 6px 12px;
+            font-size: 11px;
+            color: var(--iron);
+            background: var(--cream);
+            border-bottom: 1px solid var(--border);
+            font-variant-numeric: tabular-nums;
+        }
         .files-tree {
             list-style: none;
             margin: 0;
@@ -652,6 +660,62 @@
         }
         .findings-table tr:hover {
             background: rgba(0, 0, 0, 0.01);
+        }
+        .findings-table tr.finding-row.expandable { cursor: pointer; }
+        .findings-table tr.finding-row.expandable:hover {
+            background: rgba(208, 255, 0, 0.06);
+        }
+        .findings-table tr.finding-detail td {
+            padding: 4px 14px 12px;
+            background: var(--mist);
+            border-bottom: 1px solid var(--mist);
+        }
+        .findings-table tr.finding-row.open + tr.finding-detail { background: var(--mist); }
+        .trait-expander {
+            display: inline-block;
+            width: 12px;
+            margin-right: 4px;
+            color: var(--slate);
+            font-size: 10px;
+            transition: transform 0.12s;
+        }
+        tr.finding-row.open .trait-expander { transform: rotate(90deg); }
+        ul.finding-sources, ul.finding-evidence {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+        }
+        ul.finding-sources li, ul.finding-evidence li {
+            padding: 3px 0;
+        }
+        ul.finding-evidence li code {
+            color: var(--graphite);
+            background: transparent;
+            font-size: 11.5px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        a.finding-source {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 8px;
+            color: var(--carbon);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--slate);
+        }
+        a.finding-source:hover {
+            color: var(--toxic-muted);
+            border-bottom-color: var(--toxic-muted);
+        }
+        .finding-source-path {
+            word-break: break-all;
+        }
+        .finding-source-count {
+            color: var(--slate);
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
         }
         .crit-badge {
             display: inline-block;
@@ -1202,13 +1266,32 @@
                             <table class="findings-table">
                                 <tbody>
                                     {{range .Findings}}
-                                    <tr>
+                                    {{$expandable := or .Sources .Evidence}}
+                                    <tr class="finding-row{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                         <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
-                                        <td class="col-trait trait-id">{{.ID}}</td>
+                                        <td class="col-trait trait-id">{{if $expandable}}<span class="trait-expander" aria-hidden="true">▸</span>{{end}}{{.ID}}</td>
                                         <td>
                                             <div class="trait-desc">{{.Desc}}</div>
                                         </td>
                                     </tr>
+                                    {{if $expandable}}
+                                    <tr class="finding-detail" hidden>
+                                        <td></td>
+                                        <td colspan="2">
+                                            {{if .Sources}}
+                                            <ul class="finding-sources">
+                                                {{range .Sources}}
+                                                <li><a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}</a></li>
+                                                {{end}}
+                                            </ul>
+                                            {{else}}
+                                            <ul class="finding-evidence">
+                                                {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
+                                            </ul>
+                                            {{end}}
+                                        </td>
+                                    </tr>
+                                    {{end}}
                                     {{end}}
                                 </tbody>
                             </table>
@@ -1225,13 +1308,24 @@
                         <table class="findings-table">
                             <tbody>
                                 {{range .Findings}}
-                                <tr>
+                                {{$expandable := or .Sources .Evidence}}
+                                <tr class="finding-row{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                     <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
-                                    <td class="col-trait trait-id">{{.ID}}</td>
+                                    <td class="col-trait trait-id">{{if $expandable}}<span class="trait-expander" aria-hidden="true">▸</span>{{end}}{{.ID}}</td>
                                     <td>
                                         <div class="trait-desc">{{.Desc}}</div>
                                     </td>
                                 </tr>
+                                {{if $expandable}}
+                                <tr class="finding-detail" hidden>
+                                    <td></td>
+                                    <td colspan="2">
+                                        <ul class="finding-evidence">
+                                            {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
+                                        </ul>
+                                    </td>
+                                </tr>
+                                {{end}}
                                 {{end}}
                             </tbody>
                         </table>
@@ -1439,6 +1533,11 @@
                         <div class="files-search">
                             <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" />
                         </div>
+                        {{if lt .ShownFiles .TotalFiles}}
+                        <div class="files-truncated-notice" title="Files are ranked by ML probability; the lowest-scoring entries are hidden when archives exceed the display cap.">
+                            Showing top {{.ShownFiles}} of {{.TotalFiles}} files
+                        </div>
+                        {{end}}
                         <ul class="files-tree" id="files-tree" role="tree">
                             {{range .Files}}
                             <li class="files-tree-row{{if .IsContainer}} files-tree-container{{end}}" role="treeitem"
@@ -1488,11 +1587,22 @@
                                 <table class="findings-table">
                                     <tbody>
                                         {{range .Findings}}
-                                        <tr>
+                                        {{$expandable := or .Sources .Evidence}}
+                                        <tr class="finding-row{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                             <td class="col-crit"><span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span></td>
-                                            <td class="col-trait trait-id">{{.ID}}</td>
+                                            <td class="col-trait trait-id">{{if $expandable}}<span class="trait-expander" aria-hidden="true">▸</span>{{end}}{{.ID}}</td>
                                             <td><div class="trait-desc">{{.Desc}}</div></td>
                                         </tr>
+                                        {{if $expandable}}
+                                        <tr class="finding-detail" hidden>
+                                            <td></td>
+                                            <td colspan="2">
+                                                <ul class="finding-evidence">
+                                                    {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
+                                                </ul>
+                                            </td>
+                                        </tr>
+                                        {{end}}
                                         {{end}}
                                     </tbody>
                                 </table>
@@ -1645,6 +1755,7 @@
     <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
     <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js"></script>
     {{if .IsArchive}}<script nonce="{{.Nonce}}" type="module" src="/static/js/files-tab.js"></script>{{end}}
 </body>
 </html>

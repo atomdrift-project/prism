@@ -78,6 +78,27 @@ func TestHopperWasCompacted(t *testing.T) {
 	}
 }
 
+func TestCleaveReportReadsV5Facts(t *testing.T) {
+	var report cleaveReport
+	raw := []byte(`{"v":"5","fs":[{"id":0,"sha":"abc","path":"sample.exe","type":"pe","sz":42,"ff":{"m":{"binary":{"overall_entropy":7.2}},"v":{"pe.machine":"x86_64"},"s":[[16,"a","hello"]],"i":[["kernel32.dll","CreateFileW"]],"x":[["DllRegisterServer"]],"sc":[[".text",1024,4096,6.42,"r-x"]]}}]}`)
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("unmarshal v5: %v", err)
+	}
+	if len(report.Files) != 1 {
+		t.Fatalf("files len = %d", len(report.Files))
+	}
+	f := report.Files[0]
+	if len(f.Metrics) == 0 || string(f.KV["pe.machine"]) != `"x86_64"` {
+		t.Fatalf("v5 facts did not populate metrics/kv: %+v", f)
+	}
+	if got := f.Imports; len(got) != 1 || got[0] != "kernel32.dll!CreateFileW" {
+		t.Fatalf("imports = %#v", got)
+	}
+	if len(f.Strings) != 1 || len(f.Sections) != 1 || f.Sections[0].Flags != "r-x" {
+		t.Fatalf("strings/sections not populated: strings=%d sections=%+v", len(f.Strings), f.Sections)
+	}
+}
+
 func TestReassembleEnvelope(t *testing.T) {
 	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
