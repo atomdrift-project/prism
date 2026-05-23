@@ -141,8 +141,7 @@ if (millerEl && treeDataEl && detail) {
 
     function renderHintColumn() {
         const col = document.createElement('div');
-        col.className = 'files-miller-col';
-        col.style.flex = '1 1 320px';
+        col.className = 'files-miller-col files-miller-col-fill';
         const hint = document.createElement('div');
         hint.className = 'files-miller-hint';
         const h = document.createElement('div');
@@ -485,8 +484,7 @@ if (millerEl && treeDataEl && detail) {
 
             millerEl.innerHTML = '';
             const col = document.createElement('div');
-            col.className = 'files-miller-col';
-            col.style.flex = '1 1 100%';
+            col.className = 'files-miller-col files-miller-col-fill';
             const head = document.createElement('div');
             head.className = 'files-miller-colhead';
             head.textContent = `${matches.length} match${matches.length === 1 ? '' : 'es'}`;

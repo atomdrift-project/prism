@@ -487,23 +487,33 @@
             border-bottom: 1px solid var(--border);
             font-variant-numeric: tabular-nums;
         }
-        /* Miller columns — horizontal-scrolling stack of directory listings */
+        /* Miller columns — horizontal-scrolling stack of directory listings.
+           Height grows to fit content (no inner scrollbars), so a 5-file
+           archive renders as a short strip and a 100-file archive expands
+           the page. Each column sizes to its widest row within sane bounds. */
         .files-miller {
             display: flex;
-            min-height: 320px;
-            max-height: 520px;
+            align-items: stretch;
             overflow-x: auto;
             border-bottom: 1px solid var(--border);
             background: var(--mist);
         }
         .files-miller-col {
-            flex: 0 0 240px;
+            flex: 0 0 auto;
+            width: max-content;
+            min-width: 200px;
+            max-width: 480px;
             border-right: 1px solid var(--border);
             background: var(--mist);
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
-            min-width: 0;
+        }
+        /* Hint and search-result columns fill remaining horizontal space
+           instead of sizing to content. */
+        .files-miller-col.files-miller-col-fill {
+            flex: 1 1 320px;
+            width: auto;
+            max-width: none;
         }
         .files-miller-col:last-child { border-right: none; }
         .files-miller-colhead {
@@ -697,11 +707,8 @@
                 border-top: 1px solid var(--border);
                 max-height: 220px;
             }
-            .files-miller {
-                max-height: 360px;
-            }
             .files-miller-col {
-                flex: 0 0 200px;
+                max-width: 320px;
             }
             .fs-source { max-height: 420px; }
         }

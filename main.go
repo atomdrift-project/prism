@@ -3469,7 +3469,7 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 			src, ok := agg.sources[file.SHA256]
 			if !ok {
 				agg.sources[file.SHA256] = &FindingSource{
-					Path:   file.Path,
+					Path:   displayPath(file.Path),
 					SHA256: file.SHA256,
 					Count:  1,
 				}
@@ -4287,6 +4287,16 @@ func extractBasename(path string) string {
 	return path
 }
 
+// displayPath strips archive-container prefixes ("foo.tar!!bar.tgz!!path/x")
+// so users see the inner file path they'd see if the archive were unpacked.
+// Falls back to the input unchanged when no separator is present.
+func displayPath(p string) string {
+	if i := strings.LastIndex(p, "!!"); i >= 0 {
+		return p[i+2:]
+	}
+	return p
+}
+
 // fileTreeNode is a single node in the hierarchical archive-contents tree
 // emitted to the client. Compact JSON tags keep page weight low for big
 // archives.
@@ -4319,10 +4329,7 @@ func buildFileTreeNodes(files []cleaveFile) *fileTreeNode {
 		if f.Depth == 0 {
 			continue // skip archive container itself
 		}
-		path := f.Path
-		if idx := strings.Index(path, "!!"); idx >= 0 {
-			path = path[idx+2:]
-		}
+		path := displayPath(f.Path)
 		path = strings.TrimPrefix(path, "./")
 		path = strings.TrimPrefix(path, "/")
 		if path == "" {
@@ -4461,10 +4468,7 @@ func buildFileTree(files []cleaveFile, archiveFilename string) []FileTreeEntry {
 	out := make([]FileTreeEntry, 0, len(files))
 	for i := range files {
 		f := &files[i]
-		display := f.Path
-		if idx := strings.Index(display, "!!"); idx >= 0 {
-			display = display[idx+2:]
-		}
+		display := displayPath(f.Path)
 		isContainer := f.Depth == 0
 		if isContainer {
 			display = archiveFilename
