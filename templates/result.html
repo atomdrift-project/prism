@@ -27,6 +27,7 @@
             --hostile: #ef4444;
             --suspicious: #eab308;
             --notable: #3b82f6;
+            --clean: #22c55e;
         }
         * {
             margin: 0;
@@ -454,23 +455,14 @@
         }
         /* Files tab — two-pane archive explorer */
         .files-explorer {
-            display: grid;
-            grid-template-columns: minmax(220px, 320px) 1fr;
+            display: flex;
+            flex-direction: column;
             min-height: 480px;
-        }
-        .files-tree-pane {
-            border-right: 1px solid var(--border);
-            background: var(--mist);
-            overflow-y: auto;
-            max-height: 720px;
         }
         .files-search {
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
             background: var(--white);
-            position: sticky;
-            top: 0;
-            z-index: 1;
         }
         .files-search input {
             width: 100%;
@@ -495,51 +487,223 @@
             border-bottom: 1px solid var(--border);
             font-variant-numeric: tabular-nums;
         }
-        .files-tree {
-            list-style: none;
-            margin: 0;
-            padding: 4px 0;
+        /* Miller columns — horizontal-scrolling stack of directory listings */
+        .files-miller {
+            display: flex;
+            min-height: 320px;
+            max-height: 520px;
+            overflow-x: auto;
+            border-bottom: 1px solid var(--border);
+            background: var(--mist);
         }
-        .files-tree-row {
+        .files-miller-col {
+            flex: 0 0 240px;
+            border-right: 1px solid var(--border);
+            background: var(--mist);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        .files-miller-col:last-child { border-right: none; }
+        .files-miller-colhead {
+            padding: 8px 12px;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--slate);
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            font-family: 'SF Mono', Consolas, monospace;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .files-miller-list { list-style: none; padding: 4px 0; flex: 1; }
+        .files-miller-row {
             display: flex;
             align-items: center;
             gap: 8px;
             padding: 6px 12px;
-            cursor: pointer;
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 12.5px;
             color: var(--carbon);
-            border-bottom: 1px solid transparent;
+            cursor: pointer;
             transition: background 0.1s;
         }
-        .files-tree-row:hover { background: rgba(0, 0, 0, 0.04); }
-        .files-tree-row.selected { background: rgba(208, 255, 0, 0.18); }
-        .files-tree-row[hidden] { display: none; }
-        .files-tree-container {
-            font-weight: 600;
-            border-bottom: 1px solid var(--border);
-        }
-        .files-tree-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 2px;
-            flex-shrink: 0;
-        }
-        .files-tree-name {
+        .files-miller-row:hover { background: rgba(0, 0, 0, 0.05); }
+        .files-miller-row.selected { background: rgba(208, 255, 0, 0.22); }
+        .files-miller-row[hidden] { display: none; }
+        .files-miller-row .nm {
             flex: 1 1 auto;
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        .files-tree-type {
+        .files-miller-row .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
             flex-shrink: 0;
         }
-        .files-tree-size {
+        .files-miller-row .dot.hostile { background: var(--hostile); }
+        .files-miller-row .dot.suspicious { background: var(--suspicious); }
+        .files-miller-row .dot.notable { background: var(--notable); }
+        .files-miller-row .dot.clean { background: var(--clean, #22c55e); opacity: 0.45; }
+        .files-miller-row .meta {
             flex-shrink: 0;
-            font-size: 11px;
+            font-size: 10.5px;
             color: var(--slate);
             font-variant-numeric: tabular-nums;
+        }
+        .files-miller-row .chev {
+            color: var(--slate);
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .files-miller-row.leaf .chev { visibility: hidden; }
+        .files-miller-hint {
+            padding: 28px 22px;
+            color: var(--slate);
+            font-size: 12.5px;
+            text-align: center;
+            max-width: 320px;
+            margin: auto;
+        }
+        .files-miller-hint .emph { color: var(--carbon); font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
+
+        /* Inline source viewer (text files inside an archive) */
+        .files-source-view {
+            display: none;
+            grid-template-columns: minmax(0, 1fr) 280px;
+            min-height: 360px;
+        }
+        .files-source-view.active { display: grid; }
+        .fs-source {
+            overflow: auto;
+            max-height: 600px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            line-height: 1.55;
+            background: var(--white);
+        }
+        .fs-line {
+            display: grid;
+            grid-template-columns: 52px 14px 1fr;
+            padding: 0 12px;
+            min-height: 22px;
+            align-items: center;
+            border-left: 3px solid transparent;
+        }
+        .fs-line:hover { background: rgba(0,0,0,0.02); }
+        .fs-line.crit-hostile { background: rgba(239, 68, 68, 0.07); border-left-color: var(--hostile); }
+        .fs-line.crit-suspicious { background: rgba(234, 179, 8, 0.07); border-left-color: var(--suspicious); }
+        .fs-line.crit-notable { background: rgba(59, 130, 246, 0.05); border-left-color: var(--notable); }
+        .fs-line.crit-baseline { background: rgba(120, 120, 120, 0.04); border-left-color: rgba(120, 120, 120, 0.4); }
+        .fs-line.flash { animation: fs-flash 1.4s ease-out; }
+        @keyframes fs-flash {
+            0% { background: rgba(208, 255, 0, 0.55); }
+            100% { /* settles back to natural color */ }
+        }
+        .fs-line .ln {
+            text-align: right;
+            padding-right: 12px;
+            color: var(--slate);
+            font-size: 11px;
+            user-select: none;
+            font-variant-numeric: tabular-nums;
+        }
+        .fs-line .gut {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            justify-self: center;
+            background: transparent;
+        }
+        .fs-line.crit-hostile .gut { background: var(--hostile); }
+        .fs-line.crit-suspicious .gut { background: var(--suspicious); }
+        .fs-line.crit-notable .gut { background: var(--notable); }
+        .fs-line .code {
+            white-space: pre;
+            overflow-x: visible;
+            color: var(--carbon);
+        }
+        .fs-traits {
+            background: var(--cream);
+            border-left: 1px solid var(--border);
+            padding: 14px 14px;
+            overflow-y: auto;
+            max-height: 600px;
+        }
+        .fs-traits-h {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--slate);
+            margin-bottom: 8px;
+        }
+        .fs-trait {
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            background: var(--white);
+            border-radius: 6px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.1s;
+        }
+        .fs-trait:hover { border-color: var(--toxic-muted); }
+        .fs-trait.active { border-color: var(--toxic-muted); background: var(--toxic-dim); }
+        .fs-trait-head { display: flex; align-items: center; gap: 8px; }
+        .fs-trait .crit { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .fs-trait .crit.hostile { background: var(--hostile); }
+        .fs-trait .crit.suspicious { background: var(--suspicious); }
+        .fs-trait .crit.notable { background: var(--notable); }
+        .fs-trait-id {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11px;
+            color: var(--iron);
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .fs-trait-lines { font-size: 10.5px; color: var(--slate); font-variant-numeric: tabular-nums; }
+        .fs-trait-also {
+            font-size: 10.5px;
+            color: var(--slate);
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px dashed var(--border);
+            cursor: pointer;
+        }
+        .fs-trait-also:hover { color: var(--toxic-muted); }
+        .fs-source-placeholder {
+            padding: 40px 24px;
+            text-align: center;
+            color: var(--slate);
+            font-size: 13px;
+        }
+        @media (max-width: 760px) {
+            .files-source-view.active {
+                grid-template-columns: 1fr;
+            }
+            .fs-traits {
+                border-left: none;
+                border-top: 1px solid var(--border);
+                max-height: 220px;
+            }
+            .files-miller {
+                max-height: 360px;
+            }
+            .files-miller-col {
+                flex: 0 0 200px;
+            }
+            .fs-source { max-height: 420px; }
         }
         .files-detail-pane {
             padding: 16px 20px;
@@ -1149,6 +1313,13 @@
                 font-size: 18px;
             }
         }
+        /* Chroma syntax highlighting (generated server-side). Scoped under
+           .chroma so it only applies inside <code class="chroma"> blocks. */
+        {{chromaCSS}}
+        /* Make chroma class colors respect dark/light backgrounds in our
+           content line scaffold; inherit our font + size. */
+        .chroma { background: transparent; font: inherit; color: inherit; }
+        .chroma span { font: inherit; }
     </style>
 </head>
 <body>
@@ -1355,7 +1526,7 @@
                         <div class="content-line{{if .Risk}} crit-{{.Risk}}{{end}}"{{if .Traits}} title="{{range $i, $t := .Traits}}{{if $i}}, {{end}}{{$t}}{{end}}"{{end}}>
                             <span class="content-num">{{.Number}}</span>
                             <span class="content-dot crit-{{if .Risk}}{{.Risk}}{{else}}none{{end}}"></span>
-                            <code class="content-text">{{.Text}}</code>
+                            <code class="content-text chroma">{{if .HTML}}{{.HTML}}{{else}}{{.Text}}{{end}}</code>
                         </div>
                         {{end}}
                     </div>
@@ -1529,30 +1700,15 @@
             {{if .IsArchive}}
             <div class="tab-content" id="tab-files">
                 <div class="files-explorer">
-                    <div class="files-tree-pane">
-                        <div class="files-search">
-                            <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" />
-                        </div>
-                        {{if lt .ShownFiles .TotalFiles}}
-                        <div class="files-truncated-notice" title="Files are ranked by ML probability; the lowest-scoring entries are hidden when archives exceed the display cap.">
-                            Showing top {{.ShownFiles}} of {{.TotalFiles}} files
-                        </div>
-                        {{end}}
-                        <ul class="files-tree" id="files-tree" role="tree">
-                            {{range .Files}}
-                            <li class="files-tree-row{{if .IsContainer}} files-tree-container{{end}}" role="treeitem"
-                                data-file-sha="{{.SHA256}}"
-                                data-display="{{.Display}}"
-                                data-classification="{{.Classification}}"
-                                data-risk="{{.Risk}}">
-                                <span class="files-tree-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                                <span class="files-tree-name" title="{{.Display}}">{{if .IsContainer}}{{.Display}}{{else}}{{.Basename}}{{end}}</span>
-                                {{if .FileType}}<span class="files-tree-type filetype-tag">{{.FileType}}</span>{{end}}
-                                <span class="files-tree-size">{{.SizeStr}}</span>
-                            </li>
-                            {{end}}
-                        </ul>
+                    <div class="files-search">
+                        <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" />
                     </div>
+                    {{if lt .ShownFiles .TotalFiles}}
+                    <div class="files-truncated-notice" title="Files are ranked by ML probability; the lowest-scoring entries are hidden when archives exceed the display cap.">
+                        Showing top {{.ShownFiles}} of {{.TotalFiles}} files
+                    </div>
+                    {{end}}
+                    <div class="files-miller" id="files-miller" role="tree"></div>
                     <div class="files-detail-pane" id="files-detail">
                         <div class="files-detail-empty" data-default="1">
                             <div class="files-detail-empty-title">{{.Filename}}</div>
@@ -1570,6 +1726,7 @@
                                 <span class="files-detail-size">{{.SizeStr}}</span>
                             </div>
                             <div class="files-detail-subtabs">
+                                <button class="files-subtab" data-sub="source" hidden>Source</button>
                                 <button class="files-subtab active" data-sub="findings">Traits</button>
                                 <button class="files-subtab" data-sub="strings">Strings</button>
                                 <button class="files-subtab" data-sub="symbols">Symbols</button>
@@ -1578,6 +1735,10 @@
                             </div>
                         </div>
                         {{end}}{{end}}
+                        <div class="files-source-view" id="files-source-view">
+                            <div class="fs-source" id="fs-source"></div>
+                            <aside class="fs-traits" id="fs-traits"></aside>
+                        </div>
                         {{range .FileFindings}}
                         <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="findings" hidden>
                             {{if .Categories}}
@@ -1754,6 +1915,8 @@
 
     <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
     <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
+    {{if .IsArchive}}<script nonce="{{.Nonce}}" id="file-tree-data" type="application/json">{{.FileTreeJSON}}</script>{{end}}
+    {{if .IsArchive}}<script nonce="{{.Nonce}}" id="trait-occurrence-data" type="application/json">{{.TraitOccurrenceJSON}}</script>{{end}}
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js"></script>
     {{if .IsArchive}}<script nonce="{{.Nonce}}" type="module" src="/static/js/files-tab.js"></script>{{end}}

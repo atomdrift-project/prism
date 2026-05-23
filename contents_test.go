@@ -27,7 +27,7 @@ func TestRenderTextContentMatchesEvidence(t *testing.T) {
 		{ID: "metadata/import/os", Crit: 3, Evidence: []string{"import os"}},
 		{ID: "noise", Crit: 1, Evidence: []string{}}, // empty evidence ignored
 	}
-	lines := renderTextContent(body, findings)
+	lines := renderTextContent(body, findings, "")
 	if len(lines) != 4 {
 		t.Fatalf("expected 4 lines, got %d", len(lines))
 	}
@@ -50,7 +50,7 @@ func TestRenderTextContentDedupTraits(t *testing.T) {
 	findings := []finding{
 		{ID: "exec/eval", Crit: 5, Evidence: []string{"eval(", "eval"}}, // both match same line
 	}
-	lines := renderTextContent(body, findings)
+	lines := renderTextContent(body, findings, "")
 	if want := []string{"exec/eval"}; !slicesEq(lines[0].Traits, want) {
 		t.Errorf("traits = %v, want single-entry %v (duplicate evidence shouldn't double-add)", lines[0].Traits, want)
 	}
@@ -59,7 +59,7 @@ func TestRenderTextContentDedupTraits(t *testing.T) {
 func TestRenderTextContentTrimsCRLF(t *testing.T) {
 	body := []byte("first\r\nsecond\r\n")
 	findings := []finding{{ID: "x", Crit: 3, Evidence: []string{"second"}}}
-	lines := renderTextContent(body, findings)
+	lines := renderTextContent(body, findings, "")
 	if lines[0].Text != "first" {
 		t.Errorf("line 1 = %q, want %q (CR stripped)", lines[0].Text, "first")
 	}
@@ -73,7 +73,7 @@ func TestRenderTextContentTruncates(t *testing.T) {
 	for range maxContentLines + 50 {
 		b.WriteString("x\n")
 	}
-	lines := renderTextContent([]byte(b.String()), nil)
+	lines := renderTextContent([]byte(b.String()), nil, "")
 	if len(lines) != maxContentLines+1 { // +1 for the trailing truncation marker
 		t.Fatalf("got %d lines, want %d", len(lines), maxContentLines+1)
 	}
