@@ -308,17 +308,11 @@ if (millerEl && treeDataEl && detail) {
         const traitsTab = document.querySelector('.tab[data-tab="traits"]');
         if (traitsTab) traitsTab.click();
         if (!archiveID) return;
-        const row = document.querySelector('#tab-traits tr.finding-row[data-trait-id="' + cssEscape(archiveID) + '"]');
-        if (!row) return;
-        document.querySelectorAll('#tab-traits tr.finding-row.open').forEach(r => {
-            r.classList.remove('open');
-            const d = r.nextElementSibling;
-            if (d && d.classList.contains('finding-detail')) d.hidden = true;
-        });
-        row.classList.add('open');
-        const d = row.nextElementSibling;
-        if (d && d.classList.contains('finding-detail')) d.hidden = false;
-        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        const card = document.querySelector('#tab-traits .finding-card[data-trait-id="' + cssEscape(archiveID) + '"]');
+        if (!card) return;
+        document.querySelectorAll('#tab-traits .finding-card.open').forEach(c => c.classList.remove('open'));
+        card.classList.add('open');
+        card.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
 
     function cssEscape(s) {
@@ -529,6 +523,10 @@ if (millerEl && treeDataEl && detail) {
     function applyHash() {
         const m = location.hash.replace(/^#/, '').match(/file=([0-9a-f]{8,64})/i);
         if (!m) return false;
+        // Bring the Files tab forward — links from the Traits tab's expanded
+        // sources rely on this to actually become visible.
+        const filesTab = document.querySelector('.tab[data-tab="files"]');
+        if (filesTab && !filesTab.classList.contains('active')) filesTab.click();
         return selectBySha(m[1]);
     }
     window.addEventListener('hashchange', applyHash);
