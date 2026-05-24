@@ -24,8 +24,7 @@ if (millerEl && treeDataEl && detail) {
     const sourceView = detail.querySelector('#files-source-view');
     const sourceEl = detail.querySelector('#fs-source');
     const traitsEl = detail.querySelector('#fs-traits');
-    const contentsCache = new Map(); // sha -> { lines, isText, tooLarge, sizeStr, fileType }
-    const inFlight = new Map();      // sha -> Promise (dedupe concurrent fetches)
+    const contentsCache = new Map(); // sha -> { lines, isText, tooLarge, sizeStr, fileType }; bounded by CACHE_MAX
     let currentSourceSha = null;     // sha currently rendered in source view
 
     let traitOccurrence = {};
@@ -340,32 +339,66 @@ if (millerEl && treeDataEl && detail) {
         if (btn) btn.hidden = !available;
     }
 
-    async function loadContents(sha) {
+    const FETCH_TIMEOUT_MS = 10000;
+    const CACHE_MAX = 32;
+    let activeFetch = null; // AbortController for the currently-in-flight contents fetch
+
+    function cachePut(sha, data) {
+        // Keep the cache bounded so a user clicking through a 100-file
+        // archive doesn't accumulate every body in memory. Map iterates in
+        // insertion order, so the first key is the oldest entry.
+        if (contentsCache.size >= CACHE_MAX) {
+            const oldest = contentsCache.keys().next().value;
+            if (oldest) contentsCache.delete(oldest);
+        }
+        contentsCache.set(sha, data);
+    }
+
+    async function loadContents(sha, signal) {
         if (contentsCache.has(sha)) return contentsCache.get(sha);
-        if (inFlight.has(sha)) return inFlight.get(sha);
-        const p = fetch('/file/' + sha + '/contents', { credentials: 'same-origin' })
-            .then(r => r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)))
-            .then(data => {
-                contentsCache.set(sha, data);
-                inFlight.delete(sha);
-                return data;
-            })
-            .catch(err => {
-                inFlight.delete(sha);
-                throw err;
-            });
-        inFlight.set(sha, p);
-        return p;
+        const tid = setTimeout(() => {
+            // Surface a clean error rather than letting fetch hang forever.
+            if (activeFetch === signal._ctl) activeFetch.abort('timeout');
+        }, FETCH_TIMEOUT_MS);
+        try {
+            const r = await fetch('/file/' + sha + '/contents', { credentials: 'same-origin', signal });
+            const data = await r.json().catch(() => null);
+            if (!r.ok) {
+                const msg = (data && data.error) || ('HTTP ' + r.status);
+                throw new Error(msg);
+            }
+            cachePut(sha, data);
+            return data;
+        } finally {
+            clearTimeout(tid);
+        }
+    }
+
+    function renderSourceError(msg) {
+        if (sourceEl) sourceEl.innerHTML = '<div class="fs-source-placeholder">Couldn’t load source: ' + msg + '</div>';
+        if (traitsEl) traitsEl.innerHTML = '';
     }
 
     async function maybeRenderSource(sha) {
         if (!sourceView || !sourceEl) return;
+        // Cancel any earlier in-flight fetch so its eventual response can't
+        // overwrite the file the user just selected.
+        if (activeFetch) activeFetch.abort('superseded');
+        const ctl = new AbortController();
+        ctl.signal._ctl = ctl;
+        activeFetch = ctl;
+
         let data;
         try {
-            data = await loadContents(sha);
+            data = await loadContents(sha, ctl.signal);
         } catch (err) {
+            if (ctl.signal.aborted) return; // a newer click took over; stay quiet
             setSourceSubtabAvailable(sha, false);
+            // Only surface error UI if this is still the user's current file.
+            if (state.selectedSha === sha) renderSourceError(err.message || 'unknown error');
             return;
+        } finally {
+            if (activeFetch === ctl) activeFetch = null;
         }
         // Did the user switch files while the fetch was in-flight?
         if (state.selectedSha !== sha) return;

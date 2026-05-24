@@ -419,7 +419,6 @@ type resultData struct {
 	FindingCount   string
 	Nonce          string
 	Size           string
-	TraitColWidth  string
 	RiskLevel      string
 	ReportCreated  string
 	ReportProvider string
@@ -2503,31 +2502,50 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 }
 
+// writeJSONError writes a JSON-encoded error envelope so the client never
+// has to guess whether a response body is plain text or JSON.
+func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code}) //nolint:errcheck // already failing, nothing more to do
+}
+
+// writeJSON writes a successful JSON response with a stable cache header.
+// The cache is private + short-lived because the body depends on the
+// underlying SHA's analysis, which is itself immutable for that SHA.
+func writeJSON(w http.ResponseWriter, body any, logger *slog.Logger) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		logger.Debug("contents: encode failed", "error", err)
+	}
+}
+
 // handleFileContents returns rendered source-line JSON for a file SHA. Used
-// by the archive Files tab's inline source viewer.
+// by the archive Files tab's inline source viewer. All responses (success
+// and error) carry a JSON body so the client can parse uniformly.
 func handleFileContents(w http.ResponseWriter, r *http.Request) {
 	sha := r.PathValue("sha256")
-	ip := clientIP(r)
+	reqLogger := logger.With("sha256", sha, "client_ip", clientIP(r))
 	if !validSHA256(sha) {
-		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
 		return
 	}
-	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 	_, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeJSONError(w, http.StatusNotFound, "not_found", "result not found")
 			return
 		}
 		reqLogger.Warn("contents lookup failed", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
 	// Parse the cleave report so we can read findings for the requested SHA.
 	var fullResp litmusFullResponse
 	if err := json.Unmarshal([]byte(res.RawLitmus), &fullResp); err != nil {
-		http.Error(w, "no analysis", http.StatusUnprocessableEntity)
+		writeJSONError(w, http.StatusUnprocessableEntity, "no_analysis", "no analysis available for this file")
 		return
 	}
 	report := &cleaveReport{}
@@ -2545,26 +2563,21 @@ func handleFileContents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if file == nil && len(report.Files) > 0 {
-		// Fallback to the depth-0 entry if the lookup matched the standalone
-		// view of this SHA (where the report's only file IS this one).
+		// Fallback to the depth-0 entry: this SHA was looked up directly
+		// (standalone-file route), and the report has just one entry.
 		file = &report.Files[0]
 	}
 	if file == nil {
-		http.Error(w, "no file in report", http.StatusUnprocessableEntity)
+		writeJSONError(w, http.StatusUnprocessableEntity, "no_file", "no file in report")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-
 	if !isTextFileType(file.FileType) {
-		if err := enc.Encode(map[string]any{
+		writeJSON(w, map[string]any{
 			"sha":      sha,
 			"fileType": file.FileType,
 			"isText":   false,
-		}); err != nil {
-			reqLogger.Debug("contents: encode failed", "error", err)
-		}
+		}, reqLogger)
 		return
 	}
 
@@ -2573,33 +2586,28 @@ func handleFileContents(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	if err != nil {
 		if strings.Contains(err.Error(), "too large") {
-			if eerr := enc.Encode(map[string]any{
+			writeJSON(w, map[string]any{
 				"sha":      sha,
 				"fileType": file.FileType,
 				"isText":   true,
 				"tooLarge": true,
 				"sizeStr":  formatBytes(file.Size),
-			}); eerr != nil {
-				reqLogger.Debug("contents: encode failed", "error", eerr)
-			}
+			}, reqLogger)
 			return
 		}
 		reqLogger.Debug("contents fetch failed", "error", err)
-		http.Error(w, "fetch failed", http.StatusBadGateway)
+		writeJSONError(w, http.StatusBadGateway, "fetch_failed", "couldn't fetch file body")
 		return
 	}
 
 	lines := renderTextContent(body, file.Findings, file.Path)
-	w.Header().Set("Cache-Control", "private, max-age=300")
-	if err := enc.Encode(map[string]any{
+	writeJSON(w, map[string]any{
 		"sha":       sha,
 		"fileType":  file.FileType,
 		"isText":    true,
 		"lineCount": len(lines),
 		"lines":     lines,
-	}); err != nil {
-		reqLogger.Debug("contents: encode failed", "error", err)
-	}
+	}, reqLogger)
 }
 
 func hopperFileURL(sha string) string {
@@ -3164,20 +3172,6 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	}
 	data.ArchiveCategories = aggregateArchiveCategories(report.Files)
 
-	// Compute trait column width from longest trait ID across all files.
-	maxTraitLen := 0
-	for i := range data.FileFindings {
-		ff := &data.FileFindings[i]
-		for ci := range ff.Categories {
-			for _, f := range ff.Categories[ci].Findings {
-				if len(f.ID) > maxTraitLen {
-					maxTraitLen = len(f.ID)
-				}
-			}
-		}
-	}
-	// ~0.65em per character in monospace at 12px, with 2em padding
-	data.TraitColWidth = fmt.Sprintf("%.1fem", float64(maxTraitLen)*0.65+2)
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
 	// should render the file-tree view. hadArchive is sticky across the

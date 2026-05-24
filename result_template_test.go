@@ -65,7 +65,6 @@ func singleFileData() resultData {
 		BuildCommit:   "test",
 		SuspiciousT:   0.65,
 		HostileT:      0.887,
-		TraitColWidth: "8em",
 		Nonce:         "n",
 	}
 }
@@ -89,7 +88,6 @@ func archiveData() resultData {
 		BuildCommit:   "test",
 		SuspiciousT:   0.65,
 		HostileT:      0.887,
-		TraitColWidth: "8em",
 		Nonce:         "n",
 		IsArchive:     true,
 		TotalFiles:    3,
