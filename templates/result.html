@@ -194,36 +194,33 @@
             height: 10px;
             border-radius: 2px;
         }
-        /* Full-width formula row above the molecule/meta grid so long
-           formulas have room to breathe instead of wrapping inside the
-           narrow right column. The card itself is a link to /?m=…
-           (find other samples with the same malecule). Long formulas
-           scroll horizontally inside the card with a soft fade-mask on
-           the right edge — the trailing 'find similar' hint sits on top
-           of the fade as a persistent click affordance. */
-        .formula-row {
-            padding: 0 26px 18px;
-        }
+        /* Formula lives at the top of the right-column meta panel.
+           Compact (15px Oxanium) so it fits the narrow column alongside
+           the size/first-seen/analyzed rows below it. Long formulas
+           scroll horizontally inside the card; native scrollbar is
+           hidden so it stays clean. Whole card is a link to /?m=… to
+           find other samples with the same malecule. */
         .formula-label {
-            font-size: 11px;
+            font-size: 10.5px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.08em;
             color: var(--slate);
-            margin-bottom: 6px;
+            margin-bottom: 5px;
         }
         .formula {
             display: flex;
             align-items: center;
-            position: relative;
+            gap: 6px;
             overflow: hidden;
-            padding: 12px 14px;
+            padding: 7px 10px;
+            margin-bottom: 14px;
             background: var(--cream);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 6px;
             color: var(--carbon);
             text-decoration: none;
-            transition: border-color 0.12s, background 0.12s, box-shadow 0.12s, transform 0.12s;
+            transition: border-color 0.12s, background 0.12s;
         }
         .formula-text {
             flex: 1 1 auto;
@@ -232,55 +229,30 @@
             overflow-y: hidden;
             white-space: nowrap;
             font-family: 'Oxanium', sans-serif;
-            font-size: 22px;
+            font-size: 15px;
             font-weight: 700;
-            letter-spacing: -0.5px;
+            letter-spacing: -0.3px;
             line-height: 1.3;
-            padding-right: 100px;
             scrollbar-width: none;
         }
         .formula-text::-webkit-scrollbar { display: none; }
         .formula-text sub {
-            font-size: 0.6em;
+            font-size: 0.65em;
             vertical-align: baseline;
             position: relative;
             top: 0.2em;
         }
-        .formula::after {
-            content: '';
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 110px;
-            pointer-events: none;
-            background: linear-gradient(90deg, rgba(250, 250, 249, 0), var(--cream) 55%);
-            transition: background 0.12s;
-        }
-        .formula-hint {
-            position: absolute;
-            right: 14px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-family: 'Inter', -apple-system, sans-serif;
-            font-size: 11.5px;
-            font-weight: 500;
+        .formula-arrow {
+            flex: 0 0 auto;
+            font-size: 11px;
             color: var(--slate);
-            white-space: nowrap;
-            pointer-events: none;
-            z-index: 1;
             transition: color 0.12s;
         }
         a.formula:hover {
             border-color: var(--toxic-muted);
             background: var(--white);
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
-            transform: translateY(-1px);
         }
-        a.formula:hover::after {
-            background: linear-gradient(90deg, rgba(255, 255, 255, 0), var(--white) 55%);
-        }
-        a.formula:hover .formula-hint {
+        a.formula:hover .formula-arrow {
             color: var(--toxic-dark);
         }
         /* Meta as a key/value list with thin dividers. */
@@ -349,7 +321,7 @@
             cursor: default;
         }
         .molecule-viz {
-            min-height: 280px;
+            min-height: 200px;
             background: var(--white);
             display: flex;
             align-items: center;
@@ -1530,14 +1502,13 @@
                 gap: 16px;
             }
             .molecule-viz {
-                min-height: 240px;
+                min-height: 170px;
             }
-            .formula {
-                font-size: 18px;
+            .formula-text {
+                font-size: 14px;
             }
             .verdict-bar { padding: 18px 18px 4px; }
             .verdict-meta { padding: 0 18px 12px; }
-            .formula-row { padding: 0 18px 14px; }
             .hero-body { padding: 8px 18px 20px; }
         }
         /* Chroma syntax highlighting (generated server-side). Scoped under
@@ -1571,13 +1542,6 @@
                 </div>
             </div>
             <div class="verdict-meta">SHA256 {{.SHA256}}</div>
-            <div class="formula-row">
-                <div class="formula-label">Mal-ecule</div>
-                <a class="formula" href="/?m={{.FormulaQuery}}" title="Find other samples with this malecule">
-                    <span class="formula-text">{{.Formula}}</span>
-                    <span class="formula-hint">find similar ↗</span>
-                </a>
-            </div>
             <div class="hero-body">
             <div class="molecule-viz">
                 <div class="molecule-container">
@@ -1593,6 +1557,11 @@
                 </div>
             </div>
             <div class="molecule-info">
+                <div class="formula-label">Mal-ecule</div>
+                <a class="formula" href="/?m={{.FormulaQuery}}" title="Find other samples with this malecule">
+                    <span class="formula-text">{{.Formula}}</span>
+                    <span class="formula-arrow">↗</span>
+                </a>
                 <div class="meta-table">
                     <div class="meta-row">
                         <span class="meta-label">Size</span>
