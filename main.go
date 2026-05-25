@@ -82,11 +82,18 @@ var (
 	logger            *slog.Logger
 	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
 	hopperDB          *hopper.DB
+	trustedSubnets    []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
 )
 
 const (
-	defaultHopperDSN             = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
-	defaultHopperAPIAddr         = "hopper-api:8081"
+	defaultHopperDSN     = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
+	defaultHopperAPIAddr = "hopper-api:8081"
+	// defaultTrustedSubnets is the baseline allowlist for operator
+	// actions: RFC1918 private IPv4, IPv4 loopback, IPv6 loopback, and
+	// IPv6 unique-local addresses (RFC 4193). Operators add deployment-
+	// specific external ranges via --trusted-subnets, which replaces
+	// (not extends) this list.
+	defaultTrustedSubnets        = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
 	frontpageFeedCacheKey        = "feed-frontpage-v1"
 	frontpageFeedRefreshInterval = 90 * time.Second
 	frontpageFeedMaxAge          = 3 * time.Minute
@@ -222,6 +229,26 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// isTrustedClient reports whether the request originates from a client in
+// one of the operator-configured trusted subnets. Used to gate privileged
+// operator actions (rescan, etc.) that should not be exposed to the public
+// internet. Returns false if the IP cannot be parsed or no subnets match.
+func isTrustedClient(r *http.Request) bool {
+	if len(trustedSubnets) == 0 {
+		return false
+	}
+	ip := net.ParseIP(clientIP(r))
+	if ip == nil {
+		return false
+	}
+	for _, n := range trustedSubnets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // FindingDisplay represents a single finding for table display.
@@ -414,6 +441,7 @@ type resultData struct {
 	Verdict        string
 	Formula        template.HTML
 	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
+	CSRFToken      string // signed CSRF token for operator actions (rescan)
 	FileType       string
 	MoleculeJSON   template.JS
 	Duration       string
@@ -463,6 +491,7 @@ type resultData struct {
 	IsArchive         bool
 	IsText            bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
 	LimitedInfo       bool
+	IsTrusted         bool // client IP is in a trusted subnet — enables operator actions (rescan button)
 	// Contents holds the rendered text body of a text file, broken into
 	// annotated lines. Empty for non-text files and archives.
 	Contents []ContentLine
@@ -746,6 +775,7 @@ func main() {
 	var noCache bool
 	var dbDSN string
 	var port string
+	trustedSubnetsRaw := defaultTrustedSubnets
 	for i, arg := range os.Args[1:] {
 		switch {
 		case arg == "--no-cache" || arg == "-no-cache":
@@ -768,8 +798,24 @@ func main() {
 			hopperAPIAddr = strings.TrimPrefix(arg, "--hopper-api-addr=")
 		case arg == "--hopper-api-addr" && i+1 < len(os.Args[1:]):
 			hopperAPIAddr = os.Args[i+2]
+		case strings.HasPrefix(arg, "--trusted-subnets="):
+			trustedSubnetsRaw = strings.TrimPrefix(arg, "--trusted-subnets=")
+		case arg == "--trusted-subnets" && i+1 < len(os.Args[1:]):
+			trustedSubnetsRaw = os.Args[i+2]
 		default:
 		}
+	}
+	for s := range strings.SplitSeq(trustedSubnetsRaw, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		_, ipnet, err := net.ParseCIDR(s)
+		if err != nil {
+			logger.Error("invalid --trusted-subnets entry", "value", s, "error", err)
+			os.Exit(1)
+		}
+		trustedSubnets = append(trustedSubnets, ipnet)
 	}
 
 	if dbDSN == "" {
@@ -1058,6 +1104,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
 	mux.HandleFunc("GET /file/{sha256}/contents", handleFileContents)
+	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /_/health", handleHealth)
@@ -1468,6 +1515,50 @@ func feedDate(t, now time.Time) string {
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 	return t.Local().Format("Jan 2") //nolint:gosmopolitan // server-local rendering is intentional for the public feed
+}
+
+// errSampleNotEligible is returned by requestRescan when the SHA matches no
+// top-level, non-skipped sample in the hopper database.
+var errSampleNotEligible = errors.New("sample not found, is an archive child, or is marked skip")
+
+// requestRescan clears the cached analysis fields for the given sample
+// hash so the next worker poll picks it up as Tier 1 (unanalyzed) work.
+// Limited to top-level non-skipped samples (parent is empty, skip is
+// empty) — archive children inherit analysis from their parent, and
+// skipped samples are excluded deliberately. The prism-side result cache
+// is invalidated on success so a subsequent GET /file/<sha> does not
+// serve the stale rendered view.
+//
+// This currently uses the raw pgxpool exposed by hopper.DB.Pool(); it
+// would belong as a hopper.DB.RequestRescan method but is kept local to
+// avoid a hopper version bump for this single operator action.
+func requestRescan(ctx context.Context, sha string) error {
+	pool := hopperDB.Pool()
+	if pool == nil {
+		return errors.New("hopper database unavailable")
+	}
+	tag, err := pool.Exec(ctx, `
+		UPDATE samples
+		SET cleave_result = NULL,
+		    litmus_result = NULL,
+		    analyzed_at = NULL,
+		    last_error_at = NULL,
+		    traits_version = '',
+		    updated_at = NOW()
+		WHERE sha256 = $1 AND parent = '' AND skip = ''`,
+		sha)
+	if err != nil {
+		return fmt.Errorf("hopper rescan update: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errSampleNotEligible
+	}
+	if delErr := cache.Delete(ctx, sha); delErr != nil {
+		// Cache invalidation failure is not fatal — the next refresh window
+		// will pick up the new state — but worth logging.
+		logger.Debug("rescan: cache invalidation failed", "sha256", sha, "error", delErr)
+	}
+	return nil
 }
 
 func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger *slog.Logger) (storedResult, error) {
@@ -1910,6 +2001,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data := prepareResultData(r.Context(), res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
+	data.IsTrusted = isTrustedClient(r)
+	if data.IsTrusted {
+		// Only mint a CSRF token when the page will actually render an
+		// action that needs one — keeps untrusted views identical.
+		data.CSRFToken = csrfToken()
+	}
 	if hopperDB != nil {
 		report, err := hopperDB.LatestReport(r.Context(), sha, "re")
 		if err == nil {
@@ -2552,6 +2649,48 @@ func writeJSON(w http.ResponseWriter, body any, logger *slog.Logger) {
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		logger.Debug("contents: encode failed", "error", err)
 	}
+}
+
+// handleRescan accepts an operator-initiated request to re-queue a sample for
+// analysis. Gated on two checks: the client must originate from a trusted
+// subnet (see --trusted-subnets), and the form must carry a valid CSRF token
+// from a recent page render. On success, the sample's analysis fields are
+// cleared in hopper so the next worker poll picks it up, and prism's local
+// result cache for that SHA is invalidated.
+func handleRescan(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha256")
+	ip := clientIP(r)
+	reqLogger := logger.With("sha256", sha, "client_ip", ip, "action", "rescan")
+
+	if !validSHA256(sha) {
+		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
+		return
+	}
+	if !isTrustedClient(r) {
+		reqLogger.Warn("rescan denied: client IP not in trusted subnets")
+		writeJSONError(w, http.StatusForbidden, "forbidden", "rescan is restricted to trusted networks")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad_form", "malformed request")
+		return
+	}
+	if !csrfValid(r.FormValue("csrf_token"), 30*time.Minute) {
+		writeJSONError(w, http.StatusForbidden, "bad_csrf", "CSRF token missing or expired; reload the page and try again")
+		return
+	}
+	if err := requestRescan(r.Context(), sha); err != nil {
+		if errors.Is(err, errSampleNotEligible) {
+			writeJSONError(w, http.StatusNotFound, "not_eligible", "sample not found or not eligible for rescan")
+			return
+		}
+		reqLogger.Error("rescan: hopper update failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "rescan_failed", "failed to queue rescan")
+		return
+	}
+	reqLogger.Info("rescan queued")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"}) //nolint:errcheck,errchkjson // map[string]string is JSON-safe
 }
 
 // handleFileContents returns rendered source-line JSON for a file SHA. Used

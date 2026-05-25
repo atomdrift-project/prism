@@ -308,6 +308,46 @@
             font-size: 12.5px;
             text-align: right;
         }
+        /* Small inline rescan button — only rendered for clients from
+           trusted subnets (see --trusted-subnets). Subtle by default so
+           it doesn't compete with the analysis timestamp; toxic accent on
+           hover signals interactivity. */
+        .rescan-btn {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 8px;
+            padding: 1px 7px;
+            font: inherit;
+            font-size: 10.5px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--slate);
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
+        }
+        .rescan-btn:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        .rescan-btn:disabled {
+            cursor: progress;
+            opacity: 0.6;
+        }
+        .rescan-btn.is-done {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+            cursor: default;
+        }
+        .rescan-btn.is-error {
+            color: #991b1b;
+            border-color: rgba(239, 68, 68, 0.4);
+            background: rgba(239, 68, 68, 0.08);
+            cursor: default;
+        }
         .molecule-viz {
             min-height: 280px;
             background: var(--white);
@@ -1567,7 +1607,10 @@
                     {{if .AnalyzedAt}}
                     <div class="meta-row">
                         <span class="meta-label">Analyzed</span>
-                        <span class="meta-value" title="{{.AnalyzedAt}}">{{.AnalyzedAgo}}</span>
+                        <span class="meta-value" title="{{.AnalyzedAt}}">
+                            {{.AnalyzedAgo}}
+                            {{if .IsTrusted}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
+                        </span>
                     </div>
                     {{end}}
                 </div>
@@ -2103,5 +2146,6 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     {{if .IsArchive}}<script nonce="{{.Nonce}}" type="module" src="/static/js/files-tab.js?v={{.BuildCommit}}"></script>{{end}}
+    {{if .IsTrusted}}<script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>{{end}}
 </body>
 </html>
