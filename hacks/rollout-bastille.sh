@@ -156,7 +156,7 @@ if doas bastille cmd "$RUN" cmp -s /usr/local/etc/rc.d/prism.new /usr/local/etc/
     doas bastille cmd "$RUN" rm -f /usr/local/etc/rc.d/prism.new
 else
     log "rc.d/prism changed — will restart"
-    doas bastille cmd "$RUN" mv /usr/local/etc/rc.d/prism.new /usr/local/etc/rc.d/prism
+    doas bastille cmd "$RUN" mv -f /usr/local/etc/rc.d/prism.new /usr/local/etc/rc.d/prism
     doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/prism
     NEEDS_PRISM_RESTART=1
 fi
@@ -223,7 +223,7 @@ if doas bastille cmd "$RUN" cmp -s /usr/local/etc/rc.d/cloudflared.new /usr/loca
     doas bastille cmd "$RUN" rm -f /usr/local/etc/rc.d/cloudflared.new
 else
     log "rc.d/cloudflared changed"
-    doas bastille cmd "$RUN" mv /usr/local/etc/rc.d/cloudflared.new /usr/local/etc/rc.d/cloudflared
+    doas bastille cmd "$RUN" mv -f /usr/local/etc/rc.d/cloudflared.new /usr/local/etc/rc.d/cloudflared
     doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/cloudflared
 fi
 doas bastille sysrc "$RUN" cloudflared_enable=YES >/dev/null
@@ -236,6 +236,11 @@ doas bastille sysrc "$RUN" cloudflared_enable=YES >/dev/null
 
 log "Staging prism binary"
 doas bastille jcp "$BUILD" /home/prism/prism/prism "$RUN" /usr/local/bin/prism.new
+# Normalize ownership to root:wheel (FreeBSD convention for /usr/local/bin/)
+# so future BSD-mv calls don't go interactive on UID mismatch. jcp preserves
+# numeric UIDs from the build jail, which may not map to the same user name
+# in the run jail.
+doas bastille cmd "$RUN" chown root:wheel /usr/local/bin/prism.new
 doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism.new
 
 if doas bastille cmd "$RUN" cmp -s /usr/local/bin/prism.new /usr/local/bin/prism 2>/dev/null; then
@@ -251,7 +256,7 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
     # until restart. Done immediately before the restart to keep the window
     # between "binary changed on disk" and "service restarted" minimal.
     if doas bastille cmd "$RUN" test -f /usr/local/bin/prism.new; then
-        doas bastille cmd "$RUN" mv /usr/local/bin/prism.new /usr/local/bin/prism
+        doas bastille cmd "$RUN" mv -f /usr/local/bin/prism.new /usr/local/bin/prism
     fi
     if doas bastille cmd "$RUN" service prism status >/dev/null 2>&1; then
         log "Restarting prism service"
