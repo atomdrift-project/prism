@@ -9,6 +9,15 @@
 # Prerequisites:
 #   - "hopper-api" must have an entry in /etc/hosts on this host for the API
 #   - "hopper-db" must have an entry in /etc/hosts on this host for PostgreSQL
+#
+# Downtime model
+# --------------
+# Service stays running across all config and binary-staging steps. The only
+# moment of downtime is the final `service prism restart`, gated behind a
+# diff: if neither the binary nor rc.d/prism changed, no restart happens.
+# Binary is staged into /usr/local/bin/prism.new and atomically renamed into
+# place just before restart, so we never overwrite a running executable
+# (FreeBSD ETXTBSY) and never have a window with no binary present.
 
 set -ex
 
@@ -41,10 +50,14 @@ log "Using hopper-db: $HOPPER_DB_LINE"
 doas bastille cmd "$BUILD" true || die "build jail '$BUILD' not accessible"
 doas bastille cmd "$RUN" true || die "run jail '$RUN' not accessible"
 
+# Tracks whether any restart-affecting change happened (binary or rc.d).
+# Set to 1 by binary diff or rc.d/prism diff below.
+NEEDS_PRISM_RESTART=0
+
 # --- Build jail setup ---
 
 log "Ensuring DNS resolver is running in build jail"
-doas bastille sysrc "$BUILD" local_unbound_enable=YES
+doas bastille sysrc "$BUILD" local_unbound_enable=YES >/dev/null
 doas bastille service "$BUILD" local_unbound status >/dev/null 2>&1 || \
     doas bastille service "$BUILD" local_unbound start
 
@@ -52,8 +65,12 @@ log "Ensuring build user exists"
 doas bastille cmd "$BUILD" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$BUILD" pw useradd prism -m -s /bin/sh -c "Prism Build"
 
-log "Installing build dependencies"
-doas bastille pkg "$BUILD" install -y go gmake
+# `pkg install -y` is idempotent but always refreshes the catalog (slow).
+# `pkg info -e` short-circuits when packages are already present.
+if ! doas bastille cmd "$BUILD" pkg info -e go gmake >/dev/null 2>&1; then
+    log "Installing build dependencies"
+    doas bastille pkg "$BUILD" install -y go gmake
+fi
 
 log "Copying source tree to build jail"
 doas bastille cmd "$BUILD" rm -rf /home/prism/prism
@@ -66,7 +83,7 @@ doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake build"
 log "Running tests"
 doas bastille cmd "$BUILD" su -l prism -c "cd ~/prism && gmake test"
 
-# --- Run jail setup (all config before any restarts) ---
+# --- Run jail config (service stays running through all of this) ---
 
 # Ensure hopper hostnames resolve inside the run jail.
 if ! doas bastille cmd "$RUN" awk '/[[:space:]]hopper-api([[:space:]]|$)/{found=1} END{exit !found}' /etc/hosts 2>/dev/null; then
@@ -82,30 +99,18 @@ log "Ensuring run user exists"
 doas bastille cmd "$RUN" id -u prism >/dev/null 2>&1 || \
     doas bastille cmd "$RUN" pw useradd prism -m -s /bin/sh -c "Prism Service"
 
-log "Stopping prism service (if running)"
-doas bastille cmd "$RUN" service prism stop 2>/dev/null || true
-
-log "Installing prism binary"
 doas bastille cmd "$RUN" mkdir -p /usr/local/bin
-doas bastille jcp "$BUILD" /home/prism/prism/prism "$RUN" /usr/local/bin/prism
-doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism
 
 # --- Hopper database password ---
-# Stored in ~prism/.pgpass (PostgreSQL standard; pgx reads it automatically).
-# The password is never placed in the DSN, environment, or process table.
-# Copied from the hopper jail where it is already provisioned.
-
-# --- Hopper database password ---
-# Stored in ~prism/.pgpass in the run jail (PostgreSQL standard; pgx reads it automatically).
-# The password is never placed in the DSN, environment, or process table.
+# Stored in ~prism/.pgpass in the run jail (PostgreSQL standard; pgx reads it
+# automatically). The password is never placed in the DSN, environment, or
+# process table. Copied from the hopper jail where it is already provisioned.
 
 if doas bastille cmd "$RUN" sh -c "test -f /home/prism/.pgpass" 2>/dev/null; then
     log "Hopper credentials already present in prism jail, skipping copy"
 else
     log "Copying hopper credentials from hopper-db jail"
     doas bastille cmd hopper-db test -f /home/hopper/.pgpass || die "hopper-db jail pgpass not found at /home/hopper/.pgpass"
-    # Hoist the password from the hopper-db jail's pgpass (localhost entry) and write a
-    # remote entry for prism to use (connecting to hopper-db, not localhost).
     set +x
     HOPPER_PASS=$(doas bastille cmd hopper-db sh -c "cut -d: -f5 /home/hopper/.pgpass")
     [ -z "$HOPPER_PASS" ] && die "could not read password from hopper-db jail pgpass"
@@ -114,9 +119,11 @@ else
     set -x
 fi
 
-log "Creating rc.d service for prism"
+# rc.d/prism — written via stage-and-cmp so we only update (and trigger a
+# restart) when the script content actually changes.
+log "Staging rc.d/prism"
 doas bastille cmd "$RUN" mkdir -p /usr/local/etc/rc.d
-doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/prism >/dev/null <<'EOF'
+doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/prism.new >/dev/null <<'EOF'
 #!/bin/sh
 
 # PROVIDE: prism
@@ -144,32 +151,49 @@ command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env 
 run_rc_command "$1"
 EOF
 
-doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/prism
-doas bastille sysrc "$RUN" prism_enable=YES
+if doas bastille cmd "$RUN" cmp -s /usr/local/etc/rc.d/prism.new /usr/local/etc/rc.d/prism 2>/dev/null; then
+    log "rc.d/prism unchanged"
+    doas bastille cmd "$RUN" rm -f /usr/local/etc/rc.d/prism.new
+else
+    log "rc.d/prism changed — will restart"
+    doas bastille cmd "$RUN" mv /usr/local/etc/rc.d/prism.new /usr/local/etc/rc.d/prism
+    doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/prism
+    NEEDS_PRISM_RESTART=1
+fi
+doas bastille sysrc "$RUN" prism_enable=YES >/dev/null
 
 # --- Cloudflare Tunnel setup ---
 # DNS must be running before pkg can bootstrap.
 log "Ensuring DNS resolver is running in run jail"
-doas bastille sysrc "$RUN" local_unbound_enable=YES
+doas bastille sysrc "$RUN" local_unbound_enable=YES >/dev/null
 doas bastille service "$RUN" local_unbound status >/dev/null 2>&1 || \
     doas bastille service "$RUN" local_unbound start
 
-
 # Tunnel and DNS are configured in the Cloudflare dashboard (Zero Trust -> Tunnels).
 # Pass CF_TUNNEL_TOKEN on first deploy; it is persisted via sysrc for future runs.
-
-log "Installing cloudflared"
-doas bastille pkg "$RUN" install -y cloudflared
-
-if [ -n "$CF_TUNNEL_TOKEN" ]; then
-    doas bastille sysrc "$RUN" cloudflared_token="$CF_TUNNEL_TOKEN"
+if ! doas bastille cmd "$RUN" pkg info -e cloudflared >/dev/null 2>&1; then
+    log "Installing cloudflared"
+    doas bastille pkg "$RUN" install -y cloudflared
 fi
 
-CONFIGURED_TOKEN=$(doas bastille cmd "$RUN" sysrc -n cloudflared_token 2>/dev/null || true)
-[ -z "$CONFIGURED_TOKEN" ] && die "no tunnel token: set CF_TUNNEL_TOKEN or run: doas bastille sysrc $RUN cloudflared_token=<token>"
+if [ -n "$CF_TUNNEL_TOKEN" ]; then
+    # Suppress -x and sysrc's "key: old -> new" echo so the token never lands
+    # in the deploy log.
+    set +x
+    doas bastille sysrc "$RUN" cloudflared_token="$CF_TUNNEL_TOKEN" >/dev/null 2>&1
+    set -x
+fi
 
-log "Creating rc.d service for cloudflared"
-doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/cloudflared >/dev/null <<'EOF'
+# Verify token without echoing it.
+set +x
+if ! doas bastille cmd "$RUN" sh -c '[ -n "$(sysrc -n cloudflared_token 2>/dev/null)" ]' >/dev/null 2>&1; then
+    set -x
+    die "no tunnel token: set CF_TUNNEL_TOKEN or run: doas bastille sysrc $RUN cloudflared_token=<token>"
+fi
+set -x
+
+log "Staging rc.d/cloudflared"
+doas bastille cmd "$RUN" tee /usr/local/etc/rc.d/cloudflared.new >/dev/null <<'EOF'
 #!/bin/sh
 
 # PROVIDE: cloudflared
@@ -194,17 +218,50 @@ command_args="-c -f -P ${pidfile} -S -R 5 -o ${cloudflared_log} /usr/local/bin/c
 run_rc_command "$1"
 EOF
 
-doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/cloudflared
-doas bastille sysrc "$RUN" cloudflared_enable=YES
-
-# --- Restart prism; start cloudflared only if not already running ---
-
-if doas bastille cmd "$RUN" service prism status >/dev/null 2>&1; then
-    log "Restarting prism service"
-    doas bastille service "$RUN" prism restart
+if doas bastille cmd "$RUN" cmp -s /usr/local/etc/rc.d/cloudflared.new /usr/local/etc/rc.d/cloudflared 2>/dev/null; then
+    log "rc.d/cloudflared unchanged"
+    doas bastille cmd "$RUN" rm -f /usr/local/etc/rc.d/cloudflared.new
 else
-    log "Starting prism service (first deploy)"
-    doas bastille service "$RUN" prism start
+    log "rc.d/cloudflared changed"
+    doas bastille cmd "$RUN" mv /usr/local/etc/rc.d/cloudflared.new /usr/local/etc/rc.d/cloudflared
+    doas bastille cmd "$RUN" chmod 755 /usr/local/etc/rc.d/cloudflared
+fi
+doas bastille sysrc "$RUN" cloudflared_enable=YES >/dev/null
+
+# --- Stage and swap the binary (the only point of downtime) ---
+# Copy new binary to /usr/local/bin/prism.new (does not touch the running
+# executable, so no ETXTBSY). Compare against current; if unchanged, skip
+# the restart entirely. If changed, atomic-rename .new -> live path and
+# restart the service.
+
+log "Staging prism binary"
+doas bastille jcp "$BUILD" /home/prism/prism/prism "$RUN" /usr/local/bin/prism.new
+doas bastille cmd "$RUN" chmod 755 /usr/local/bin/prism.new
+
+if doas bastille cmd "$RUN" cmp -s /usr/local/bin/prism.new /usr/local/bin/prism 2>/dev/null; then
+    log "Binary unchanged — leaving running service alone"
+    doas bastille cmd "$RUN" rm -f /usr/local/bin/prism.new
+else
+    log "Binary changed — will restart"
+    NEEDS_PRISM_RESTART=1
+fi
+
+if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
+    # Atomic on the same filesystem; the running prism keeps its old inode
+    # until restart. Done immediately before the restart to keep the window
+    # between "binary changed on disk" and "service restarted" minimal.
+    if doas bastille cmd "$RUN" test -f /usr/local/bin/prism.new; then
+        doas bastille cmd "$RUN" mv /usr/local/bin/prism.new /usr/local/bin/prism
+    fi
+    if doas bastille cmd "$RUN" service prism status >/dev/null 2>&1; then
+        log "Restarting prism service"
+        doas bastille service "$RUN" prism restart
+    else
+        log "Starting prism service"
+        doas bastille service "$RUN" prism start
+    fi
+else
+    log "Skipping restart — no changes detected"
 fi
 
 if ! doas bastille cmd "$RUN" service cloudflared status >/dev/null 2>&1; then
