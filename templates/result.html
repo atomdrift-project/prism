@@ -917,8 +917,13 @@
         .finding-card.expandable { cursor: pointer; }
         .finding-card.expandable:hover { border-color: var(--toxic-muted); }
         .finding-card.open { border-color: var(--toxic-muted); background: var(--toxic-dim); }
+        /* Two-column grid: fixed-width trait-id, flex-width description.
+           Fixed first column means descriptions line up vertically across
+           every card in the list — easy to scan top-to-bottom. Long IDs
+           ellipsize; hover the id to see the full string. */
         .finding-card .trait-body {
-            display: flex;
+            display: grid;
+            grid-template-columns: 16em 1fr;
             gap: 14px;
             align-items: baseline;
             min-width: 0;
@@ -927,7 +932,10 @@
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 12px;
             color: var(--iron);
-            flex-shrink: 0;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .finding-card .trait-desc {
             font-size: 13.5px;
@@ -936,6 +944,10 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+        @media (max-width: 640px) {
+            /* Stack on narrow viewports where 16em + description doesn't fit. */
+            .finding-card .trait-body { grid-template-columns: 1fr; gap: 2px; }
         }
         .finding-card .files-pill {
             font-size: 11px;
@@ -1553,7 +1565,7 @@
                                 <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                     <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
                                     <div class="trait-body">
-                                        <span class="trait-id">{{.ID}}</span>
+                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                         <span class="trait-desc">{{.Desc}}</span>
                                     </div>
                                     {{if $expandable}}
@@ -1592,7 +1604,7 @@
                             <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                 <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
                                 <div class="trait-body">
-                                    <span class="trait-id">{{.ID}}</span>
+                                    <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                     <span class="trait-desc">{{.Desc}}</span>
                                 </div>
                                 {{if $expandable}}
@@ -1857,7 +1869,7 @@
                                     <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
                                         <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
                                         <div class="trait-body">
-                                            <span class="trait-id">{{.ID}}</span>
+                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                             <span class="trait-desc">{{.Desc}}</span>
                                         </div>
                                         {{if $expandable}}

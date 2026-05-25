@@ -828,7 +828,8 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 		if innerHasNotable {
 			files = inner
 		} else {
-			files = append(inner, outer...)
+			inner = append(inner, outer...)
+			files = inner
 		}
 	}
 

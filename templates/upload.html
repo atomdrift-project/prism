@@ -347,16 +347,20 @@
             align-items: center;
             font-family: var(--mono);
             font-size: 10.5px;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid rgba(208, 255, 0, 0.3);
+            border: 1px solid transparent;
             border-radius: 3px;
             padding: 1px 6px;
             margin-left: 8px;
             letter-spacing: 0.3px;
             text-decoration: none;
         }
-        .eco-badge:hover { background: rgba(208, 255, 0, 0.28); border-color: var(--toxic-muted); }
+        .eco-badge.eco-red    { color: #991b1b; background: rgba(239, 68, 68, 0.10);  border-color: rgba(239, 68, 68, 0.25); }
+        .eco-badge.eco-blue   { color: #1e40af; background: rgba(59, 130, 246, 0.10); border-color: rgba(59, 130, 246, 0.22); }
+        .eco-badge.eco-orange { color: #9a3412; background: rgba(249, 115, 22, 0.12); border-color: rgba(249, 115, 22, 0.25); }
+        .eco-badge.eco-purple { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.25); }
+        .eco-badge.eco-green  { color: #166534; background: rgba(34, 197, 94, 0.10);  border-color: rgba(34, 197, 94, 0.25); }
+        .eco-badge.eco-slate  { color: var(--graphite); background: var(--mist); border-color: var(--border); }
+        .eco-badge:hover { filter: brightness(0.95); }
         .file-link {
             color: var(--carbon);
             text-decoration: underline;
@@ -493,7 +497,7 @@
                             <div class="file-line">
                                 <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
                                 {{if .Ecosystem}}
-                                    {{if .EcosystemURL}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge">{{.Ecosystem}}</span>{{end}}
+                                    {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                                 {{end}}
                             </div>
                             <a class="file-sha" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" title="{{.SHA256}}">{{.SHA256}}</a>

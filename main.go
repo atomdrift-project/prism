@@ -573,8 +573,8 @@ type cleaveReport struct {
 // Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
 	Metrics        json.RawMessage            `json:"ms,omitempty"`
-	KV             map[string]json.RawMessage `json:"k,omitempty"` // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
-	Facts          cleaveFacts                `json:"ff,omitempty"`
+	KV             map[string]json.RawMessage `json:"k,omitempty"`  // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
+	Facts          cleaveFacts                `json:"ff,omitempty"` //nolint:modernize // omitzero would change marshal output (empty Facts becomes omitted instead of "ff":{}); kept for downstream-consumer compatibility
 	Path           string                     `json:"path"`
 	FileType       string                     `json:"type"`
 	SHA256         string                     `json:"sha"`
@@ -876,6 +876,7 @@ func main() {
 		"buildCommitShort": shortBuildCommit,
 		"mul":              func(a, b float64) float64 { return a * b },
 		"formulaQuery":     desubscriptFormula,
+		"ecoColor":         ecosystemColor,
 		"chromaCSS":        func() template.CSS { return chromaStylesheet },
 		// bandGradient returns a CSS linear-gradient matching litmus's
 		// two-block confidence indicator. Each classification band has its
@@ -1450,9 +1451,10 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 	return samples
 }
 
+// feedDate formats t as a compact relative string for the feed table —
+// "7m ago", "3h ago", "2d ago" fit a narrow column; entries older than a
+// week fall back to a short date in the server's local timezone.
 func feedDate(t, now time.Time) string {
-	// Compact relative form for the feed table — "7m ago", "3h ago", "2d ago"
-	// fit a narrow "when" column; older entries fall back to a short date.
 	d := now.Sub(t)
 	switch {
 	case d < time.Minute:
@@ -1617,6 +1619,30 @@ func ecosystemURL(ecosystem string) string {
 		return ""
 	}
 	return "/" + strings.ToLower(urlPathSegment(ecosystem)) + "/"
+}
+
+// ecosystemColor groups ecosystems into a small palette by language/distro
+// affinity. Six families (red/blue/orange/purple/green/slate) keep the feed
+// table readable without introducing a new accent per ecosystem.
+func ecosystemColor(eco string) string {
+	switch strings.ToLower(eco) {
+	case "npm", "rubygems", "debian", "freebsd", "freebsd-ports":
+		return "red"
+	case "pypi", "pub", "cran", "luarocks", "nuget",
+		"powershell_gallery", "chocolatey", "scoop", "winget",
+		"arch", "archlinux", "aur", "alpine", "fedora",
+		"vscode", "open_vsx", "openvsx":
+		return "blue"
+	case "cargo", "crates", "maven", "clojars",
+		"homebrew", "mozilla", "netbsd":
+		return "orange"
+	case "packagist", "hackage", "cpan":
+		return "purple"
+	case "chrome", "chrome_ext", "jfrog", "wolfi", "conda":
+		return "green"
+	default:
+		return "slate"
+	}
 }
 
 // knownEcosystems is the allowlist for the Fallout ecosystem dropdown — real
@@ -2513,7 +2539,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code}) //nolint:errcheck // already failing, nothing more to do
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code}) //nolint:errcheck,errchkjson // payload is a map[string]string (JSON-safe); response already failed
 }
 
 // writeJSON writes a successful JSON response with a stable cache header.
@@ -3350,9 +3376,9 @@ func parseStringTupleValue(raw json.RawMessage) []string {
 // how many files it fired in, and the archive-Traits-tab card it maps to so
 // the source-view sidebar can pivot back into that card.
 type traitOccurrence struct {
-	Count     int    `json:"n"`
 	Category  string `json:"c"`
 	ArchiveID string `json:"d"`
+	Count     int    `json:"n"`
 }
 
 // buildTraitOccurrenceMap counts the distinct files where each full trait ID
@@ -4300,21 +4326,26 @@ func displayPath(p string) string {
 // fileTreeNode is a single node in the hierarchical archive-contents tree
 // emitted to the client. Compact JSON tags keep page weight low for big
 // archives.
+// Fields are ordered for fieldalignment: strings (2-word pointer-bearing
+// headers) first, then the slice (3-word header — placed last among
+// pointer fields so its trailing len/cap sit outside the GC scan area),
+// then non-pointer fields. Within the strings, shared → file-only → dir-only.
 type fileTreeNode struct {
-	Name     string          `json:"n"`
-	Path     string          `json:"p"`
-	Dir      bool            `json:"d,omitempty"`
+	Name string `json:"n"`
+	Path string `json:"p"`
+	// File-only string fields.
+	SHA      string `json:"sha,omitempty"`
+	FileType string `json:"ty,omitempty"`
+	SizeStr  string `json:"sz,omitempty"`
+	Risk     string `json:"r,omitempty"`
+	// Dir-only string field, rolled up from descendants.
+	MaxRisk  string          `json:"mr,omitempty"`
 	Children []*fileTreeNode `json:"c,omitempty"`
-	// File-only fields.
-	SHA      string  `json:"sha,omitempty"`
-	FileType string  `json:"ty,omitempty"`
-	SizeStr  string  `json:"sz,omitempty"`
-	Risk     string  `json:"r,omitempty"`
-	Prob     float64 `json:"pr,omitempty"`
-	// Dir-only fields, rolled up from descendants.
-	FileCount int     `json:"fc,omitempty"`
-	MaxRisk   string  `json:"mr,omitempty"`
-	MaxProb   float64 `json:"mp,omitempty"`
+	// Non-pointer fields last (no GC scan past this point).
+	Prob      float64 `json:"pr,omitempty"` // file-only
+	MaxProb   float64 `json:"mp,omitempty"` // dir-only, rolled up
+	FileCount int     `json:"fc,omitempty"` // dir-only, rolled up
+	Dir       bool    `json:"d,omitempty"`
 }
 
 // buildFileTreeNodes constructs a directory tree from the archive's files,
