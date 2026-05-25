@@ -281,10 +281,37 @@
             text-overflow: ellipsis;
             vertical-align: middle;
         }
-        tbody tr:nth-child(even) td { background: var(--cream); }
+        tbody tr:nth-child(even) td { background: rgba(0, 0, 0, 0.012); }
         tbody tr:hover td { background: var(--toxic-dim); }
         tbody tr:last-child td { border-bottom: none; }
-        .col-file { width: 100%; }
+        .col-file {
+            width: 100%;
+            white-space: normal;
+            padding-top: 8px;
+            padding-bottom: 8px;
+        }
+        .file-line {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .file-sha {
+            display: block;
+            margin-top: 1px;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--slate);
+            letter-spacing: 0.1px;
+            line-height: 1.3;
+            text-decoration: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .file-sha:hover { color: var(--carbon); }
         .when-cell {
             display: inline-flex;
             align-items: center;
@@ -320,17 +347,16 @@
             align-items: center;
             font-family: var(--mono);
             font-size: 10.5px;
-            color: var(--slate);
-            background: var(--mist);
-            border: 1px solid var(--border);
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid rgba(208, 255, 0, 0.3);
             border-radius: 3px;
             padding: 1px 6px;
             margin-left: 8px;
             letter-spacing: 0.3px;
-            vertical-align: 1px;
             text-decoration: none;
         }
-        .eco-badge:hover { color: var(--carbon); border-color: var(--toxic-muted); }
+        .eco-badge:hover { background: rgba(208, 255, 0, 0.28); border-color: var(--toxic-muted); }
         .file-link {
             color: var(--carbon);
             text-decoration: underline;
@@ -374,7 +400,6 @@
             .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
             .filter-form { display: grid; grid-template-columns: 1fr; }
             input[type="search"], select { width: 100%; }
-            .col-sha { display: none; }
         }
     </style>
 </head>
@@ -451,7 +476,6 @@
                         <th class="col-when">Crit</th>
                         <th class="col-file">File</th>
                         <th class="col-formula">Malecule</th>
-                        <th class="col-sha">SHA256</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -465,11 +489,14 @@
                                 <span class="when-text">{{.AnalyzedDate}}</span>
                             </span>
                         </td>
-                        <td>
-                            <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
-                            {{if .Ecosystem}}
-                                {{if .EcosystemURL}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge">{{.Ecosystem}}</span>{{end}}
-                            {{end}}
+                        <td class="col-file">
+                            <div class="file-line">
+                                <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
+                                {{if .Ecosystem}}
+                                    {{if .EcosystemURL}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge">{{.Ecosystem}}</span>{{end}}
+                                {{end}}
+                            </div>
+                            <a class="file-sha" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" title="{{.SHA256}}">{{.SHA256}}</a>
                         </td>
                         <td>
                             {{if .Formula}}
@@ -478,10 +505,9 @@
                             <span class="mono">-</span>
                             {{end}}
                         </td>
-                        <td class="col-sha"><a class="cell-link mono" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer">{{.SHA256}}</a></td>
                     </tr>
                     {{else}}
-                    <tr><td colspan="4" class="empty">No matching records.</td></tr>
+                    <tr><td colspan="3" class="empty">No matching records.</td></tr>
                     {{end}}
                 </tbody>
             </table>
