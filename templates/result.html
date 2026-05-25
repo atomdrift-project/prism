@@ -992,11 +992,14 @@
         .finding-card.open { border-color: var(--toxic-muted); background: var(--toxic-dim); }
         /* Two-column grid: fixed-width trait-id, flex-width description.
            Fixed first column means descriptions line up vertically across
-           every card in the list — easy to scan top-to-bottom. Long IDs
-           ellipsize; hover the id to see the full string. */
+           every card in the list — easy to scan top-to-bottom. The 24em
+           id column fits ~43 monospaced chars at 12px, covering long
+           trait IDs like behaviors/system_persistence_registry_run
+           without ellipsizing them on standard widths. Long IDs that
+           still overflow ellipsize; hover the id to see the full string. */
         .finding-card .trait-body {
             display: grid;
-            grid-template-columns: 16em 1fr;
+            grid-template-columns: 24em 1fr;
             gap: 14px;
             align-items: baseline;
             min-width: 0;

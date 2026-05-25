@@ -1588,6 +1588,55 @@ func feedDate(t, now time.Time) string {
 // top-level, non-skipped sample in the hopper database.
 var errSampleNotEligible = errors.New("sample not found, is an archive child, or is marked skip")
 
+// tokenBucket is a minimal global rate limiter. Tokens refill continuously
+// at refillRate per second up to capacity; Allow consumes one token and
+// returns false when none are available. Safe for concurrent use.
+//
+// Used for the rescan endpoint: a public-facing operator action whose
+// rate must be capped to protect hopper from coordinated re-queue storms.
+// The per-SHA 15-minute cooldown handles single-sample spam; this caps
+// aggregate pressure across all samples.
+type tokenBucket struct {
+	last       time.Time
+	mu         sync.Mutex
+	tokens     float64
+	capacity   float64
+	refillRate float64 // tokens per second
+}
+
+func newTokenBucket(refillPerSec, capacity float64) *tokenBucket {
+	return &tokenBucket{
+		last:       time.Now(),
+		tokens:     capacity,
+		capacity:   capacity,
+		refillRate: refillPerSec,
+	}
+}
+
+// Allow consumes one token if available, returning true on success.
+func (b *tokenBucket) Allow() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(b.last).Seconds()
+	b.last = now
+	b.tokens += elapsed * b.refillRate
+	if b.tokens > b.capacity {
+		b.tokens = b.capacity
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// rescanLimiter caps the global rescan request rate at 1/sec sustained
+// with a burst of 10 (so several operators can each click once without
+// being blocked, but sustained pressure is throttled to the configured
+// rate). See handleRescan for use.
+var rescanLimiter = newTokenBucket(1.0, 10)
+
 // requestRescan clears the cached analysis fields for the given sample
 // hash so the next worker poll picks it up as Tier 1 (unanalyzed) work.
 // Limited to top-level non-skipped samples (parent is empty, skip is
@@ -2785,6 +2834,12 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 	}
 	if !csrfValid(r.FormValue("csrf_token"), 30*time.Minute) {
 		writeJSONError(w, http.StatusForbidden, "bad_csrf", "CSRF token missing or expired; reload the page and try again")
+		return
+	}
+	if !rescanLimiter.Allow() {
+		reqLogger.Warn("rescan rate-limited")
+		w.Header().Set("Retry-After", "1")
+		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many rescan requests; please wait a moment")
 		return
 	}
 	if err := requestRescan(r.Context(), sha); err != nil {
