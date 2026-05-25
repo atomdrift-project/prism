@@ -1451,14 +1451,20 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 }
 
 func feedDate(t, now time.Time) string {
-	// Server-local time is the best approximation we have for the deployer's
-	// timezone; server is generally co-located with operators viewing the feed.
-	localTime := t.Local()  //nolint:gosmopolitan // server-local rendering is intentional for the public feed
-	localNow := now.Local() //nolint:gosmopolitan // server-local rendering is intentional for the public feed
-	if localTime.Year() == localNow.Year() && localTime.YearDay() == localNow.YearDay() {
-		return timeAgo(now.Sub(t))
+	// Compact relative form for the feed table — "7m ago", "3h ago", "2d ago"
+	// fit a narrow "when" column; older entries fall back to a short date.
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
-	return localTime.Format("2006-01-02")
+	return t.Local().Format("Jan 2") //nolint:gosmopolitan // server-local rendering is intentional for the public feed
 }
 
 func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger *slog.Logger) (storedResult, error) {

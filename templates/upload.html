@@ -162,16 +162,14 @@
             }
         }
         .intro {
-            padding: 28px 0 22px;
+            padding: 20px 0 16px;
         }
         .headline {
-            min-height: 112px;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 18px;
+            padding-bottom: 4px;
         }
         h1 {
             margin: 0;
-            font-size: 30px;
+            font-size: 24px;
             line-height: 1.1;
             letter-spacing: 0;
             font-weight: 650;
@@ -179,12 +177,12 @@
         .fallout-lockup {
             display: inline-flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             min-width: 0;
         }
         .fallout-symbol {
-            width: 42px;
-            height: 42px;
+            width: 32px;
+            height: 32px;
             flex: 0 0 auto;
         }
         .fallout-symbol .field {
@@ -204,9 +202,9 @@
         }
         .lede {
             max-width: none;
-            margin: 10px 0 0;
+            margin: 6px 0 0;
             color: var(--iron);
-            font-size: 15px;
+            font-size: 13.5px;
             white-space: nowrap;
         }
         .filters {
@@ -252,11 +250,15 @@
         }
         .table-wrap {
             overflow-x: auto;
-            border-bottom: 1px solid var(--border);
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 16px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
         table {
             width: 100%;
-            min-width: 1180px;
+            min-width: 1080px;
             border-collapse: collapse;
             table-layout: fixed;
         }
@@ -270,38 +272,44 @@
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            padding: 10px 9px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--border);
         }
         td {
-            padding: 10px 9px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--mist);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             vertical-align: middle;
         }
-        tr:hover td { background: rgba(59, 130, 246, 0.04); }
-        .col-criticality { width: 48px; }
-        .col-date { width: 96px; }
+        tbody tr:nth-child(even) td { background: var(--cream); }
+        tbody tr:hover td { background: var(--toxic-dim); }
+        tbody tr:last-child td { border-bottom: none; }
+        .col-when { width: 132px; }
         .col-file { width: auto; }
-        .col-ecosystem { width: 96px; }
         .col-formula { width: 14%; }
         .col-sha { width: 470px; }
+        .when-cell {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .when-text {
+            font-variant-numeric: tabular-nums;
+            color: var(--graphite);
+        }
         .litmus-stamp {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 30px;
-            min-height: 24px;
-            border-radius: 5px;
-            text-decoration: underline;
-            text-underline-offset: 3px;
-            text-decoration-thickness: 1px;
+            width: 22px;
+            height: 18px;
+            border-radius: 4px;
+            flex-shrink: 0;
         }
         .litmus-stamp:hover {
             background: var(--mist);
-            text-decoration-thickness: 2px;
         }
         .band {
             display: inline-block;
@@ -312,6 +320,22 @@
         .band.hostile { background: #ef4444; }
         .band.suspicious { background: #facc15; }
         .band.benign { background: #22c55e; }
+        .eco-badge {
+            display: inline-flex;
+            align-items: center;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--slate);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            margin-left: 8px;
+            letter-spacing: 0.3px;
+            vertical-align: 1px;
+            text-decoration: none;
+        }
+        .eco-badge:hover { color: var(--carbon); border-color: var(--toxic-muted); }
         .file-link {
             color: var(--carbon);
             text-decoration: underline;
@@ -429,10 +453,8 @@
             <table>
                 <thead>
                     <tr>
-                        <th class="col-criticality">Crit</th>
-                        <th class="col-date">Date</th>
+                        <th class="col-when">When</th>
                         <th class="col-file">File</th>
-                        <th class="col-ecosystem">Ecosystem</th>
                         <th class="col-formula">Malecule</th>
                         <th class="col-sha">SHA256</th>
                     </tr>
@@ -440,18 +462,18 @@
                 <tbody>
                     {{range .Rows}}
                     <tr>
-                        <td>
-                            <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
-                                <span class="band {{.Classification}}"></span>
-                            </a>
+                        <td title="{{.AnalyzedAt}}">
+                            <span class="when-cell">
+                                <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
+                                    <span class="band {{.Classification}}"></span>
+                                </a>
+                                <span class="when-text">{{.AnalyzedDate}}</span>
+                            </span>
                         </td>
-                        <td title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</td>
-                        <td><a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a></td>
                         <td>
-                            {{if .EcosystemURL}}
-                            <a class="cell-link" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>
-                            {{else}}
-                            <span class="mono">-</span>
+                            <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
+                            {{if .Ecosystem}}
+                                {{if .EcosystemURL}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge">{{.Ecosystem}}</span>{{end}}
                             {{end}}
                         </td>
                         <td>
@@ -464,7 +486,7 @@
                         <td><a class="cell-link mono" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer">{{.SHA256}}</a></td>
                     </tr>
                     {{else}}
-                    <tr><td colspan="6" class="empty">No matching records.</td></tr>
+                    <tr><td colspan="4" class="empty">No matching records.</td></tr>
                     {{end}}
                 </tbody>
             </table>
