@@ -258,9 +258,7 @@
         }
         table {
             width: 100%;
-            min-width: 1080px;
             border-collapse: collapse;
-            table-layout: fixed;
         }
         th {
             position: sticky;
@@ -286,10 +284,7 @@
         tbody tr:nth-child(even) td { background: var(--cream); }
         tbody tr:hover td { background: var(--toxic-dim); }
         tbody tr:last-child td { border-bottom: none; }
-        .col-when { width: 132px; }
-        .col-file { width: auto; }
-        .col-formula { width: 14%; }
-        .col-sha { width: 470px; }
+        .col-file { width: 100%; }
         .when-cell {
             display: inline-flex;
             align-items: center;
@@ -373,13 +368,13 @@
             .topbar, .filters { align-items: stretch; flex-direction: column; }
             .brand { flex-direction: column; gap: 3px; }
             .tagline { white-space: normal; }
-            .headline { min-height: auto; }
-            h1 { font-size: 25px; }
-            .fallout-symbol { width: 36px; height: 36px; }
+            h1 { font-size: 22px; }
+            .fallout-symbol { width: 28px; height: 28px; }
             .lede { white-space: normal; }
             .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
             .filter-form { display: grid; grid-template-columns: 1fr; }
             input[type="search"], select { width: 100%; }
+            .col-sha { display: none; }
         }
     </style>
 </head>
@@ -453,7 +448,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th class="col-when">When</th>
+                        <th class="col-when">Crit</th>
                         <th class="col-file">File</th>
                         <th class="col-formula">Malecule</th>
                         <th class="col-sha">SHA256</th>
@@ -483,7 +478,7 @@
                             <span class="mono">-</span>
                             {{end}}
                         </td>
-                        <td><a class="cell-link mono" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer">{{.SHA256}}</a></td>
+                        <td class="col-sha"><a class="cell-link mono" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer">{{.SHA256}}</a></td>
                     </tr>
                     {{else}}
                     <tr><td colspan="4" class="empty">No matching records.</td></tr>
