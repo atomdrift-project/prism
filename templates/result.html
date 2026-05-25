@@ -320,6 +320,26 @@
             background: rgba(239, 68, 68, 0.08);
             cursor: default;
         }
+        /* Source provenance row. The label is a hostname (or domain
+           fallback) so it fits the narrow column; the full URL lives in
+           the href + title. Ellipsizes if the hostname is still too
+           wide for the column. */
+        .source-value {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .source-link {
+            color: var(--graphite);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--slate);
+            transition: color 0.12s, border-color 0.12s;
+        }
+        .source-link:hover {
+            color: var(--toxic-dark);
+            border-bottom-color: var(--toxic-muted);
+        }
         .molecule-viz {
             min-height: 200px;
             background: var(--white);
@@ -1582,6 +1602,14 @@
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
                             {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if .SourceLabel}}
+                    <div class="meta-row">
+                        <span class="meta-label">Source</span>
+                        <span class="meta-value source-value">
+                            {{if .SourceURL}}<a class="source-link" href="{{.SourceURL}}" title="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceLabel}} ↗</a>{{else}}<span title="domain only — no exact URL recorded">{{.SourceLabel}}</span>{{end}}
                         </span>
                     </div>
                     {{end}}

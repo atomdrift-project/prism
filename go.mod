@@ -10,6 +10,12 @@ require (
 	github.com/codeGROOVE-dev/retry v1.3.1
 )
 
+// Local hopper checkout — pinned here until the changes for the Tier 0
+// forced-rescan queue (RequestRescan / ForcedRescanCandidates) are tagged
+// and published. Remove this directive once the published hopper version
+// includes those APIs.
+replace codeberg.org/atomdrift/hopper => ../hopper
+
 require (
 	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 // indirect

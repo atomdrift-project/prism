@@ -517,9 +517,18 @@ type resultData struct {
 	RiskLabel      string
 	FirstSeenAgo   string
 	FirstSeenAt    string
-	Layout         string
-	BuildCommit    string
-	Files          []FileTreeEntry
+	// SourceURL is the full canonical download URL forager recorded when
+	// the bytes first landed in hopper. Used as the link href; empty for
+	// uploads and legacy rows without provenance.
+	SourceURL string
+	// SourceLabel is the short string shown inline in the meta-table:
+	// the URL's hostname when SourceURL is set, otherwise the eTLD+1
+	// from samples.domain as a fallback. Empty when neither is known
+	// (the template hides the row).
+	SourceLabel string
+	Layout      string
+	BuildCommit string
+	Files       []FileTreeEntry
 	// FileTreeJSON is the hierarchical tree of archive contents, JSON-encoded
 	// for the client-side Miller-column renderer. Empty string for non-archive
 	// pages.
@@ -596,6 +605,14 @@ type storedResult struct {
 	Strings        string
 	Traits         string
 	RawLitmus      string
+	// SourceURL is the canonical download URL forager (or another
+	// ingester) captured when the bytes first landed in hopper. Empty
+	// for samples without provenance (uploads, legacy harvested rows).
+	SourceURL string
+	// SourceDomain is the eTLD+1 of SourceURL (or registry-derived when
+	// the URL is missing), used as a fallback display when SourceURL is
+	// empty so the page still surfaces *something* about provenance.
+	SourceDomain string
 }
 
 type feedRow struct {
@@ -1585,8 +1602,11 @@ func feedDate(t, now time.Time) string {
 }
 
 // errSampleNotEligible is returned by requestRescan when the SHA matches no
-// top-level, non-skipped sample in the hopper database.
-var errSampleNotEligible = errors.New("sample not found, is an archive child, or is marked skip")
+// top-level, non-skipped sample in the hopper database OR when the sample
+// was analyzed within the rescanCooldown window. Distinguishing between
+// the two cases would require a second query; the handler surfaces a
+// single user-facing message covering both possibilities.
+var errSampleNotEligible = errors.New("sample not found, is an archive child, is marked skip, or is within the rescan cooldown")
 
 // tokenBucket is a minimal global rate limiter. Tokens refill continuously
 // at refillRate per second up to capacity; Allow consumes one token and
@@ -1649,31 +1669,19 @@ var rescanLimiter = newTokenBucket(1.0, 10)
 // would belong as a hopper.DB.RequestRescan method but is kept local to
 // avoid a hopper version bump for this single operator action.
 func requestRescan(ctx context.Context, sha string) error {
-	pool := hopperDB.Pool()
-	if pool == nil {
+	if hopperDB == nil {
 		return errors.New("hopper database unavailable")
 	}
-	cooldownCutoff := time.Now().Add(-rescanCooldown)
-	tag, err := pool.Exec(ctx, `
-		UPDATE samples
-		SET cleave_result = NULL,
-		    litmus_result = NULL,
-		    analyzed_at = NULL,
-		    last_error_at = NULL,
-		    traits_version = '',
-		    updated_at = NOW()
-		WHERE sha256 = $1 AND parent = '' AND skip = ''
-		  AND (analyzed_at IS NULL OR analyzed_at < $2)`,
-		sha, cooldownCutoff)
-	if err != nil {
-		return fmt.Errorf("hopper rescan update: %w", err)
+	if err := hopperDB.RequestRescan(ctx, sha, rescanCooldown); err != nil {
+		if errors.Is(err, hopper.ErrRescanNotEligible) {
+			return errSampleNotEligible
+		}
+		return fmt.Errorf("hopper rescan: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return errSampleNotEligible
-	}
+	// Invalidate prism's local result cache so the next GET /file/<sha>
+	// doesn't serve the stale rendered view. Failure is not fatal — the
+	// next refresh window picks up the new state — but worth logging.
 	if delErr := cache.Delete(ctx, sha); delErr != nil {
-		// Cache invalidation failure is not fatal — the next refresh window
-		// will pick up the new state — but worth logging.
 		logger.Debug("rescan: cache invalidation failed", "sha256", sha, "error", delErr)
 	}
 	return nil
@@ -1791,7 +1799,31 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		CachedAt:       cachedAt,
 		CreatedAt:      sample.CreatedAt,
 		AnalyzedAt:     analyzedAt,
+		SourceURL:      sample.URL,
+		SourceDomain:   sample.Domain,
 	}, nil
+}
+
+// sourceDisplay returns the href and label pair for the result page's
+// "Source" meta row. If sourceURL parses cleanly, label is its host
+// (compact, recognizable — "registry.npmjs.org" beats a 200-char URL)
+// and href is the full URL. If the URL is missing or unparseable, the
+// domain fallback is used as a plain-text label with an empty href.
+// When neither is set, both returns are empty and the template hides
+// the row entirely.
+func sourceDisplay(sourceURL, domain string) (href, label string) {
+	if sourceURL != "" {
+		if u, err := url.Parse(sourceURL); err == nil && u.Host != "" {
+			return sourceURL, u.Host
+		}
+		// Unparseable URL: fall through to domain. We don't render the
+		// raw string as a link because it might be malformed and
+		// confuse the browser.
+	}
+	if domain != "" {
+		return "", domain
+	}
+	return "", ""
 }
 
 func sampleTime(sample *hopper.Sample) time.Time {
@@ -3291,6 +3323,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		data.AnalyzedAgo = timeAgo(time.Since(analyzedAt))
 		data.RescanAllowed = time.Since(analyzedAt) >= rescanCooldown
 	}
+	data.SourceURL, data.SourceLabel = sourceDisplay(res.SourceURL, res.SourceDomain)
 	if !res.CreatedAt.IsZero() {
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))
