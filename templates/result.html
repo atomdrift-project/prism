@@ -1578,7 +1578,7 @@
                         <span class="meta-label">Analyzed</span>
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
-                            {{if .IsTrusted}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
+                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
                         </span>
                     </div>
                     {{end}}
@@ -2115,6 +2115,6 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     {{if .IsArchive}}<script nonce="{{.Nonce}}" type="module" src="/static/js/files-tab.js?v={{.BuildCommit}}"></script>{{end}}
-    {{if .IsTrusted}}<script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>{{end}}
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
 </body>
 </html>

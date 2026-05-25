@@ -1,5 +1,3 @@
-// Package main implements the prism malware analysis web service.
-//
 //nolint:revive // max-public-structs: prism is a single-binary web service; the structs are the page-data shape and exporting them is what html/template needs.
 package main
 
@@ -67,22 +65,24 @@ func shortBuildCommit() string {
 }
 
 var (
-	uploadTemplate    *template.Template
-	resultTemplate    *template.Template
-	errorTemplate     *template.Template
-	formatsTemplate   *template.Template
-	poweredByTemplate *template.Template
-	litmusAddr        string       // Address of litmus server (e.g., "127.0.0.1:8080")
-	litmusClient      *http.Client // HTTP client for litmus server
-	hopperAPIAddr     string       // Address of hopper API server (e.g., "hopper-api:8081")
-	hopperClient      *http.Client // HTTP client for hopper API server
-	cache             *fido.TieredCache[string, storedResult]
-	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
-	contentCache      *fido.TieredCache[string, cachedContent]
-	logger            *slog.Logger
-	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
-	hopperDB          *hopper.DB
-	trustedSubnets    []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
+	uploadTemplate     *template.Template
+	resultTemplate     *template.Template
+	errorTemplate      *template.Template
+	formatsTemplate    *template.Template
+	poweredByTemplate  *template.Template
+	litmusAddr         string       // Address of litmus server (e.g., "127.0.0.1:8080")
+	litmusClient       *http.Client // HTTP client for litmus server
+	hopperAPIAddr      string       // Address of hopper API server (e.g., "hopper-api:8081")
+	hopperClient       *http.Client // HTTP client for hopper API server
+	cache              *fido.TieredCache[string, storedResult]
+	feedCache          *fido.TieredCache[string, cachedFeedSnapshot]
+	contentCache       *fido.TieredCache[string, cachedContent]
+	reportCache        *fido.TieredCache[string, cachedReport]
+	parentArchiveCache *fido.TieredCache[string, cachedParents]
+	logger             *slog.Logger
+	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
+	hopperDB           *hopper.DB
+	trustedSubnets     []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
 )
 
 const (
@@ -93,13 +93,28 @@ const (
 	// IPv6 unique-local addresses (RFC 4193). Operators add deployment-
 	// specific external ranges via --trusted-subnets, which replaces
 	// (not extends) this list.
-	defaultTrustedSubnets        = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
-	frontpageFeedCacheKey        = "feed-frontpage-v1"
-	frontpageFeedRefreshInterval = 90 * time.Second
-	frontpageFeedMaxAge          = 3 * time.Minute
+	defaultTrustedSubnets = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
+	// feedCacheTTL is the absolute lifetime of any cached feed query
+	// (frontpage default, criticality variants, ecosystem/domain/formula
+	// filtered). Every feed query goes through the cache — even untyped
+	// filter combinations — to avoid thundering-herd hopper hits when
+	// many users request the same view at once.
+	feedCacheTTL = 3 * time.Minute
+	// feedPrecacheInterval is how often the background goroutine
+	// re-warms the pre-cached variants (frontpage default + three
+	// criticality views). Shorter than feedCacheTTL so high-traffic
+	// keys never serve a fully cold loader to a real request.
+	feedPrecacheInterval = 90 * time.Second
+	// auxCacheTTL is the TTL for ancillary per-SHA caches (report, parent
+	// archives, etc.) — same 3-minute envelope as feedCacheTTL so all
+	// derived views age together.
+	auxCacheTTL = 3 * time.Minute
+	// rescanCooldown is the minimum age of the most recent analysis
+	// before another rescan request is accepted. Enforced both
+	// client-side (button hidden) and server-side (atomic check in the
+	// UPDATE statement), so a race or hand-crafted POST can't bypass.
+	rescanCooldown = 15 * time.Minute
 )
-
-var frontpageFeedRefreshMu sync.Mutex
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
 // Tokens are stateless: HMAC(timestamp) verified on POST. Key rotates on restart,
@@ -229,6 +244,35 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// openNullCache constructs an in-memory-only TieredCache backed by fido's
+// null store — used when --no-cache disables persistence. Fatal on error;
+// failing to spin up a cache means prism cannot serve safely under load.
+func openNullCache[V any](label string) *fido.TieredCache[string, V] {
+	c, err := fido.NewTiered(null.New[string, V]())
+	if err != nil {
+		logger.Error("failed to initialize fido "+label, "error", err)
+		os.Exit(1)
+	}
+	return c
+}
+
+// openLocalFSCache constructs a localfs-backed TieredCache. id is the
+// on-disk subdirectory name under cacheDir; label is used only for log
+// output. Fatal on error for the same reason as openNullCache.
+func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[string, V] {
+	store, err := localfs.New[string, V](id, cacheDir)
+	if err != nil {
+		logger.Error("failed to initialize fido "+label+" store", "error", err)
+		os.Exit(1)
+	}
+	c, err := fido.NewTiered(store)
+	if err != nil {
+		logger.Error("failed to initialize fido "+label, "error", err)
+		os.Exit(1)
+	}
+	return c
 }
 
 // isTrustedClient reports whether the request originates from a client in
@@ -428,6 +472,22 @@ type ParentArchive struct {
 	AnalyzedAgo    string // relative time
 }
 
+// cachedReport wraps hopper.Report in a struct with a Found flag so the
+// "no report exists for this SHA" case is itself cacheable — without this,
+// every page render for a sample without a report would re-hit hopper.
+type cachedReport struct {
+	Report hopper.Report
+	Found  bool
+}
+
+// cachedParents wraps the []ParentArchive returned by lookupParentArchives.
+// A separate type (rather than just []ParentArchive) keeps the fido cache's
+// type-parameter ergonomics clean and lets the empty/not-found case be
+// distinguished from a cache miss.
+type cachedParents struct {
+	Entries []ParentArchive
+}
+
 // resultData is the page-data shape consumed by result.html. Field order is
 // readability-driven (grouped by what the template renders, not packed for
 // minimum size); the savings from reordering are negligible against page-
@@ -491,7 +551,8 @@ type resultData struct {
 	IsArchive         bool
 	IsText            bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
 	LimitedInfo       bool
-	IsTrusted         bool // client IP is in a trusted subnet — enables operator actions (rescan button)
+	IsTrusted         bool // client IP is in a trusted subnet — reserved for future per-network UX (currently unused for visibility)
+	RescanAllowed     bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 	// Contents holds the rendered text body of a text file, broken into
 	// annotated lines. Empty for non-text files and archives.
 	Contents []ContentLine
@@ -577,6 +638,7 @@ type cachedFeedSnapshot struct {
 	GeneratedAt time.Time
 	Rows        []cachedFeedSample
 	Ecosystems  []string
+	Domains     []string
 	TotalCount  int
 }
 
@@ -848,31 +910,15 @@ func main() {
 	// Load configuration from environment
 	loadConfig()
 
-	// Initialize fido cache
-	var cacheErr error
+	// Initialize fido caches. See doc.go for the cache discipline.
 	if noCache {
-		// No caching
-		logger.Info("cache disabled via --no-cache flag, using null store")
-		nullStore := null.New[string, storedResult]()
-		cache, cacheErr = fido.NewTiered(nullStore)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido tiered cache", "error", cacheErr)
-			os.Exit(1)
-		}
-		nullFeedStore := null.New[string, cachedFeedSnapshot]()
-		feedCache, cacheErr = fido.NewTiered(nullFeedStore)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
-			os.Exit(1)
-		}
-		nullContentStore := null.New[string, cachedContent]()
-		contentCache, cacheErr = fido.NewTiered(nullContentStore)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido content cache", "error", cacheErr)
-			os.Exit(1)
-		}
+		logger.Info("cache disabled via --no-cache flag, using null stores")
+		cache = openNullCache[storedResult]("result cache")
+		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
+		contentCache = openNullCache[cachedContent]("content cache")
+		reportCache = openNullCache[cachedReport]("report cache")
+		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 	} else {
-		// Use local filesystem for caching
 		cacheDir := os.Getenv("CACHE_DIR")
 		if cacheDir == "" {
 			userCache, err := os.UserCacheDir()
@@ -882,37 +928,12 @@ func main() {
 			}
 			cacheDir = filepath.Join(userCache, "prism")
 		}
-		logger.Info("initializing localfs store", "cache_id", "prism", "dir", cacheDir)
-		store, storeErr := localfs.New[string, storedResult]("prism", cacheDir)
-		if storeErr != nil {
-			logger.Error("failed to initialize fido store", "error", storeErr)
-			os.Exit(1)
-		}
-		cache, cacheErr = fido.NewTiered(store)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido tiered cache", "error", cacheErr)
-			os.Exit(1)
-		}
-		feedStore, feedStoreErr := localfs.New[string, cachedFeedSnapshot]("prism-feed", cacheDir)
-		if feedStoreErr != nil {
-			logger.Error("failed to initialize fido feed store", "error", feedStoreErr)
-			os.Exit(1)
-		}
-		feedCache, cacheErr = fido.NewTiered(feedStore)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido feed cache", "error", cacheErr)
-			os.Exit(1)
-		}
-		contentStore, contentStoreErr := localfs.New[string, cachedContent]("prism-content", cacheDir)
-		if contentStoreErr != nil {
-			logger.Error("failed to initialize fido content store", "error", contentStoreErr)
-			os.Exit(1)
-		}
-		contentCache, cacheErr = fido.NewTiered(contentStore)
-		if cacheErr != nil {
-			logger.Error("failed to initialize fido content cache", "error", cacheErr)
-			os.Exit(1)
-		}
+		logger.Info("initializing localfs caches", "dir", cacheDir)
+		cache = openLocalFSCache[storedResult]("prism", cacheDir, "result cache")
+		feedCache = openLocalFSCache[cachedFeedSnapshot]("prism-feed", cacheDir, "feed cache")
+		contentCache = openLocalFSCache[cachedContent]("prism-content", cacheDir, "content cache")
+		reportCache = openLocalFSCache[cachedReport]("prism-report", cacheDir, "report cache")
+		parentArchiveCache = openLocalFSCache[cachedParents]("prism-parents", cacheDir, "parent-archive cache")
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -1006,7 +1027,7 @@ func main() {
 			logger.Error("failed to connect to hopper", "error", err)
 		} else {
 			logger.Info("hopper connected")
-			go refreshFrontpageFeedLoop(ctx)
+			go refreshFeedCacheLoop(ctx)
 		}
 	}
 
@@ -1045,6 +1066,21 @@ func main() {
 		if feedCache != nil {
 			if err := feedCache.Close(); err != nil {
 				logger.Error("failed to close fido feed cache", "error", err)
+			}
+		}
+		if contentCache != nil {
+			if err := contentCache.Close(); err != nil {
+				logger.Error("failed to close fido content cache", "error", err)
+			}
+		}
+		if reportCache != nil {
+			if err := reportCache.Close(); err != nil {
+				logger.Error("failed to close fido report cache", "error", err)
+			}
+		}
+		if parentArchiveCache != nil {
+			if err := parentArchiveCache.Close(); err != nil {
+				logger.Error("failed to close fido parent-archive cache", "error", err)
 			}
 		}
 
@@ -1286,20 +1322,47 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 
 const feedLimit = 100
 
+// feedCacheKey produces a deterministic cache key from the four feed-query
+// dimensions. Stable across reorderings (so swapping argument order can't
+// silently fragment the cache) and never empty.
+func feedCacheKey(ecosystem, domain, criticality, formula string) string {
+	return "feed-v2:eco=" + ecosystem + ":dom=" + domain + ":crit=" + criticality + ":formula=" + formula
+}
+
+// loadFeedRows fetches a feed page, caching every query for feedCacheTTL.
+// All concurrent requests for the same filter set share one hopper round-
+// trip via fido's built-in singleflight. Pre-cached variants (default +
+// criticality) stay hot via feedPrecacheLoop so high-traffic views never
+// hit a cold loader on the request path.
 func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
-	if ecosystem == "" && domain == "" && criticality == "" && formula == "" && feedCache != nil {
-		rows, ecos, total, err := loadFrontpageFeedRows(ctx, reqLogger)
-		// Frontpage cache predates the domain filter; fetch domains live
-		// so the dropdown still populates on the cached path.
-		var domains []string
-		if err == nil && hopperDB != nil {
-			if d, derr := hopperDB.FeedDomains(ctx, "", ""); derr == nil {
-				domains = d
-			}
-		}
-		return rows, ecos, domains, total, err
+	if feedCache == nil {
+		return loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
 	}
-	return loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
+	key := feedCacheKey(ecosystem, domain, criticality, formula)
+	snapshot, err := feedCache.FetchTTL(ctx, key, feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
+		return buildFeedSnapshot(lctx, ecosystem, domain, criticality, formula, reqLogger)
+	})
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	return feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, snapshot.Domains, snapshot.TotalCount, nil
+}
+
+// buildFeedSnapshot runs the live hopper queries and packages the result
+// into a cache-friendly snapshot (stable raw fields, no rendered relative-
+// time strings — those re-derive at request time from CreatedAt).
+func buildFeedSnapshot(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
+	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
+	if err != nil {
+		return cachedFeedSnapshot{}, err
+	}
+	return cachedFeedSnapshot{
+		GeneratedAt: time.Now(),
+		Rows:        cachedFeedSamplesFromRows(rows),
+		Ecosystems:  ecosystems,
+		Domains:     domains,
+		TotalCount:  total,
+	}, nil
 }
 
 func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
@@ -1390,23 +1453,6 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 	return rows, ecosystems, domains, total, nil
 }
 
-func loadFrontpageFeedRows(ctx context.Context, reqLogger *slog.Logger) (rows []feedRow, ecosystems []string, total int, err error) {
-	snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey)
-	if err != nil {
-		reqLogger.Debug("frontpage feed cache read failed", "error", err)
-	}
-	if !found || time.Since(snapshot.GeneratedAt) > frontpageFeedMaxAge {
-		snapshot, err = refreshFrontpageFeed(ctx, reqLogger)
-		if err != nil {
-			if !found {
-				return nil, nil, 0, err
-			}
-			reqLogger.Warn("frontpage feed refresh failed, serving stale cache", "error", err, "age", time.Since(snapshot.GeneratedAt))
-		}
-	}
-	return feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, snapshot.TotalCount, nil
-}
-
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 	rows := make([]feedRow, 0, len(snapshot.Rows))
 	now := time.Now()
@@ -1433,49 +1479,70 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 	return rows
 }
 
-func refreshFrontpageFeedLoop(ctx context.Context) {
-	if _, err := refreshFrontpageFeed(ctx, logger); err != nil {
-		logger.Warn("initial frontpage feed refresh failed", "error", err)
+// feedPrecacheVariants enumerates the high-traffic feed views kept hot by
+// the background refresher. The default (all empty) handles unfiltered
+// frontpage; the three criticality views handle the most common filter
+// pivots. Everything else is cached on demand by loadFeedRows.
+var feedPrecacheVariants = []struct{ ecosystem, domain, criticality, formula string }{
+	{"", "", "", ""},
+	{"", "", "hostile", ""},
+	{"", "", "suspicious", ""},
+	{"", "", "benign", ""},
+}
+
+// refreshFeedCacheLoop keeps the pre-cached variants warm. Each tick
+// rebuilds any variant older than feedPrecacheInterval and writes it
+// back with feedCacheTTL — so steady-state, every pre-cached key has a
+// snapshot under feedPrecacheInterval seconds old, well inside its TTL.
+// Variants are refreshed sequentially per tick so a slow hopper doesn't
+// pile up concurrent queries.
+func refreshFeedCacheLoop(ctx context.Context) {
+	if feedCache == nil {
+		return
 	}
-	ticker := time.NewTicker(frontpageFeedRefreshInterval)
+	refreshAll := func() {
+		for _, v := range feedPrecacheVariants {
+			if err := refreshFeedCacheEntry(ctx, v.ecosystem, v.domain, v.criticality, v.formula); err != nil {
+				logger.Warn("feed pre-cache refresh failed",
+					"criticality", v.criticality, "error", err)
+			}
+		}
+	}
+	refreshAll()
+	ticker := time.NewTicker(feedPrecacheInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := refreshFrontpageFeed(ctx, logger); err != nil {
-				logger.Warn("frontpage feed refresh failed", "error", err)
-			}
+			refreshAll()
 		}
 	}
 }
 
-func refreshFrontpageFeed(ctx context.Context, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
-	frontpageFeedRefreshMu.Lock()
-	defer frontpageFeedRefreshMu.Unlock()
-
-	if snapshot, found, err := feedCache.Get(ctx, frontpageFeedCacheKey); err == nil && found {
-		if time.Since(snapshot.GeneratedAt) <= frontpageFeedRefreshInterval {
-			return snapshot, nil
+// refreshFeedCacheEntry no-ops when the cached entry is younger than
+// feedPrecacheInterval. Otherwise it runs the live hopper query and
+// writes a fresh snapshot. On-demand requests for the same key may race
+// this loader through their own fido.Fetch path; both calls produce
+// consistent snapshots, so the rare duplicate hopper query is benign.
+func refreshFeedCacheEntry(ctx context.Context, ecosystem, domain, criticality, formula string) error {
+	key := feedCacheKey(ecosystem, domain, criticality, formula)
+	if snapshot, found, err := feedCache.Get(ctx, key); err == nil && found {
+		if time.Since(snapshot.GeneratedAt) <= feedPrecacheInterval {
+			return nil
 		}
 	}
-
-	rows, ecosystems, _, total, err := loadFeedRowsFromHopper(ctx, "", "", "", "", reqLogger)
+	snapshot, err := buildFeedSnapshot(ctx, ecosystem, domain, criticality, formula, logger)
 	if err != nil {
-		return cachedFeedSnapshot{}, err
+		return err
 	}
-	snapshot := cachedFeedSnapshot{
-		GeneratedAt: time.Now(),
-		Rows:        cachedFeedSamplesFromRows(rows),
-		Ecosystems:  ecosystems,
-		TotalCount:  total,
+	if err := feedCache.SetTTL(ctx, key, snapshot, feedCacheTTL); err != nil {
+		return err
 	}
-	if err := feedCache.Set(ctx, frontpageFeedCacheKey, snapshot); err != nil {
-		return cachedFeedSnapshot{}, err
-	}
-	reqLogger.Debug("frontpage feed cache refreshed", "rows", len(snapshot.Rows), "total", total)
-	return snapshot, nil
+	logger.Debug("feed pre-cache refreshed",
+		"criticality", criticality, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
+	return nil
 }
 
 func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
@@ -1537,6 +1604,7 @@ func requestRescan(ctx context.Context, sha string) error {
 	if pool == nil {
 		return errors.New("hopper database unavailable")
 	}
+	cooldownCutoff := time.Now().Add(-rescanCooldown)
 	tag, err := pool.Exec(ctx, `
 		UPDATE samples
 		SET cleave_result = NULL,
@@ -1545,8 +1613,9 @@ func requestRescan(ctx context.Context, sha string) error {
 		    last_error_at = NULL,
 		    traits_version = '',
 		    updated_at = NOW()
-		WHERE sha256 = $1 AND parent = '' AND skip = ''`,
-		sha)
+		WHERE sha256 = $1 AND parent = '' AND skip = ''
+		  AND (analyzed_at IS NULL OR analyzed_at < $2)`,
+		sha, cooldownCutoff)
 	if err != nil {
 		return fmt.Errorf("hopper rescan update: %w", err)
 	}
@@ -2001,22 +2070,18 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data := prepareResultData(r.Context(), res.Filename, sha, &res)
 	data.Nonce = getNonce(r)
 	data.BuildCommit = buildCommit
+	// The rescan button is currently shown to everyone — the server-side
+	// isTrustedClient check in handleRescan is the real gate. IsTrusted
+	// is kept on the struct for future per-network UX tweaks.
 	data.IsTrusted = isTrustedClient(r)
-	if data.IsTrusted {
-		// Only mint a CSRF token when the page will actually render an
-		// action that needs one — keeps untrusted views identical.
-		data.CSRFToken = csrfToken()
-	}
+	data.CSRFToken = csrfToken()
 	if hopperDB != nil {
-		report, err := hopperDB.LatestReport(r.Context(), sha, "re")
-		if err == nil {
-			data.ReportContent = report.Content
-			data.ReportProvider = report.Provider
-			if !report.CreatedAt.IsZero() {
-				data.ReportCreated = report.CreatedAt.Format("2 Jan 2006 15:04 UTC")
+		if cached, ok := latestReport(r.Context(), sha, reqLogger); ok {
+			data.ReportContent = cached.Content
+			data.ReportProvider = cached.Provider
+			if !cached.CreatedAt.IsZero() {
+				data.ReportCreated = cached.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 			}
-		} else if !errors.Is(err, hopper.ErrNotFound) {
-			reqLogger.Debug("failed to load reverse-engineering report", "error", err)
 		}
 		// Parent archives: only meaningful on a standalone child view, not
 		// when the user is already looking at the archive itself.
@@ -2047,19 +2112,65 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 // of archives; showing all of them would dominate the page.
 const maxParentArchives = 10
 
+// latestReport returns the most recent reverse-engineering report for
+// sha (or zero-valued + false when none exists). Cached via reportCache
+// with auxCacheTTL and fido's built-in singleflight, so concurrent page
+// renders for the same SHA share one hopper round-trip. The not-found
+// case is itself cached (via cachedReport.Found=false) so SHAs without
+// reports don't fan out one query per request.
+func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Report, bool) {
+	if reportCache == nil || hopperDB == nil {
+		return hopper.Report{}, false
+	}
+	cached, err := reportCache.FetchTTL(ctx, sha, auxCacheTTL, func(lctx context.Context) (cachedReport, error) {
+		rep, ferr := hopperDB.LatestReport(lctx, sha, "re")
+		if ferr != nil {
+			if errors.Is(ferr, hopper.ErrNotFound) {
+				return cachedReport{Found: false}, nil
+			}
+			return cachedReport{}, ferr
+		}
+		return cachedReport{Report: *rep, Found: true}, nil
+	})
+	if err != nil {
+		log.Debug("failed to load reverse-engineering report", "error", err)
+		return hopper.Report{}, false
+	}
+	if !cached.Found {
+		return hopper.Report{}, false
+	}
+	return cached.Report, true
+}
+
 // lookupParentArchives finds archives that contain childSHA, sorted by
 // most recent analysis. Returns nil on error (best-effort metadata).
 //
 // Implementation: walk sample_locations rows for childSHA, dedup by parent
-// SHA, then resolve each parent's display fields. The fido cache short-
-// circuits the per-parent SampleBySHA256 calls when a parent's already
-// been viewed recently. A request-bound timeout caps the worst case so a
-// slow hopper-db doesn't block page render: when the deadline fires we
-// return whatever we've collected so far.
+// SHA, then resolve each parent's display fields. The whole computation
+// is wrapped in parentArchiveCache.FetchTTL so concurrent page renders
+// for the same child share one full hopper sweep (singleflighted), and
+// a request-bound timeout caps the worst case so a slow hopper-db
+// doesn't block page render: when the deadline fires we return whatever
+// we've collected so far.
 func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
-	if hopperDB == nil {
+	if parentArchiveCache == nil || hopperDB == nil {
 		return nil
 	}
+	cached, err := parentArchiveCache.FetchTTL(ctx, childSHA, auxCacheTTL, func(lctx context.Context) (cachedParents, error) {
+		entries := lookupParentArchivesFromHopper(lctx, childSHA, log)
+		return cachedParents{Entries: entries}, nil
+	})
+	if err != nil {
+		log.Debug("parent archive cache fetch failed", "error", err)
+		return nil
+	}
+	return cached.Entries
+}
+
+// lookupParentArchivesFromHopper is the uncached loader body invoked by
+// lookupParentArchives. Direct callers should not exist; route through
+// the cached wrapper so concurrent fetches dedupe.
+func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
 	ctx, cancel := context.WithTimeout(ctx, parentLookupTimeout)
 	defer cancel()
 	locs, err := hopperDB.LocationsForSHA(ctx, childSHA)
@@ -2651,12 +2762,14 @@ func writeJSON(w http.ResponseWriter, body any, logger *slog.Logger) {
 	}
 }
 
-// handleRescan accepts an operator-initiated request to re-queue a sample for
-// analysis. Gated on two checks: the client must originate from a trusted
-// subnet (see --trusted-subnets), and the form must carry a valid CSRF token
-// from a recent page render. On success, the sample's analysis fields are
-// cleared in hopper so the next worker poll picks it up, and prism's local
-// result cache for that SHA is invalidated.
+// handleRescan accepts any user's request to re-queue a sample for analysis,
+// gated only by a valid CSRF token (so the request demonstrably came from a
+// recently-rendered page) and a server-side cooldown enforced atomically in
+// the UPDATE statement. The cooldown — rescanCooldown, currently 15
+// minutes — prevents rapid-fire re-queues from one user or a coordinated
+// click. On success the sample's analysis fields are cleared in hopper so
+// the next worker poll picks it up, and prism's local result cache for that
+// SHA is invalidated.
 func handleRescan(w http.ResponseWriter, r *http.Request) {
 	sha := r.PathValue("sha256")
 	ip := clientIP(r)
@@ -2664,11 +2777,6 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 
 	if !validSHA256(sha) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
-		return
-	}
-	if !isTrustedClient(r) {
-		reqLogger.Warn("rescan denied: client IP not in trusted subnets")
-		writeJSONError(w, http.StatusForbidden, "forbidden", "rescan is restricted to trusted networks")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -2681,7 +2789,7 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := requestRescan(r.Context(), sha); err != nil {
 		if errors.Is(err, errSampleNotEligible) {
-			writeJSONError(w, http.StatusNotFound, "not_eligible", "sample not found or not eligible for rescan")
+			writeJSONError(w, http.StatusTooManyRequests, "not_eligible", "sample is not eligible — either it's an archive child, skipped, or was analyzed within the last 15 minutes")
 			return
 		}
 		reqLogger.Error("rescan: hopper update failed", "error", err)
@@ -3126,6 +3234,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		}
 		data.AnalyzedAt = analyzedAt.Format("2 Jan 2006 15:04 UTC")
 		data.AnalyzedAgo = timeAgo(time.Since(analyzedAt))
+		data.RescanAllowed = time.Since(analyzedAt) >= rescanCooldown
 	}
 	if !res.CreatedAt.IsZero() {
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
