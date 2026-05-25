@@ -3,18 +3,12 @@ module codeberg.org/atomdrift/prism
 go 1.25.4
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260510153054-3fdff442fe14
+	codeberg.org/atomdrift/hopper v0.0.0-20260525181243-03200d428e5b
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/null v1.11.0
 	github.com/codeGROOVE-dev/retry v1.3.1
 )
-
-// Local hopper checkout — pinned here until the changes for the Tier 0
-// forced-rescan queue (RequestRescan / ForcedRescanCandidates) are tagged
-// and published. Remove this directive once the published hopper version
-// includes those APIs.
-replace codeberg.org/atomdrift/hopper => ../hopper
 
 require (
 	github.com/alecthomas/chroma/v2 v2.24.1 // indirect

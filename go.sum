@@ -1,5 +1,7 @@
 codeberg.org/atomdrift/hopper v0.0.0-20260510153054-3fdff442fe14 h1:WbVZd+6bhmRhoahx9og/AfB8YqTLwQefPbQdYVC71Sw=
 codeberg.org/atomdrift/hopper v0.0.0-20260510153054-3fdff442fe14/go.mod h1:wieGikvtH65qwOl7WIUHJhxyaJR/6vIGaf8jG2MNyb4=
+codeberg.org/atomdrift/hopper v0.0.0-20260525181243-03200d428e5b h1:OB0bcCgwvnHj9v8F5Nf+T7Allc1M3000pLZ/UZrFqVc=
+codeberg.org/atomdrift/hopper v0.0.0-20260525181243-03200d428e5b/go.mod h1:wieGikvtH65qwOl7WIUHJhxyaJR/6vIGaf8jG2MNyb4=
 github.com/alecthomas/chroma/v2 v2.24.1 h1:m5ffpfZbIb++k8AqFEKy9uVgY12xIQtBsQlc6DfZJQM=
 github.com/alecthomas/chroma/v2 v2.24.1/go.mod h1:l+ohZ9xRXIbGe7cIW+YZgOGbvuVLjMps/FYN/CwuabI=
 github.com/codeGROOVE-dev/fido v1.11.0 h1:wmgvNElsz/CLbBvJQ6rJEeMicvMk8amFhmNTmTSKu+I=
