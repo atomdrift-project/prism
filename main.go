@@ -413,6 +413,7 @@ type resultData struct {
 	SHA256         string
 	Verdict        string
 	Formula        template.HTML
+	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
 	FileType       string
 	MoleculeJSON   template.JS
 	Duration       string
@@ -3257,6 +3258,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		formula = "∅"
 	}
 	data.Formula = template.HTML(html.EscapeString(formula)) //nolint:gosec // html.EscapeString sanitizes the input before conversion
+	data.FormulaQuery = desubscriptFormula(formula)
 
 	// Generate molecule/galaxy data for 3D visualization
 	// For archives with multiple files, build a galaxy
