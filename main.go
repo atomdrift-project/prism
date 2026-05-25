@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,8 +82,13 @@ var (
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	logger             *slog.Logger
 	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
-	hopperDB           *hopper.DB
-	trustedSubnets     []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
+	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
+	// because connectHopperWithRetry may replace it from a background
+	// goroutine after a startup-time hopper.Open failure; all readers must
+	// use hopperDB.Load() to get a stable snapshot.
+	hopperDB       atomic.Pointer[hopper.DB]
+	hopperDBDSN    string       // saved for background reconnect after startup failure; never contains user input
+	trustedSubnets []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
 )
 
 const (
@@ -1036,14 +1042,22 @@ func main() {
 	}
 
 	// Connect to hopper sample registry. Explicit --db, HOPPER_DSN, and
-	// FALLOUT_DB override the local hopper default.
+	// FALLOUT_DB override the local hopper default. If the first attempt
+	// fails (hopper-db is still starting, network blip, etc.) we keep
+	// serving cached results and reconnect in the background — operators
+	// shouldn't have to restart prism to recover.
 	if dbDSN != "" {
-		var err error
-		hopperDB, err = hopper.Open(context.Background(), dbDSN)
+		hopperDBDSN = dbDSN
+		db, err := hopper.Open(context.Background(), dbDSN)
 		if err != nil {
-			logger.Error("failed to connect to hopper", "error", err)
+			logger.Error("failed to connect to hopper",
+				"error", err,
+				"hopper_db_host", hopperDSNHost(dbDSN),
+			)
+			go connectHopperWithRetry(ctx)
 		} else {
-			logger.Info("hopper connected")
+			hopperDB.Store(db)
+			logger.Info("hopper connected", "hopper_db_host", hopperDSNHost(dbDSN))
 			go refreshFeedCacheLoop(ctx)
 		}
 	}
@@ -1383,14 +1397,18 @@ func buildFeedSnapshot(ctx context.Context, ecosystem, domain, criticality, form
 }
 
 func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+	db := hopperDB.Load()
+	if db == nil {
+		return nil, nil, nil, 0, errors.New("hopper not connected")
+	}
 	// Source="" spans every Source value (legacy "harvest" rows from
 	// before the rename, new "forager" rows, manual "upload"s) so the
 	// dropdowns and the result set both work across the transition.
-	ecosystems, err = hopperDB.FeedEcosystems(ctx, "", "")
+	ecosystems, err = db.FeedEcosystems(ctx, "", "")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	domains, err = hopperDB.FeedDomains(ctx, "", "")
+	domains, err = db.FeedDomains(ctx, "", "")
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -1413,11 +1431,11 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 		q.RequireLitmus = true
 	}
 
-	samples, err := hopperDB.FeedSamples(ctx, q)
+	samples, err := db.FeedSamples(ctx, q)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	total, err = hopperDB.FeedSamplesCount(ctx, q)
+	total, err = db.FeedSamplesCount(ctx, q)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -1669,10 +1687,11 @@ var rescanLimiter = newTokenBucket(1.0, 10)
 // would belong as a hopper.DB.RequestRescan method but is kept local to
 // avoid a hopper version bump for this single operator action.
 func requestRescan(ctx context.Context, sha string) error {
-	if hopperDB == nil {
+	db := hopperDB.Load()
+	if db == nil {
 		return errors.New("hopper database unavailable")
 	}
-	if err := hopperDB.RequestRescan(ctx, sha, rescanCooldown); err != nil {
+	if err := db.RequestRescan(ctx, sha, rescanCooldown); err != nil {
 		if errors.Is(err, hopper.ErrRescanNotEligible) {
 			return errSampleNotEligible
 		}
@@ -2008,13 +2027,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		Title:           "Fallout",
-		HasHopper:       hopperDB != nil,
+		HasHopper:       hopperDB.Load() != nil,
 	}
 	if ecosystem != "" {
 		data.Title = ecosystem + " Fallout"
 	}
 
-	if hopperDB != nil {
+	if hopperDB.Load() != nil {
 		var err error
 		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(
 			r.Context(),
@@ -2125,7 +2144,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 	cacheHit, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
-		reqLogger.Warn("failed to retrieve or regenerate result", "error", err)
+		reqLogger.Warn("failed to retrieve or regenerate result",
+			"error", err,
+			"hopper_api_addr", hopperAPIAddr,
+			"hopper_db_host", hopperDSNHost(hopperDBDSN),
+			"hopper_db_connected", hopperDB.Load() != nil,
+		)
 		if strings.Contains(err.Error(), "not found") {
 			renderError(w, r, http.StatusNotFound, errorData{
 				Icon:    "🔍",
@@ -2156,7 +2180,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	// is kept on the struct for future per-network UX tweaks.
 	data.IsTrusted = isTrustedClient(r)
 	data.CSRFToken = csrfToken()
-	if hopperDB != nil {
+	if hopperDB.Load() != nil {
 		if cached, ok := latestReport(r.Context(), sha, reqLogger); ok {
 			data.ReportContent = cached.Content
 			data.ReportProvider = cached.Provider
@@ -2200,11 +2224,12 @@ const maxParentArchives = 10
 // case is itself cached (via cachedReport.Found=false) so SHAs without
 // reports don't fan out one query per request.
 func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Report, bool) {
-	if reportCache == nil || hopperDB == nil {
+	db := hopperDB.Load()
+	if reportCache == nil || db == nil {
 		return hopper.Report{}, false
 	}
 	cached, err := reportCache.FetchTTL(ctx, sha, auxCacheTTL, func(lctx context.Context) (cachedReport, error) {
-		rep, ferr := hopperDB.LatestReport(lctx, sha, "re")
+		rep, ferr := db.LatestReport(lctx, sha, "re")
 		if ferr != nil {
 			if errors.Is(ferr, hopper.ErrNotFound) {
 				return cachedReport{Found: false}, nil
@@ -2234,7 +2259,7 @@ func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Rep
 // doesn't block page render: when the deadline fires we return whatever
 // we've collected so far.
 func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
-	if parentArchiveCache == nil || hopperDB == nil {
+	if parentArchiveCache == nil || hopperDB.Load() == nil {
 		return nil
 	}
 	cached, err := parentArchiveCache.FetchTTL(ctx, childSHA, auxCacheTTL, func(lctx context.Context) (cachedParents, error) {
@@ -2254,7 +2279,11 @@ func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger
 func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
 	ctx, cancel := context.WithTimeout(ctx, parentLookupTimeout)
 	defer cancel()
-	locs, err := hopperDB.LocationsForSHA(ctx, childSHA)
+	db := hopperDB.Load()
+	if db == nil {
+		return nil
+	}
+	locs, err := db.LocationsForSHA(ctx, childSHA)
 	if err != nil {
 		log.Debug("parent archive lookup: locations failed", "error", err)
 		return nil
@@ -2271,7 +2300,7 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 			continue
 		}
 		seen[loc.ParentSHA256] = true
-		parent, err := hopperDB.SampleBySHA256(ctx, loc.ParentSHA256)
+		parent, err := db.SampleBySHA256(ctx, loc.ParentSHA256)
 		if err != nil {
 			// Missing parent rows are normal (e.g. extracted-then-deleted);
 			// skip silently. A real DB error logs once and continues.
@@ -2396,9 +2425,12 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 	cacheHit := true
 	res, err := cache.Fetch(ctx, sha, func(lctx context.Context) (storedResult, error) {
 		cacheHit = false
-		reqLogger.Debug("cache miss, loading from hopper")
-		if hopperDB == nil {
-			return storedResult{}, errors.New("hopper unavailable")
+		dbHost := hopperDSNHost(hopperDBDSN)
+		reqLogger.Debug("cache miss, loading from hopper",
+			"hopper_db_host", dbHost,
+		)
+		if hopperDB.Load() == nil {
+			return storedResult{}, fmt.Errorf("hopper db not connected (host=%s); background reconnect in progress", dbHost)
 		}
 		return fetchFromHopper(lctx, sha)
 	})
@@ -2410,7 +2442,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 	// it predates fetchFromHopper's reassembly. Re-fetch synchronously so the
 	// caller gets the enriched view this request — without this, users would
 	// see the un-enriched page until the TTL-based refresh below kicked in.
-	if cacheHit && hopperDB != nil && envelopeNeedsEnrichment(res.RawLitmus) {
+	if cacheHit && hopperDB.Load() != nil && envelopeNeedsEnrichment(res.RawLitmus) {
 		reqLogger.Debug("cached envelope still compacted, re-enriching")
 		if fresh, ferr := fetchFromHopper(ctx, sha); ferr == nil {
 			res = fresh
@@ -2421,7 +2453,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 			reqLogger.Debug("re-enrichment fetch failed; serving cached value", "error", ferr)
 		}
 	}
-	if cacheHit && hopperDB != nil && time.Since(res.CachedAt) > hopperCacheTTL {
+	if cacheHit && hopperDB.Load() != nil && time.Since(res.CachedAt) > hopperCacheTTL {
 		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
 			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
 		}
@@ -2454,12 +2486,16 @@ func envelopeNeedsEnrichment(rawLitmus string) bool {
 // from sibling rows so downstream display and JSON export see a full archive
 // view. The reassembled envelope is what gets cached.
 func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
-	sample, err := hopperDB.SampleBySHA256(ctx, sha)
+	db := hopperDB.Load()
+	if db == nil {
+		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
+	}
+	sample, err := db.SampleBySHA256(ctx, sha)
 	if err != nil {
 		if errors.Is(err, hopper.ErrNotFound) {
 			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
 		}
-		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
+		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
 	}
 
 	res, err := storedResultFromHopperSample(sample)
@@ -2467,7 +2503,7 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		children, cerr := hopperDB.SamplesByParent(ctx, sha)
+		children, cerr := db.SamplesByParent(ctx, sha)
 		if cerr != nil {
 			logger.Debug("samples by parent failed", "sha", sha, "error", cerr)
 		} else if len(children) > 0 {
@@ -2977,6 +3013,68 @@ func handleFileContents(w http.ResponseWriter, r *http.Request) {
 	}, reqLogger)
 }
 
+// hopperDSNHost extracts the host:port from a postgres DSN for logging.
+// Credentials and database name are dropped so log lines stay safe to
+// share. Returns "unknown" if the DSN can't be parsed — never returns the
+// raw DSN, which could leak a password.
+func hopperDSNHost(dsn string) string {
+	if dsn == "" {
+		return "unknown"
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || u.Host == "" {
+		return "unknown"
+	}
+	return u.Host
+}
+
+// connectHopperWithRetry runs in a background goroutine after a startup-
+// time hopper.Open failure. It retries with exponential backoff capped at
+// 2 minutes per attempt (per project xreliable standards) and keeps trying
+// until the parent context is canceled. On success it publishes the handle
+// via atomic.Pointer and kicks off the feed cache loop.
+func connectHopperWithRetry(ctx context.Context) {
+	host := hopperDSNHost(hopperDBDSN)
+	logger.Info("scheduling background hopper reconnect", "hopper_db_host", host)
+	attempt := 0
+	retryErr := retry.Do(
+		func() error {
+			attempt++
+			db, err := hopper.Open(ctx, hopperDBDSN)
+			if err != nil {
+				logger.Warn("hopper reconnect attempt failed",
+					"hopper_db_host", host,
+					"attempt", attempt,
+					"error", err,
+				)
+				return err
+			}
+			if !hopperDB.CompareAndSwap(nil, db) {
+				// Another goroutine beat us to it (shouldn't happen — only
+				// startup and this loop write — but be defensive so we don't
+				// leak the second pool).
+				db.Close()
+				return nil
+			}
+			logger.Info("hopper reconnected",
+				"hopper_db_host", host,
+				"attempt", attempt,
+			)
+			go refreshFeedCacheLoop(ctx)
+			return nil
+		},
+		retry.Context(ctx),
+		retry.Attempts(0), // retry forever until ctx cancels
+		retry.Delay(1*time.Second),
+		retry.MaxDelay(2*time.Minute),
+		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
+		retry.LastErrorOnly(true),
+	)
+	if retryErr != nil && !errors.Is(retryErr, context.Canceled) {
+		logger.Warn("hopper reconnect loop exited", "hopper_db_host", host, "error", retryErr)
+	}
+}
+
 func hopperFileURL(sha string) string {
 	base := strings.TrimSpace(hopperAPIAddr)
 	if base == "" {
@@ -3232,8 +3330,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		// re-uploads of the same content just bump last_seen_at on the
 		// matching sample_locations row.
 		//nolint:contextcheck // hopper writes share the analysis lctx (decoupled from request) so they can complete after a client disconnect
-		if hopperDB != nil {
-			if insertErr := hopperDB.InsertSample(lctx, &hopper.Sample{
+		if db := hopperDB.Load(); db != nil {
+			if insertErr := db.InsertSample(lctx, &hopper.Sample{
 				SHA256:      sha256Hex,
 				Source:      "upload",
 				Filename:    filename,
@@ -3245,12 +3343,12 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Debug("hopper insert failed", "error", insertErr)
 			}
 			if len(lr.CleaveJSON) > 0 {
-				if err := hopperDB.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, ""); err != nil {
+				if err := db.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, ""); err != nil {
 					reqLogger.Debug("hopper UpdateCleaveResult failed", "error", err)
 				}
 			}
 			if len(lr.LitmusEnvelope) > 0 {
-				if err := hopperDB.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope); err != nil {
+				if err := db.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope); err != nil {
 					reqLogger.Debug("hopper UpdateLitmusResult failed", "error", err)
 				}
 			}
