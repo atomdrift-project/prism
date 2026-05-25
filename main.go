@@ -3430,6 +3430,53 @@ func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
 // Unlike per-file aggregation, this version attributes every aggregated trait
 // back to the files that contributed, so the UI can expand a trait to show
 // "fired in N files" and link to each.
+// canonicalCategoryOrder is the preferred display order for top-level
+// trait categories across the result page (both archive aggregation and
+// per-file views). Categories not listed here render after all known
+// ones, sorted alphabetically by key for determinism.
+var canonicalCategoryOrder = []string{"well-known", "objectives", "micro-behaviors", "metadata", "third_party"}
+
+// orderCategories assembles categoryMap's entries into a []CategoryGroup
+// in the canonical order defined by canonicalCategoryOrder, with empty
+// findings dropped and unknown categories appended alphabetically.
+func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[string]string) []CategoryGroup {
+	known := make(map[string]struct{}, len(canonicalCategoryOrder))
+	for _, k := range canonicalCategoryOrder {
+		known[k] = struct{}{}
+	}
+	var out []CategoryGroup
+	for _, cat := range canonicalCategoryOrder {
+		findings := categoryMap[cat]
+		if len(findings) == 0 {
+			continue
+		}
+		name, ok := displayNames[cat]
+		if !ok {
+			name = cat
+		}
+		out = append(out, CategoryGroup{Name: name, Findings: findings})
+	}
+	var unknown []string
+	for cat, findings := range categoryMap {
+		if _, k := known[cat]; k {
+			continue
+		}
+		if len(findings) == 0 {
+			continue
+		}
+		unknown = append(unknown, cat)
+	}
+	sort.Strings(unknown)
+	for _, cat := range unknown {
+		name, ok := displayNames[cat]
+		if !ok {
+			name = cat
+		}
+		out = append(out, CategoryGroup{Name: name, Findings: categoryMap[cat]})
+	}
+	return out
+}
+
 func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	categoryNames := map[string]string{
 		"objectives":      "Objectives",
@@ -3540,24 +3587,14 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	}
 
 	critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
-	var categories []CategoryGroup
-	for cat, findings := range categoryMap {
+	for _, findings := range categoryMap {
 		sort.SliceStable(findings, func(i, j int) bool {
 			return critRank[findings[i].Crit] > critRank[findings[j].Crit]
 		})
-		name, ok := categoryNames[cat]
-		if !ok {
-			name = cat
-		}
-		categories = append(categories, CategoryGroup{Name: name, Findings: findings})
 	}
-	sort.Slice(categories, func(i, j int) bool {
-		return categories[i].Name < categories[j].Name
-	})
-	return categories
+	return orderCategories(categoryMap, categoryNames)
 }
 
-//nolint:gocognit // inherently complex: multi-stage aggregation with category/criticality grouping; refactor would split into helpers without simplifying the logic
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 	var result []FileFindingsDisplay
 
@@ -3681,51 +3718,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			categoryMap[cat] = findings
 		}
 
-		// Build categories sorted by highest criticality finding, then by default order.
-		defaultOrder := map[string]int{"well-known": 0, "objectives": 1, "micro-behaviors": 2, "metadata": 3, "third_party": 4}
-
-		var categories []CategoryGroup
-		for cat, findings := range categoryMap {
-			if len(findings) == 0 {
-				continue
-			}
-			name := categoryNames[cat]
-			if name == "" {
-				name = cat
-			}
-			categories = append(categories, CategoryGroup{
-				Name:     name,
-				Findings: findings,
-			})
-		}
-
-		// Sort: highest criticality first, then by default category order.
-		sort.Slice(categories, func(i, j int) bool {
-			maxCrit := func(cg CategoryGroup) int {
-				best := 0
-				for _, f := range cg.Findings {
-					if r := critRank[f.Crit]; r > best {
-						best = r
-					}
-				}
-				return best
-			}
-			ci, cj := maxCrit(categories[i]), maxCrit(categories[j])
-			if ci != cj {
-				return ci > cj
-			}
-			// Same criticality: use default order
-			catKey := func(name string) string {
-				for k, v := range categoryNames {
-					if v == name {
-						return k
-					}
-				}
-				return name
-			}
-			oi, oj := defaultOrder[catKey(categories[i].Name)], defaultOrder[catKey(categories[j].Name)]
-			return oi < oj
-		})
+		categories := orderCategories(categoryMap, categoryNames)
 
 		if len(categories) > 0 {
 			// Extract basename

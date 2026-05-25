@@ -730,15 +730,44 @@ window.addEventListener('resize', () => {
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
 });
 
-// Tab switching
+// Tab switching with URL-hash anchors so tab views are shareable.
+// Hash format: `#<tab-name>` (e.g. `#traits`, `#symbols`, `#metrics`).
+// The archive Files tab continues to use `#file=<sha>` for selecting a
+// specific entry — that scheme is owned by files-tab.js, which also
+// brings the Files tab forward on hashchange. We skip those hashes here
+// so the two handlers don't fight.
+const tabNames = new Set();
+document.querySelectorAll('.tab').forEach(t => tabNames.add(t.dataset.tab));
+
+function activateTab(name) {
+    const tabEl = document.querySelector('.tab[data-tab="' + name + '"]');
+    const contentEl = document.getElementById('tab-' + name);
+    if (!tabEl || !contentEl) return false;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tabEl.classList.add('active');
+    contentEl.classList.add('active');
+    return true;
+}
+
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        const name = tab.dataset.tab;
+        activateTab(name);
+        // replaceState avoids triggering the hashchange handler below
+        // (and avoids polluting browser back-history with every tab click).
+        history.replaceState(null, '', '#' + name);
     });
 });
+
+function applyTabHash() {
+    const h = location.hash.replace(/^#/, '');
+    if (!h) return;
+    if (h.startsWith('file=')) return; // owned by files-tab.js
+    if (tabNames.has(h)) activateTab(h);
+}
+window.addEventListener('hashchange', applyTabHash);
+applyTabHash();
 
 /// Evidence toggles
 document.querySelectorAll('.evidence-toggle').forEach(btn => {
