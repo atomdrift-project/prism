@@ -1,9 +1,10 @@
 module codeberg.org/atomdrift/prism
 
-go 1.25.4
+go 1.26
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260525181243-03200d428e5b
+	codeberg.org/atomdrift/hopper v0.0.0-20260526024612-7d996419d7f1
+	github.com/alecthomas/chroma/v2 v2.25.0
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/null v1.11.0
@@ -11,9 +12,8 @@ require (
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 // indirect
-	github.com/dlclark/regexp2 v1.12.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.9.2 // indirect
