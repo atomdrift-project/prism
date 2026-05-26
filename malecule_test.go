@@ -812,9 +812,10 @@ func absPath(path string) string {
 }
 
 // TestPrepareResultData_SingleFileArchive verifies that when a zipfile wraps
-// exactly one inner file the container is collapsed (so per-file data
-// isn't duplicated), but the archive view still renders so the user lands
-// in the Files tab with the lone inner file auto-selected by the JS.
+// exactly one inner file both the container and the inner file are rendered.
+// Earlier code collapsed the container away, which dropped its FileType,
+// Size, Probability, and findings on the floor when the inner file's data
+// did not mirror the container.
 func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 	raw := map[string]any{
 		"fs": []map[string]any{
@@ -875,32 +876,16 @@ func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 	data := prepareResultData(context.Background(), "wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
 
 	if !data.IsArchive {
-		t.Error("IsArchive should be true so the Files tab still renders for the container")
+		t.Error("IsArchive should be true so the Files tab renders for the container")
 	}
-	if len(data.Files) != 1 {
-		t.Errorf("Files tree got %d entries, want 1 (container collapsed away)", len(data.Files))
+	if len(data.Files) != 2 {
+		t.Errorf("Files tree got %d entries, want 2 (container + inner)", len(data.Files))
 	}
-	if len(data.Files) == 1 && data.Files[0].Basename != "payload.exe" {
-		t.Errorf("Files[0].Basename = %q, want payload.exe", data.Files[0].Basename)
+	if data.FileType != "ZIP" {
+		t.Errorf("FileType = %q, want ZIP (from the depth-0 container)", data.FileType)
 	}
-	// Per-file display structures should not double up on the container.
-	checks := []struct {
-		name string
-		n    int
-	}{
-		{"FileFindings", len(data.FileFindings)},
-		{"FileStrings", len(data.FileStrings)},
-		{"FileSymbols", len(data.FileSymbols)},
-		{"FileSections", len(data.FileSections)},
-		{"FileMetrics", len(data.FileMetrics)},
-	}
-	for _, c := range checks {
-		if c.n > 1 {
-			t.Errorf("%s: got %d entries, want <=1 (container collapsed)", c.name, c.n)
-		}
-	}
-	if len(data.FileFindings) == 1 && data.FileFindings[0].Basename != "payload.exe" {
-		t.Errorf("FileFindings kept %q; expected inner basename payload.exe", data.FileFindings[0].Basename)
+	if data.SizeBytes != 1024 {
+		t.Errorf("SizeBytes = %d, want 1024 (from the depth-0 container)", data.SizeBytes)
 	}
 }
 

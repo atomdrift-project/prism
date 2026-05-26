@@ -4223,31 +4223,6 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		return data
 	}
 
-	// Collapse single-file archives: if the archive container wraps exactly
-	// one inner file, drop the container so per-file data isn't duplicated.
-	// The Files tab still renders (hadArchive is sticky), so the user can
-	// see the archive context even when only the inner file remains.
-	//
-	// hadArchive requires BOTH a container (depth-0 entry) and inner files.
-	// A standalone child file fetched by its own SHA arrives here as a
-	// single dp>0 entry with a "!!" path: no container, no archive — just
-	// a child whose path happens to remember its origin. Treating that as
-	// an archive would render the wrong tabs (Files/empty Traits) instead
-	// of the file's own Strings/Symbols/Metrics/KV.
-	innerCount := 0
-	containerIdx := -1
-	for i := range report.Files {
-		if strings.Contains(report.Files[i].Path, "!!") {
-			innerCount++
-		} else if report.Files[i].Depth == 0 {
-			containerIdx = i
-		}
-	}
-	hadArchive := innerCount > 0 && containerIdx >= 0
-	if innerCount == 1 && containerIdx >= 0 {
-		report.Files = append(report.Files[:containerIdx], report.Files[containerIdx+1:]...)
-	}
-
 	// Extract target info from top-level file (depth=0) or first file
 	for i := range report.Files {
 		file := &report.Files[i]
@@ -4377,12 +4352,8 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
-	// should render the file-tree view. hadArchive is sticky across the
-	// single-file collapse so a tar.gz/npm-package wrapping one payload
-	// still gets the Files tab — the user can then see the container's
-	// metadata next to the lone inner file rather than being silently
-	// rerouted to a single-file view.
-	data.IsArchive = hadArchive || len(report.Files) > 1
+	// should render the file-tree view.
+	data.IsArchive = len(report.Files) > 1
 
 	// Contents tab: for non-archive text files, fetch the body and render
 	// it with per-line trait annotations. fido caches the bytes by SHA so
