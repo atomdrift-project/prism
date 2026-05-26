@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Search syntax - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <style nonce="{{.Nonce}}">
+    {{template "fonts" .}}
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --iron: #52525b;
+            --slate: #6b7280;
+            --mist: #f5f5f5;
+            --white: #ffffff;
+            --cream: #fafaf9;
+            --border: #e8e8e8;
+            --isotope: #3b82f6;
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: rgba(208, 255, 0, 0.14);
+            --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--cream);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        header { margin-bottom: 48px; }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 28px;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+            text-decoration: none;
+            color: inherit;
+        }
+        .logo-accent { color: var(--toxic-muted); }
+        .beta-tag {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--toxic-dark);
+            background: rgba(208, 255, 0, 0.14);
+            border: 1px solid rgba(208, 255, 0, 0.2);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: super;
+            letter-spacing: 0.5px;
+        }
+        .page-title {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .page-desc {
+            font-size: 16px;
+            color: var(--slate);
+            margin-bottom: 32px;
+        }
+        .section {
+            margin-bottom: 32px;
+        }
+        .section h2 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .syntax-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .syntax-table th {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 2px solid var(--mist);
+            color: var(--slate);
+            font-weight: 500;
+            font-size: 13px;
+        }
+        .syntax-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+        }
+        .syntax-table tr:last-child td { border-bottom: none; }
+        .syntax-table td.token { width: 36%; }
+        .syntax-table code, code.tok {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--carbon);
+            background: var(--mist);
+            padding: 1px 6px;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+        .syntax-table td.desc { color: var(--graphite); }
+        .syntax-table td.desc .alias {
+            display: block;
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--slate);
+        }
+        .examples {
+            display: grid;
+            gap: 8px;
+        }
+        .example {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 16px;
+            align-items: baseline;
+            padding: 10px 14px;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .example code {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--carbon);
+            background: transparent;
+            padding: 0;
+        }
+        .example .what {
+            font-size: 13px;
+            color: var(--slate);
+            text-align: right;
+        }
+        .note {
+            font-size: 13.5px;
+            color: var(--iron);
+            background: var(--toxic-dim);
+            border-left: 3px solid var(--toxic-muted);
+            padding: 12px 14px;
+            border-radius: 4px;
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--mist);
+            font-size: 14px;
+            color: var(--iron);
+            display: flex;
+            justify-content: space-between;
+            position: relative;
+        }
+        footer::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 0;
+            width: 80px;
+            height: 2px;
+            background: var(--toxic);
+        }
+        footer a { color: var(--slate); text-decoration: none; }
+        footer a:hover { color: var(--carbon); }
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    <div class="container">
+        <header>
+            <a href="/" class="logo">{{template "wordmark" .}}</a>
+        </header>
+
+        <div class="page-title">Search syntax</div>
+        <p class="page-desc">
+            The search box on the Fallout feed accepts a small query language. Tokens are separated by spaces; keys are case-insensitive. Press <strong>Enter</strong> to submit.
+        </p>
+
+        <div class="section">
+            <h2>Tokens</h2>
+            <table class="syntax-table">
+                <thead><tr><th>Token</th><th>Effect</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td class="token"><code class="tok">sha256:&lt;hex&gt;</code></td>
+                        <td class="desc">
+                            Jump straight to the file page for that SHA-256.
+                            <span class="alias">Alias: <code>sha:</code>. A bare 64-character hex string works too — paste a hash, hit Enter.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">crit:hostile</code> · <code class="tok">crit:suspicious</code> · <code class="tok">crit:benign</code></td>
+                        <td class="desc">
+                            Filter by litmus criticality band.
+                            <span class="alias">Also accepts numeric comparators: <code>crit:&gt;2</code>, <code>crit:&gt;=2</code>, <code>crit:=3</code> (1 = benign, 2 = suspicious, 3 = hostile).</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">ecosystem:&lt;name&gt;</code></td>
+                        <td class="desc">
+                            Restrict to one package ecosystem (e.g. <code>ecosystem:npm</code>, <code>ecosystem:pypi</code>).
+                            <span class="alias">Alias: <code>eco:</code>. Maps to the <code>/{ecosystem}/</code> URL.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">domain:&lt;host&gt;</code></td>
+                        <td class="desc">Restrict to samples originating from one source domain (e.g. <code>domain:pypi.org</code>).</td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">m:&lt;formula&gt;</code></td>
+                        <td class="desc">
+                            Find samples sharing the same cleave malecule, e.g. <code>m:C6H12O6</code>.
+                            <span class="alias">Aliases: <code>malecule:</code>, <code>molecule:</code>, <code>formula:</code>. A bare formula-looking token (mixed capital letters and digits, no spaces) is treated as <code>m:</code>.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">&lt;free text&gt;</code></td>
+                        <td class="desc">
+                            Anything else is matched against filename (substring, case-insensitive) and SHA-256 prefix.
+                            <span class="alias">Aliases: <code>q:</code>, <code>filename:</code>, <code>file:</code>.</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Examples</h2>
+            <div class="examples">
+                <div class="example">
+                    <code>crit:hostile ecosystem:npm</code>
+                    <span class="what">Hostile npm packages</span>
+                </div>
+                <div class="example">
+                    <code>ecosystem:pypi m:C6H12O6</code>
+                    <span class="what">PyPI samples sharing one malecule</span>
+                </div>
+                <div class="example">
+                    <code>crit:&gt;2 domain:github.com</code>
+                    <span class="what">Hostile samples from github.com</span>
+                </div>
+                <div class="example">
+                    <code>requests-</code>
+                    <span class="what">Filename substring match</span>
+                </div>
+                <div class="example">
+                    <code>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</code>
+                    <span class="what">Jump to that SHA-256</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <p class="note">
+                Picking from the Crit / Ecosystem / Domain dropdowns updates only the matching token in the search box — anything else you typed is preserved.
+            </p>
+        </div>
+
+        {{template "footer" .}}
+    </div>
+</body>
+</html>

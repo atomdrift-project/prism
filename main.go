@@ -71,6 +71,7 @@ var (
 	errorTemplate      *template.Template
 	formatsTemplate    *template.Template
 	poweredByTemplate  *template.Template
+	helpQueryTemplate  *template.Template
 	litmusAddr         string       // Address of litmus server (e.g., "127.0.0.1:8080")
 	litmusClient       *http.Client // HTTP client for litmus server
 	hopperAPIAddr      string       // Address of hopper API server (e.g., "hopper-api:8081")
@@ -646,6 +647,8 @@ type feedPageData struct {
 	Title           string
 	SelectedFormula string
 	SelectedCrit    string
+	SelectedQ       string
+	SearchQuery     string
 	CSRFToken       string
 	SelectedEco     string
 	Domains         []string
@@ -1040,6 +1043,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	helpQueryTemplate, tmplErr = template.New("help-query.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/help-query.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 
 	// Connect to hopper sample registry. Explicit --db, HOPPER_DSN, and
 	// FALLOUT_DB override the local hopper default. If the first attempt
@@ -1174,6 +1182,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
+	mux.HandleFunc("GET /help/query", handleHelpQuery)
 	mux.HandleFunc("GET /_/health", handleHealth)
 	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
 	mux.HandleFunc("GET /{ecosystem}/", handleEcosystem)
@@ -1930,6 +1939,63 @@ var knownEcosystems = map[string]bool{
 	"github_actions": true, "github-actions": true,
 }
 
+// composeSearchQuery rebuilds the canonical search-box string from the
+// individual URL filters so the box reflects the page's current state on
+// load (and after non-JS form submissions). Mirror of parseQuery() in
+// upload.js — keep the key order and prefixes in sync.
+func composeSearchQuery(crit, eco, domain, formula, q string) string {
+	var parts []string
+	if crit != "" {
+		parts = append(parts, "crit:"+crit)
+	}
+	if eco != "" {
+		parts = append(parts, "ecosystem:"+eco)
+	}
+	if domain != "" {
+		parts = append(parts, "domain:"+domain)
+	}
+	if formula != "" {
+		parts = append(parts, "m:"+desubscriptFormula(formula))
+	}
+	if q != "" {
+		parts = append(parts, q)
+	}
+	return strings.Join(parts, " ")
+}
+
+// shaFromSearchQuery extracts a SHA-256 from a search box value that is
+// purely a SHA reference — either `sha256:<64-hex>` or a bare 64-hex
+// string. Returns lowercase hex.
+func shaFromSearchQuery(q string) (string, bool) {
+	q = strings.TrimSpace(q)
+	if strings.HasPrefix(strings.ToLower(q), "sha256:") {
+		q = q[len("sha256:"):]
+	}
+	q = strings.ToLower(strings.TrimSpace(q))
+	if validSHA256(q) {
+		return q, true
+	}
+	return "", false
+}
+
+// filterRowsBySearch is the in-memory text filter behind ?q=. Matches
+// filename substring (case-insensitive) or SHA-256 prefix. The structured
+// filters (crit/eco/domain/m) are already applied at the hopper layer.
+func filterRowsBySearch(rows []feedRow, q string) []feedRow {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		return rows
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		if strings.Contains(strings.ToLower(row.Filename), q) ||
+			strings.HasPrefix(row.SHA256, q) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func formulaFromQuery(values url.Values) string {
 	if formula := strings.TrimSpace(values.Get("m")); formula != "" {
 		return resubscriptFormula(formula)
@@ -2016,6 +2082,14 @@ func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
 }
 
 func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
+	rawQ := strings.TrimSpace(r.URL.Query().Get("q"))
+	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
+	// JS already short-circuits these before sending, but a pasted URL or
+	// a no-JS client still gets the redirect.
+	if sha, ok := shaFromSearchQuery(rawQ); ok {
+		http.Redirect(w, r, "/file/"+sha, http.StatusFound)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := feedPageData{
 		CSRFToken:       csrfToken(),
@@ -2026,9 +2100,14 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		SelectedDomain:  strings.TrimSpace(r.URL.Query().Get("domain")),
 		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
+		SelectedQ:       rawQ,
 		Title:           "Fallout",
 		HasHopper:       hopperDB.Load() != nil,
 	}
+	data.SearchQuery = composeSearchQuery(
+		data.SelectedCrit, data.SelectedEco, data.SelectedDomain,
+		data.SelectedFormula, data.SelectedQ,
+	)
 	if ecosystem != "" {
 		data.Title = ecosystem + " Fallout"
 	}
@@ -2056,6 +2135,9 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			}
 		}
 		data.Ecosystems = filtered
+		if data.SelectedQ != "" {
+			data.Rows = filterRowsBySearch(data.Rows, data.SelectedQ)
+		}
 		data.FilteredCount = len(data.Rows)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
@@ -2083,6 +2165,17 @@ func handlePoweredBy(w http.ResponseWriter, r *http.Request) {
 	if err := poweredByTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "powered-by",
+			"error", err,
+		)
+	}
+}
+
+func handleHelpQuery(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	if err := helpQueryTemplate.Execute(w, data); err != nil {
+		logger.Error("template execution failed",
+			"template", "help-query",
 			"error", err,
 		)
 	}

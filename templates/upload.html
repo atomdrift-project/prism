@@ -209,12 +209,57 @@
         }
         .filters {
             display: flex;
-            align-items: end;
-            justify-content: space-between;
-            gap: 16px;
+            flex-direction: column;
+            gap: 12px;
             padding: 16px 0;
             border-top: 1px solid var(--border);
             border-bottom: 1px solid var(--border);
+        }
+        .filters-row {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .search-form {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+        }
+        .search-form input[type="search"] {
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 38px;
+            font-family: var(--mono);
+            font-size: 13.5px;
+            padding: 0 12px;
+        }
+        .search-form input[type="search"]::placeholder {
+            color: var(--slate);
+            font-family: var(--mono);
+        }
+        .search-form input[type="search"]:focus {
+            border-color: var(--toxic-muted);
+            outline: none;
+            box-shadow: 0 0 0 2px var(--toxic-dim);
+        }
+        .search-help {
+            flex: 0 0 auto;
+            font-size: 12px;
+            color: var(--slate);
+            text-decoration: none;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            line-height: 1;
+            white-space: nowrap;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
+        }
+        .search-help:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
         }
         .filter-form {
             display: flex;
@@ -242,7 +287,6 @@
             padding: 0 10px;
             font: inherit;
         }
-        input[type="search"] { width: min(330px, 70vw); font-family: var(--mono); }
         .count {
             color: var(--muted);
             font-size: 12px;
@@ -395,7 +439,8 @@
         footer a { color: var(--slate); }
         @media (max-width: 860px) {
             .shell { width: min(100vw - 22px, 1320px); padding-top: 14px; }
-            .topbar, .filters { align-items: stretch; flex-direction: column; }
+            .topbar { align-items: stretch; flex-direction: column; }
+            .filters-row { align-items: stretch; flex-direction: column; }
             .brand { flex-direction: column; gap: 3px; }
             .tagline { white-space: normal; }
             h1 { font-size: 22px; }
@@ -403,7 +448,7 @@
             .lede { white-space: normal; }
             .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
             .filter-form { display: grid; grid-template-columns: 1fr; }
-            input[type="search"], select { width: 100%; }
+            select { width: 100%; }
         }
     </style>
 </head>
@@ -440,36 +485,46 @@
         </section>
 
         <section class="filters" aria-label="Feed filters">
-            <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/{{end}}" class="filter-form" id="filter-form">
-                <div class="field">
-                    <label for="criticality">Crit</label>
-                    <select name="criticality" id="criticality">
-                        <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
-                        <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
-                        <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
-                        <option value="benign" {{if eq .SelectedCrit "benign"}}selected{{end}}>Benign</option>
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="ecosystem">Ecosystem</label>
-                    <select id="ecosystem-filter">
-                        <option value="" {{if not .SelectedEco}}selected{{end}}>Any</option>
-                        {{range .Ecosystems}}
-                        <option value="{{.}}" {{if eq $.SelectedEco .}}selected{{end}}>{{.}}</option>
-                        {{end}}
-                    </select>
-                </div>
-                <div class="field">
-                    <label for="domain">Domain</label>
-                    <select name="domain" id="domain-filter">
-                        <option value="" {{if not .SelectedDomain}}selected{{end}}>Any</option>
-                        {{range .Domains}}
-                        <option value="{{.}}" {{if eq $.SelectedDomain .}}selected{{end}}>{{.}}</option>
-                        {{end}}
-                    </select>
-                </div>
+            <form method="GET" action="/" class="search-form" id="search-form" role="search">
+                <input type="search" name="q" id="search-input"
+                    value="{{.SearchQuery}}"
+                    placeholder="sha256, filename, C₆H₁₂O₆, or crit:hostile ecosystem:npm"
+                    autocomplete="off" spellcheck="false"
+                    aria-label="Search by SHA, filename, malecule, or filter expression" />
+                <a class="search-help" href="/help/query" title="Query syntax">? syntax</a>
             </form>
-            <div class="count">{{.FilteredCount}} shown{{if .TotalCount}} from {{.TotalCount}}{{end}}</div>
+            <div class="filters-row">
+                <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/{{end}}" class="filter-form" id="filter-form">
+                    <div class="field">
+                        <label for="criticality">Crit</label>
+                        <select name="criticality" id="criticality">
+                            <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
+                            <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
+                            <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
+                            <option value="benign" {{if eq .SelectedCrit "benign"}}selected{{end}}>Benign</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="ecosystem">Ecosystem</label>
+                        <select id="ecosystem-filter">
+                            <option value="" {{if not .SelectedEco}}selected{{end}}>Any</option>
+                            {{range .Ecosystems}}
+                            <option value="{{.}}" {{if eq $.SelectedEco .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="domain">Domain</label>
+                        <select name="domain" id="domain-filter">
+                            <option value="" {{if not .SelectedDomain}}selected{{end}}>Any</option>
+                            {{range .Domains}}
+                            <option value="{{.}}" {{if eq $.SelectedDomain .}}selected{{end}}>{{.}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                </form>
+                <div class="count">{{.FilteredCount}} shown{{if .TotalCount}} from {{.TotalCount}}{{end}}</div>
+            </div>
         </section>
 
         <section class="table-wrap" aria-label="Recently scanned records">
