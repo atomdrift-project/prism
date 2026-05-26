@@ -2045,99 +2045,93 @@ func ecosystemURL(ecosystem string) string {
 }
 
 // ecosystemColor assigns each ecosystem a badge hue, leaning on the brand
-// color where it does not collide. High-churn registries (npm, pypi,
-// rubygems, cargo, maven, packagist, nuget, pub) each get a distinct
-// family so they stay legible in a dense feed; lower-volume distros and
-// extension stores reuse the same families.
+// color where it does not collide. Hopper normalizes registry names to
+// runtime names (npm → javascript, pypi → python, etc.), so this switch
+// keys on the canonical runtime. High-volume runtimes each get a distinct
+// family so they stay legible in a dense feed; lower-volume runtimes
+// reuse the same families.
 func ecosystemColor(eco string) string {
 	switch strings.ToLower(eco) {
-	// npm — JS red brand.
-	case "npm":
-		return "red"
-	// rubygems — Ruby red, pushed pinker so it does not collide with npm.
-	case "rubygems":
-		return "rose"
-	// pypi — Python yellow.
-	case "pypi":
+	// Languages — high volume, each gets its own family.
+	case "javascript":
 		return "yellow"
-	// cargo/crates — Rust browns.
-	case "cargo", "crates":
+	case "python":
+		return "blue"
+	case "ruby":
+		return "red"
+	case "rust":
 		return "brown"
-	// maven/clojars — Apache/JVM orange.
-	case "maven", "clojars":
+	case "go":
+		return "cyan"
+	case "java":
 		return "orange"
-	// packagist — PHP purple.
-	case "packagist":
+	case "php":
 		return "purple"
-	// nuget and the rest of the Windows/.NET stack — NuGet blue.
-	case "nuget", "powershell_gallery", "chocolatey", "scoop", "winget":
-		return "blue"
-	// pub — Dart cyan.
-	case "pub":
+	case "dart":
 		return "cyan"
-	// hackage/cpan — functional-language indigo.
-	case "hackage", "cpan":
+	case "wordpress":
 		return "indigo"
-	// homebrew — kettle gold.
-	case "homebrew":
-		return "yellow"
-	// distros.
-	case "debian":
-		return "red"
-	case "fedora":
-		return "blue"
-	case "arch", "archlinux", "aur":
-		return "cyan"
-	case "alpine":
+	// Languages — lower volume, share families.
+	case "dotnet":
 		return "indigo"
-	case "freebsd", "freebsd-ports":
-		return "red"
-	case "netbsd":
-		return "orange"
-	case "openbsd":
-		return "yellow"
-	case "wolfi":
-		return "green"
-	// R and Lua — language blues.
-	case "cran", "luarocks":
+	case "powershell":
 		return "blue"
-	// Mozilla extensions — Firefox orange.
-	case "mozilla":
-		return "orange"
-	// Browser / IDE extension stores.
-	case "chrome", "chrome_ext":
+	case "erlang", "perl":
+		return "rose"
+	case "haskell":
+		return "purple"
+	case "r", "lua":
 		return "green"
-	case "vscode", "open_vsx", "openvsx":
+	// OS targets.
+	case "linux":
+		return "yellow"
+	case "bsd":
+		return "red"
+	case "macos":
+		return "slate"
+	case "windows":
+		return "blue"
+	case "android":
+		return "green"
+	// Application hosts.
+	case "vscode":
+		return "blue"
+	case "chrome":
+		return "green"
+	case "edge":
 		return "cyan"
-	case "conda", "jfrog":
-		return "green"
+	case "firefox":
+		return "orange"
+	// Agent skills, containers, source hosts.
+	case "agent", "openclaw":
+		return "purple"
+	case "container":
+		return "cyan"
+	case "github":
+		return "slate"
 	default:
 		return "slate"
 	}
 }
 
-// knownEcosystems is the allowlist for the Fallout ecosystem dropdown — real
-// open-source software providers (package registries, OS distributions, and
-// extension marketplaces) that prism scans. Hopper's ecosystem field also
-// contains file extensions, malware-corpus repo names, and OS version strings
-// that are not useful as user-facing filters.
+// knownEcosystems is the allowlist for the Fallout ecosystem dropdown.
+// Hopper normalizes registry/classifier names to canonical runtimes
+// (npm → javascript, homebrew → macos, etc.), so this list holds those
+// runtime names. Anything else hopper emits (file extensions, malware-
+// corpus repo names, OS version strings) is filtered out of the dropdown.
 var knownEcosystems = map[string]bool{
-	"alpine": true, "arch": true, "archlinux": true, "aur": true,
-	"debian": true, "fedora": true, "freebsd": true, "freebsd-ports": true,
-	"netbsd": true, "openbsd": true, "wolfi": true,
-
-	"cargo": true, "clojars": true, "conda": true, "cpan": true,
-	"cran": true, "crates": true, "hackage": true, "jfrog": true,
-	"luarocks": true, "maven": true, "npm": true, "nuget": true,
-	"packagist": true, "pub": true, "pypi": true, "rubygems": true,
-
-	"chocolatey": true, "homebrew": true, "scoop": true, "winget": true,
-
-	"chrome": true, "chrome_ext": true, "mozilla": true,
-	"open_vsx": true, "openvsx": true, "powershell_gallery": true,
-	"vscode": true,
-
-	"github_actions": true, "github-actions": true,
+	// Languages.
+	"javascript": true, "python": true, "ruby": true, "rust": true,
+	"go": true, "java": true, "dotnet": true, "powershell": true,
+	"php": true, "erlang": true, "perl": true, "r": true,
+	"haskell": true, "dart": true, "lua": true, "wordpress": true,
+	// OS targets.
+	"linux": true, "bsd": true, "macos": true, "windows": true,
+	"android": true,
+	// Application hosts.
+	"vscode": true, "chrome": true, "edge": true, "firefox": true,
+	// Containers, agent skills, source hosts.
+	"container": true, "agent": true, "openclaw": true, "github": true,
 }
 
 // composeSearchQuery rebuilds the canonical search-box string from the
