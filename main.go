@@ -161,7 +161,7 @@ func csrfValid(token string, maxAge time.Duration) bool {
 }
 
 // uploadLimiter implements a per-IP token bucket rate limiter for the upload endpoint.
-// Each IP gets a bucket that refills at 1 token per minute, with a burst of 5.
+// Each IP gets a bucket that refills at 1 token per 30 seconds, with a burst of 2.
 type uploadLimiter struct {
 	buckets map[string]*bucket
 	mu      sync.Mutex
@@ -173,8 +173,8 @@ type bucket struct {
 }
 
 const (
-	uploadBurst    = 5                // max uploads before throttling
-	uploadRate     = 1.0 / 60.0       // tokens per second (1 per minute)
+	uploadBurst    = 2                // max uploads before throttling
+	uploadRate     = 1.0 / 30.0       // tokens per second (1 per 30 seconds)
 	bucketLifetime = 10 * time.Minute // evict idle entries
 )
 
@@ -3486,6 +3486,11 @@ func hopperUploadURL(filename string) string {
 // the moment a worker finishes.
 //
 //nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
+// uploadEnabled gates browser uploads. Set to false while the feature is
+// being reworked; the handler short-circuits to a 503 and the UI greys out
+// the button. Restore to true to re-enable end-to-end.
+var uploadEnabled = false
+
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
 	h := sha256.Sum256(fmt.Appendf(nil, "%d-%p", time.Now().UnixNano(), r))
@@ -3498,6 +3503,16 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"client_ip", ip,
 		"user_agent", r.UserAgent(),
 	)
+
+	if !uploadEnabled {
+		reqLogger.Info("upload rejected: feature temporarily disabled")
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "⏸",
+			Title:   "Upload temporarily disabled",
+			Message: "Uploads are temporarily disabled while we rework this feature.",
+		})
+		return
+	}
 
 	if !rateLimiter.allow(ip) {
 		reqLogger.Warn("upload rate limited")

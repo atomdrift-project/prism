@@ -100,6 +100,13 @@
             cursor: pointer;
             white-space: nowrap;
         }
+        .upload-button.is-disabled {
+            border-color: var(--border);
+            background: var(--mist);
+            color: var(--slate);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
         .top-upload {
             margin: 0;
             position: relative;
@@ -460,12 +467,9 @@
                 <a href="/" class="logo">{{template "wordmark" .}}</a>
                 <p class="tagline">{{template "tagline" .}}</p>
             </div>
-            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
-                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-                <input type="file" name="file" id="file-input" required />
-                <label class="upload-button" for="file-input">Upload</label>
-                <div id="upload-status" class="top-upload-status"></div>
-            </form>
+            <div class="top-upload">
+                <span class="upload-button is-disabled" aria-disabled="true" title="Temporarily disabled while we rework this feature">Upload</span>
+            </div>
         </nav>
 
         <section class="intro">
