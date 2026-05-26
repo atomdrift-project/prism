@@ -4532,9 +4532,6 @@ func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
 	perTraitArchive := make(map[string]traitOccurrence)
 	for i := range files {
 		f := &files[i]
-		if f.Depth == 0 {
-			continue
-		}
 		for _, t := range f.Findings {
 			if t.Crit < 3 {
 				continue
@@ -4642,9 +4639,6 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 
 	for i := range files {
 		file := &files[i]
-		if file.Depth == 0 {
-			continue // skip the container itself
-		}
 		for _, f := range file.Findings {
 			if f.Crit < 3 {
 				continue
