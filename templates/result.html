@@ -6,10 +6,10 @@
     <meta name="build" content="{{.BuildCommit}}" />
     <meta name="layout" content="{{.Layout}}" />
     <title>{{.Filename}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
-    <style nonce="{{.Nonce}}">
+    <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
     </style>
-    <style nonce="{{.Nonce}}">
+    <style nonce="{{.StyleNonce}}">
         :root {
             --carbon: #0a0a0a;
             --graphite: #404040;
@@ -280,10 +280,10 @@
             font-size: 12.5px;
             text-align: right;
         }
-        /* Small inline rescan button — only rendered for clients from
-           trusted subnets (see --trusted-subnets). Subtle by default so
-           it doesn't compete with the analysis timestamp; toxic accent on
-           hover signals interactivity. */
+        /* Small inline rescan button — shown whenever the last analysis
+           is older than rescanCooldown. Subtle by default so it doesn't
+           compete with the analysis timestamp; toxic accent on hover
+           signals interactivity. */
         .rescan-btn {
             display: inline-flex;
             align-items: center;
@@ -320,6 +320,29 @@
             background: rgba(239, 68, 68, 0.08);
             cursor: default;
         }
+        /* Download-original-bytes button, shown next to Size. Only rendered
+           server-side when SizeBytes is in (0, 50 MB] and the download
+           rate limit hasn't fired. Same visual weight as .rescan-btn so
+           they share the inline-meta look. */
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 8px;
+            padding: 1px 7px;
+            font-size: 10.5px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--slate);
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            text-decoration: none;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
+        }
+        .download-btn:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
         /* Source provenance row. The label is a hostname (or domain
            fallback) so it fits the narrow column; the full URL lives in
            the href + title. Ellipsizes if the hostname is still too
@@ -340,6 +363,29 @@
             color: var(--toxic-dark);
             border-bottom-color: var(--toxic-muted);
         }
+        .eco-badge {
+            display: inline-flex;
+            align-items: center;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 10.5px;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            padding: 1px 6px;
+            letter-spacing: 0.3px;
+            text-decoration: none;
+        }
+        .eco-badge.eco-red    { color: #991b1b; background: rgba(239, 68, 68, 0.10);  border-color: rgba(239, 68, 68, 0.25); }
+        .eco-badge.eco-rose   { color: #9f1239; background: rgba(244, 63, 94, 0.10);  border-color: rgba(244, 63, 94, 0.25); }
+        .eco-badge.eco-orange { color: #9a3412; background: rgba(249, 115, 22, 0.12); border-color: rgba(249, 115, 22, 0.25); }
+        .eco-badge.eco-yellow { color: #854d0e; background: rgba(234, 179, 8, 0.14);  border-color: rgba(234, 179, 8, 0.30); }
+        .eco-badge.eco-brown  { color: #78350f; background: rgba(161, 98, 7, 0.12);   border-color: rgba(161, 98, 7, 0.28); }
+        .eco-badge.eco-green  { color: #166534; background: rgba(34, 197, 94, 0.10);  border-color: rgba(34, 197, 94, 0.25); }
+        .eco-badge.eco-cyan   { color: #155e75; background: rgba(6, 182, 212, 0.10);  border-color: rgba(6, 182, 212, 0.25); }
+        .eco-badge.eco-blue   { color: #1e40af; background: rgba(59, 130, 246, 0.10); border-color: rgba(59, 130, 246, 0.22); }
+        .eco-badge.eco-indigo { color: #3730a3; background: rgba(99, 102, 241, 0.10); border-color: rgba(99, 102, 241, 0.25); }
+        .eco-badge.eco-purple { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.25); }
+        .eco-badge.eco-slate  { color: var(--graphite); background: var(--mist); border-color: var(--border); }
+        .eco-badge:hover { filter: brightness(0.95); }
         .molecule-viz {
             min-height: 200px;
             background: var(--white);
@@ -1588,7 +1634,10 @@
                 <div class="meta-table">
                     <div class="meta-row">
                         <span class="meta-label">Size</span>
-                        <span class="meta-value">{{.Size}}</span>
+                        <span class="meta-value">
+                            {{.Size}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" title="Download original bytes (50 MB max, 10/hour per IP)">⇩ download</a>{{end}}
+                        </span>
                     </div>
                     {{if .FirstSeenAt}}
                     <div class="meta-row">
@@ -1602,6 +1651,14 @@
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
                             {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if .Ecosystem}}
+                    <div class="meta-row">
+                        <span class="meta-label">Ecosystem</span>
+                        <span class="meta-value">
+                            {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                         </span>
                     </div>
                     {{end}}
@@ -1754,7 +1811,7 @@
                         <div class="content-line{{if .Risk}} crit-{{.Risk}}{{end}}"{{if .Traits}} title="{{range $i, $t := .Traits}}{{if $i}}, {{end}}{{$t}}{{end}}"{{end}}>
                             <span class="content-num">{{.Number}}</span>
                             <span class="content-dot crit-{{if .Risk}}{{.Risk}}{{else}}none{{end}}"></span>
-                            <code class="content-text chroma">{{if .HTML}}{{.HTML}}{{else}}{{.Text}}{{end}}</code>
+                            <code class="content-text chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Text}}{{end}}</code>
                         </div>
                         {{end}}
                     </div>

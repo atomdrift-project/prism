@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"html"
 	"html/template"
@@ -32,6 +34,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 
 	"codeberg.org/atomdrift/hopper"
 	"github.com/alecthomas/chroma/v2"
@@ -84,20 +87,13 @@ var (
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
 	// use hopperDB.Load() to get a stable snapshot.
-	hopperDB       atomic.Pointer[hopper.DB]
-	hopperDBDSN    string       // saved for background reconnect after startup failure; never contains user input
-	trustedSubnets []*net.IPNet // CIDRs whose clients can trigger sample rescans; configured via --trusted-subnets
+	hopperDB    atomic.Pointer[hopper.DB]
+	hopperDBDSN string // saved for background reconnect after startup failure; never contains user input
 )
 
 const (
 	defaultHopperDSN     = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
 	defaultHopperAPIAddr = "hopper-api:8081"
-	// defaultTrustedSubnets is the baseline allowlist for operator
-	// actions: RFC1918 private IPv4, IPv4 loopback, IPv6 loopback, and
-	// IPv6 unique-local addresses (RFC 4193). Operators add deployment-
-	// specific external ranges via --trusted-subnets, which replaces
-	// (not extends) this list.
-	defaultTrustedSubnets = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7"
 	// feedCacheTTL is the absolute lifetime of any cached feed query
 	// (frontpage default, criticality variants, ecosystem/domain/formula
 	// filtered). Every feed query goes through the cache — even untyped
@@ -121,8 +117,9 @@ const (
 )
 
 // csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
-// Tokens are stateless: HMAC(timestamp) verified on POST. Key rotates on restart,
-// which is fine — an in-flight form simply needs resubmission after a deploy.
+// Tokens are stateless: HMAC(cookie || action || ts) verified on POST. Key rotates
+// on restart, which is fine — an in-flight form simply needs resubmission after a
+// deploy.
 var csrfKey = func() [32]byte {
 	var k [32]byte
 	if _, err := rand.Read(k[:]); err != nil {
@@ -131,17 +128,85 @@ var csrfKey = func() [32]byte {
 	return k
 }()
 
-// csrfToken generates a signed, timestamped CSRF token.
-func csrfToken() string {
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	mac := hmac.New(sha256.New, csrfKey[:])
-	mac.Write([]byte(ts))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return ts + "." + sig
+const (
+	// csrfCookieName is the per-browser session marker used to bind a CSRF
+	// token to the visitor who received it. Cookies set by ensureCSRFCookie
+	// carry HttpOnly, SameSite=Strict, and (in --public) Secure.
+	csrfCookieName = "prism_csrf"
+	// csrfMaxAge bounds a token's validity. Short enough that a leaked
+	// token (e.g. via page-scrape) has a small window.
+	csrfMaxAge = 15 * time.Minute
+)
+
+type ctxKey int
+
+const (
+	scriptNonceKey ctxKey = iota
+	styleNonceKey
+	csrfSessionKey
+)
+
+// ensureCSRFCookie reads (or freshly creates) the per-browser CSRF session
+// cookie and stashes its value in the request context. The cookie value is
+// HMAC-mixed into every token issued for this visitor, so a token stolen
+// from one user cannot be used by another. SameSite=Strict means an
+// attacker site cannot make the browser ship this cookie cross-origin.
+func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) *http.Request {
+	// 22 == base64.RawURLEncoding.EncodedLen(16); reject truncated cookies.
+	if c, err := r.Cookie(csrfCookieName); err == nil && len(c.Value) >= 22 {
+		return r.WithContext(context.WithValue(r.Context(), csrfSessionKey, c.Value))
+	}
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// Without entropy we can't issue safe tokens; let the request
+		// continue cookieless and any CSRF check will reject.
+		return r
+	}
+	val := base64.RawURLEncoding.EncodeToString(buf[:])
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    val,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   publicMode, // --public implies TLS termination upstream
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(24 * time.Hour / time.Second),
+	})
+	return r.WithContext(context.WithValue(r.Context(), csrfSessionKey, val))
 }
 
-// csrfValid checks that the token is well-formed, correctly signed, and not older than maxAge.
-func csrfValid(token string, maxAge time.Duration) bool {
+func csrfSession(r *http.Request) string {
+	if v, ok := r.Context().Value(csrfSessionKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// csrfMAC binds the session cookie, action name, and timestamp into a single
+// HMAC. NUL separators keep the three fields unambiguous so e.g. action "ab"
+// at ts "cd" cannot collide with action "a" at ts "bcd".
+func csrfMAC(session, action, ts string) string {
+	mac := hmac.New(sha256.New, csrfKey[:])
+	mac.Write([]byte(session))
+	mac.Write([]byte{0})
+	mac.Write([]byte(action))
+	mac.Write([]byte{0})
+	mac.Write([]byte(ts))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// csrfToken generates a signed, timestamped CSRF token bound to the request's
+// CSRF session cookie and a named action (e.g. "rescan", "upload"). A token
+// is only valid for the same browser, same action, within csrfMaxAge.
+func csrfToken(r *http.Request, action string) string {
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	return ts + "." + csrfMAC(csrfSession(r), action, ts)
+}
+
+// csrfValid checks token shape, signature, age, session-cookie binding, and
+// action binding. The session is read from the cookie on the live request,
+// so a token issued for one browser cannot be replayed from another.
+func csrfValid(r *http.Request, action, token string) bool {
 	parts := strings.SplitN(token, ".", 2)
 	if len(parts) != 2 {
 		return false
@@ -150,21 +215,23 @@ func csrfValid(token string, maxAge time.Duration) bool {
 	if err != nil {
 		return false
 	}
-	age := time.Since(time.Unix(ts, 0))
-	if age < 0 || age > maxAge {
+	if age := time.Since(time.Unix(ts, 0)); age < 0 || age > csrfMaxAge {
 		return false
 	}
-	mac := hmac.New(sha256.New, csrfKey[:])
-	mac.Write([]byte(parts[0]))
-	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	session := csrfSession(r)
+	if session == "" {
+		return false
+	}
+	expected := csrfMAC(session, action, parts[0])
 	return hmac.Equal([]byte(parts[1]), []byte(expected))
 }
 
-// uploadLimiter implements a per-IP token bucket rate limiter for the upload endpoint.
-// Each IP gets a bucket that refills at 1 token per 30 seconds, with a burst of 2.
-type uploadLimiter struct {
+// tokenLimiter implements a per-IP token bucket rate limiter.
+type tokenLimiter struct {
 	buckets map[string]*bucket
 	mu      sync.Mutex
+	burst   float64 // max tokens in a bucket
+	rate    float64 // tokens per second
 }
 
 type bucket struct {
@@ -173,34 +240,57 @@ type bucket struct {
 }
 
 const (
-	uploadBurst    = 2                // max uploads before throttling
-	uploadRate     = 1.0 / 30.0       // tokens per second (1 per 30 seconds)
 	bucketLifetime = 10 * time.Minute // evict idle entries
+	// maxLimiterBuckets caps the per-limiter map size to bound memory under
+	// adversarial input (e.g. attacker rotating client IPs). When the cap is
+	// hit we evict the single least-recently-seen entry inline. Sized for
+	// ~80 B/entry × 65k = ~5 MB resident per limiter — comfortably small,
+	// large enough to track real traffic without collisions.
+	maxLimiterBuckets = 65536
 )
 
-func newUploadLimiter() *uploadLimiter {
-	ul := &uploadLimiter{buckets: make(map[string]*bucket)}
-	go ul.reap()
-	return ul
+func newTokenLimiter(burst int, rate float64) *tokenLimiter {
+	tl := &tokenLimiter{
+		buckets: make(map[string]*bucket),
+		burst:   float64(burst),
+		rate:    rate,
+	}
+	go tl.reap()
+	return tl
 }
 
-// allow checks whether the given IP may proceed with an upload.
-func (ul *uploadLimiter) allow(ip string) bool {
-	ul.mu.Lock()
-	defer ul.mu.Unlock()
+// allow checks whether the given IP may proceed.
+func (tl *tokenLimiter) allow(ip string) bool {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
 
 	now := time.Now()
-	b, ok := ul.buckets[ip]
+	b, ok := tl.buckets[ip]
 	if !ok {
-		ul.buckets[ip] = &bucket{tokens: float64(uploadBurst) - 1, lastSeen: now}
+		// Bound the map under adversarial IP-rotation by evicting the
+		// single least-recently-seen entry when we hit the cap.
+		if len(tl.buckets) >= maxLimiterBuckets {
+			var oldestIP string
+			var oldestSeen time.Time
+			for k, v := range tl.buckets {
+				if oldestIP == "" || v.lastSeen.Before(oldestSeen) {
+					oldestIP = k
+					oldestSeen = v.lastSeen
+				}
+			}
+			if oldestIP != "" {
+				delete(tl.buckets, oldestIP)
+			}
+		}
+		tl.buckets[ip] = &bucket{tokens: tl.burst - 1, lastSeen: now}
 		return true
 	}
 
 	// Refill tokens based on elapsed time.
 	elapsed := now.Sub(b.lastSeen).Seconds()
-	b.tokens += elapsed * uploadRate
-	if b.tokens > float64(uploadBurst) {
-		b.tokens = float64(uploadBurst)
+	b.tokens += elapsed * tl.rate
+	if b.tokens > tl.burst {
+		b.tokens = tl.burst
 	}
 	b.lastSeen = now
 
@@ -212,36 +302,85 @@ func (ul *uploadLimiter) allow(ip string) bool {
 }
 
 // reap periodically removes stale entries to prevent memory growth.
-func (ul *uploadLimiter) reap() {
+func (tl *tokenLimiter) reap() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		ul.mu.Lock()
+		tl.mu.Lock()
 		now := time.Now()
-		for ip, b := range ul.buckets {
+		for ip, b := range tl.buckets {
 			if now.Sub(b.lastSeen) > bucketLifetime {
-				delete(ul.buckets, ip)
+				delete(tl.buckets, ip)
 			}
 		}
-		ul.mu.Unlock()
+		tl.mu.Unlock()
 	}
 }
 
-var rateLimiter = newUploadLimiter()
+// Upload: 1 every 30 seconds, burst of 2 (a single quick retry).
+var uploadRateLimiter = newTokenLimiter(2, 1.0/30.0)
 
-// clientIP extracts the client IP from the request, preferring the rightmost
-// entry in X-Forwarded-For (set by the nearest trusted proxy — Cloud Run LB
-// or cloudflared) and falling back to RemoteAddr.
+// Download: 10 per hour, no burst above the hourly budget.
+var downloadRateLimiter = newTokenLimiter(10, 10.0/3600.0)
+
+// sseWaiters tracks concurrent SSE wait connections (total + per IP) so we
+// can refuse new ones when caps are exceeded.
+var sseWaiters = struct {
+	perIP map[string]int
+	total int
+	mu    sync.Mutex
+}{perIP: make(map[string]int)}
+
+// waitAcquire reserves a wait slot for ip. Returns false if either the
+// global or per-IP cap is exceeded; on true the caller must defer waitRelease.
+func waitAcquire(ip string) bool {
+	sseWaiters.mu.Lock()
+	defer sseWaiters.mu.Unlock()
+	if sseWaiters.total >= waitMaxClientsTotal {
+		return false
+	}
+	if sseWaiters.perIP[ip] >= waitMaxClientsPerIP {
+		return false
+	}
+	// Bound the perIP map under IP-rotation. Treat over-cap as a refusal
+	// rather than evicting a counter mid-use.
+	if _, ok := sseWaiters.perIP[ip]; !ok && len(sseWaiters.perIP) >= maxLimiterBuckets {
+		return false
+	}
+	sseWaiters.total++
+	sseWaiters.perIP[ip]++
+	return true
+}
+
+func waitRelease(ip string) {
+	sseWaiters.mu.Lock()
+	defer sseWaiters.mu.Unlock()
+	sseWaiters.total--
+	if sseWaiters.perIP[ip] <= 1 {
+		delete(sseWaiters.perIP, ip)
+	} else {
+		sseWaiters.perIP[ip]--
+	}
+}
+
+// maxDownloadSize caps the on-disk sample size eligible for /file/<sha>.dl.
+// Browsers that have to fight through Cloudflare on a 50 MB stream are not
+// the target audience here; larger samples are CLI-only via litmus.
+const maxDownloadSize int64 = 50 * 1024 * 1024
+
+// clientIP extracts the client IP from the request.
 //
-// The rightmost entry is used because it is added by the infrastructure proxy
-// and cannot be spoofed by the client.  The leftmost entry is attacker-
-// controlled: any client can send "X-Forwarded-For: fake" and the proxy
-// appends the real IP, yielding "fake, real".
+// Cloudflare Tunnel (our production deployment) sets CF-Connecting-IP to the
+// real client IP and strips any inbound value, so it is the authoritative
+// source when present and cannot be spoofed by the client. In local/dev
+// runs without Cloudflare, we fall back to RemoteAddr.
+//
+// X-Forwarded-For is intentionally NOT honored: the rightmost-XFF heuristic
+// collapses all visitors to the proxy IP behind Cloudflare, and the leftmost
+// entry is fully attacker-controlled when no proxy is in front.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Rightmost entry is added by the nearest trusted proxy.
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[len(parts)-1])
+	if ip := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); ip != "" {
+		return ip
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -277,26 +416,6 @@ func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[strin
 		os.Exit(1)
 	}
 	return c
-}
-
-// isTrustedClient reports whether the request originates from a client in
-// one of the operator-configured trusted subnets. Used to gate privileged
-// operator actions (rescan, etc.) that should not be exposed to the public
-// internet. Returns false if the IP cannot be parsed or no subnets match.
-func isTrustedClient(r *http.Request) bool {
-	if len(trustedSubnets) == 0 {
-		return false
-	}
-	ip := net.ParseIP(clientIP(r))
-	if ip == nil {
-		return false
-	}
-	for _, n := range trustedSubnets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // FindingDisplay represents a single finding for table display.
@@ -510,8 +629,10 @@ type resultData struct {
 	MoleculeJSON   template.JS
 	Duration       string
 	FindingCount   string
-	Nonce          string
+	Nonce          string // script-src nonce
+	StyleNonce     string // style-src nonce
 	Size           string
+	SizeBytes      int64 // raw size of the top-level (or first) file; gates the download button
 	RiskLevel      string
 	ReportCreated  string
 	ReportProvider string
@@ -530,7 +651,14 @@ type resultData struct {
 	// from samples.domain as a fallback. Empty when neither is known
 	// (the template hides the row).
 	SourceLabel string
-	Layout      string
+	// Ecosystem is hopper's registry/distro label (e.g. "npm", "pypi").
+	// Empty for uploads or rows hopper could not attribute; the template
+	// hides the meta row when empty.
+	Ecosystem string
+	// EcosystemURL is the in-app feed link for this ecosystem (e.g.
+	// "/npm/"). Empty when Ecosystem is empty.
+	EcosystemURL string
+	Layout       string
 	BuildCommit string
 	Files       []FileTreeEntry
 	// FileTreeJSON is the hierarchical tree of archive contents, JSON-encoded
@@ -564,7 +692,6 @@ type resultData struct {
 	IsArchive         bool
 	IsText            bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
 	LimitedInfo       bool
-	IsTrusted         bool // client IP is in a trusted subnet — reserved for future per-network UX (currently unused for visibility)
 	RescanAllowed     bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 	// Contents holds the rendered text body of a text file, broken into
 	// annotated lines. Empty for non-text files and archives.
@@ -579,11 +706,14 @@ type resultData struct {
 
 // ContentLine is one rendered line of a text file's body. Risk and Traits
 // power the per-line crit dots and hover tooltips on the Contents tab.
-// HTML carries chroma syntax-highlighted markup when a lexer matched the
-// file; templates prefer HTML when set and fall back to Text otherwise.
+// Tokens carries chroma syntax-highlighted segments when a lexer matched
+// the file; the client constructs DOM nodes from these (textContent only,
+// no innerHTML) so there is no path for attacker-controlled markup.
 type ContentLine struct {
 	Text string
-	HTML template.HTML `json:"HTML,omitempty"`
+	// Tokens are the chroma-classified spans for this line. Empty when no
+	// lexer matched the file (caller falls back to plain Text).
+	Tokens []ContentToken `json:"Tokens,omitempty"`
 	// Risk is "hostile"/"suspicious"/"notable"/"baseline"/"component"/"".
 	// Computed from the highest-crit finding whose evidence appears on
 	// this line.
@@ -592,6 +722,15 @@ type ContentLine struct {
 	// on this line, used for the hover tooltip.
 	Traits []string
 	Number int
+}
+
+// ContentToken is one chroma-classified slice of a source line. Class is
+// the chroma standard-type CSS class (always a fixed identifier from the
+// chroma library, never attacker-controlled); empty means render Text as
+// a bare text node with no wrapping span.
+type ContentToken struct {
+	Class string `json:"c,omitempty"`
+	Text  string `json:"t"`
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -617,6 +756,10 @@ type storedResult struct {
 	// the URL is missing), used as a fallback display when SourceURL is
 	// empty so the page still surfaces *something* about provenance.
 	SourceDomain string
+	// Ecosystem is hopper's registry/distro label for the sample (e.g.
+	// "npm", "pypi", "debian"). Empty for uploads or rows hopper could
+	// not attribute.
+	Ecosystem string
 }
 
 type feedRow struct {
@@ -639,7 +782,8 @@ type feedRow struct {
 
 type feedPageData struct {
 	SelectedDomain  string
-	Nonce           string
+	Nonce           string // script-src nonce
+	StyleNonce      string // style-src nonce
 	BuildCommit     string
 	Title           string
 	SelectedFormula string
@@ -856,47 +1000,22 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	// Parse command-line flags
-	var noCache bool
-	var dbDSN string
-	var port string
-	trustedSubnetsRaw := defaultTrustedSubnets
-	for i, arg := range os.Args[1:] {
-		switch {
-		case arg == "--no-cache" || arg == "-no-cache":
-			noCache = true
-		case arg == "--public" || arg == "-public":
-			publicMode = true
-		case strings.HasPrefix(arg, "--db="):
-			dbDSN = strings.TrimPrefix(arg, "--db=")
-		case arg == "--db" && i+1 < len(os.Args[1:]):
-			dbDSN = os.Args[i+2]
-		case strings.HasPrefix(arg, "--port="):
-			port = strings.TrimPrefix(arg, "--port=")
-		case arg == "--port" && i+1 < len(os.Args[1:]):
-			port = os.Args[i+2]
-		case strings.HasPrefix(arg, "--hopper-api-addr="):
-			hopperAPIAddr = strings.TrimPrefix(arg, "--hopper-api-addr=")
-		case arg == "--hopper-api-addr" && i+1 < len(os.Args[1:]):
-			hopperAPIAddr = os.Args[i+2]
-		case strings.HasPrefix(arg, "--trusted-subnets="):
-			trustedSubnetsRaw = strings.TrimPrefix(arg, "--trusted-subnets=")
-		case arg == "--trusted-subnets" && i+1 < len(os.Args[1:]):
-			trustedSubnetsRaw = os.Args[i+2]
-		default:
-		}
-	}
-	for s := range strings.SplitSeq(trustedSubnetsRaw, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		_, ipnet, err := net.ParseCIDR(s)
-		if err != nil {
-			logger.Error("invalid --trusted-subnets entry", "value", s, "error", err)
-			os.Exit(1)
-		}
-		trustedSubnets = append(trustedSubnets, ipnet)
+	// Parse command-line flags via the stdlib flag package. Single-dash and
+	// double-dash forms are both accepted (flag package treats `--foo` as
+	// `-foo`), with `-flag=value` and `-flag value` both supported.
+	var (
+		noCache bool
+		dbDSN   string
+		port    string
+	)
+	cli := flag.NewFlagSet("prism", flag.ExitOnError)
+	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
+	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: atomdrift lab branding and Secure cookies")
+	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
+	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
+	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
+	if err := cli.Parse(os.Args[1:]); err != nil {
+		os.Exit(2)
 	}
 
 	if dbDSN == "" {
@@ -1279,23 +1398,31 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 
-		// Generate a per-request nonce for inline <style> blocks.
-		var nonceBuf [16]byte
-		if _, err := rand.Read(nonceBuf[:]); err != nil {
-			logger.Error("failed to generate CSP nonce", "error", err)
+		// Generate separate per-request nonces for <script> and <style>
+		// so a leak in one channel doesn't authorize the other.
+		scriptNonce, err := newCSPNonce()
+		if err != nil {
+			logger.Error("failed to generate script CSP nonce", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
-		nonce := base64.RawStdEncoding.EncodeToString(nonceBuf[:])
+		styleNonce, err := newCSPNonce()
+		if err != nil {
+			logger.Error("failed to generate style CSP nonce", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self' 'nonce-"+nonce+"'; "+
-				"script-src-elem 'self' 'nonce-"+nonce+"'; "+
-				"style-src 'self' 'nonce-"+nonce+"'; "+
+				"script-src 'self' 'nonce-"+scriptNonce+"'; "+
+				"script-src-elem 'self' 'nonce-"+scriptNonce+"'; "+
+				"style-src 'self' 'nonce-"+styleNonce+"'; "+
 				"font-src 'self'; "+
 				"img-src 'self'; "+
 				"connect-src 'self'; "+
+				"worker-src 'self'; "+
+				"frame-src 'none'; "+
 				"frame-ancestors 'none'; "+
 				"object-src 'none'; "+
 				"base-uri 'self'; "+
@@ -1305,16 +1432,30 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Browsers ignore this header on plain HTTP, so no harm when running locally.
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 
-		// Stash nonce in context for templates.
-		ctx := context.WithValue(r.Context(), nonceCtxKey{}, nonce)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		ctx := context.WithValue(r.Context(), scriptNonceKey, scriptNonce)
+		ctx = context.WithValue(ctx, styleNonceKey, styleNonce)
+		r = ensureCSRFCookie(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r)
 	})
 }
 
-type nonceCtxKey struct{}
+func newCSPNonce() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return base64.RawStdEncoding.EncodeToString(buf[:]), nil
+}
 
-func getNonce(r *http.Request) string {
-	if v, ok := r.Context().Value(nonceCtxKey{}).(string); ok {
+func nonceFor(r *http.Request) string {
+	if v, ok := r.Context().Value(scriptNonceKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func styleNonceFor(r *http.Request) string {
+	if v, ok := r.Context().Value(styleNonceKey).(string); ok {
 		return v
 	}
 	return ""
@@ -1330,13 +1471,23 @@ func cacheStatic(next http.Handler) http.Handler {
 }
 
 type errorData struct {
-	Nonce      string
+	Nonce      string // script-src nonce
+	StyleNonce string // style-src nonce
 	Icon       string
 	Title      string
-	Message    template.HTML
-	Detail     string
-	Action     string
-	ShowBeaker bool
+	// Message is the plain-text error body shown to the user. It is rendered
+	// through html/template auto-escaping, so it is safe to populate from
+	// any source. When a known-safe link or markup is required, use the
+	// separate MessageHTML field instead — keeping the two channels distinct
+	// makes accidental XSS via a future edit much harder.
+	Message string
+	// MessageHTML is rendered without escaping. Only assign string literals
+	// or values constructed exclusively from string literals. Never pass
+	// user-controlled bytes here.
+	MessageHTML template.HTML
+	Detail      string
+	Action      string
+	ShowBeaker  bool
 }
 
 func renderError(w http.ResponseWriter, r *http.Request, status int, data errorData) {
@@ -1346,7 +1497,8 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 		"path", r.URL.Path,
 		"client_ip", clientIP(r),
 	)
-	data.Nonce = getNonce(r)
+	data.Nonce = nonceFor(r)
+	data.StyleNonce = styleNonceFor(r)
 	if data.Action == "" {
 		data.Action = "Try again"
 	}
@@ -1829,6 +1981,7 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		AnalyzedAt:     analyzedAt,
 		SourceURL:      sample.URL,
 		SourceDomain:   sample.Domain,
+		Ecosystem:      sample.Ecosystem,
 	}, nil
 }
 
@@ -1891,24 +2044,72 @@ func ecosystemURL(ecosystem string) string {
 	return "/" + strings.ToLower(urlPathSegment(ecosystem)) + "/"
 }
 
-// ecosystemColor groups ecosystems into a small palette by language/distro
-// affinity. Six families (red/blue/orange/purple/green/slate) keep the feed
-// table readable without introducing a new accent per ecosystem.
+// ecosystemColor assigns each ecosystem a badge hue, leaning on the brand
+// color where it does not collide. High-churn registries (npm, pypi,
+// rubygems, cargo, maven, packagist, nuget, pub) each get a distinct
+// family so they stay legible in a dense feed; lower-volume distros and
+// extension stores reuse the same families.
 func ecosystemColor(eco string) string {
 	switch strings.ToLower(eco) {
-	case "npm", "rubygems", "debian", "freebsd", "freebsd-ports":
+	// npm — JS red brand.
+	case "npm":
 		return "red"
-	case "pypi", "pub", "cran", "luarocks", "nuget",
-		"powershell_gallery", "chocolatey", "scoop", "winget",
-		"arch", "archlinux", "aur", "alpine", "fedora",
-		"vscode", "open_vsx", "openvsx":
-		return "blue"
-	case "cargo", "crates", "maven", "clojars",
-		"homebrew", "mozilla", "netbsd":
+	// rubygems — Ruby red, pushed pinker so it does not collide with npm.
+	case "rubygems":
+		return "rose"
+	// pypi — Python yellow.
+	case "pypi":
+		return "yellow"
+	// cargo/crates — Rust browns.
+	case "cargo", "crates":
+		return "brown"
+	// maven/clojars — Apache/JVM orange.
+	case "maven", "clojars":
 		return "orange"
-	case "packagist", "hackage", "cpan":
+	// packagist — PHP purple.
+	case "packagist":
 		return "purple"
-	case "chrome", "chrome_ext", "jfrog", "wolfi", "conda":
+	// nuget and the rest of the Windows/.NET stack — NuGet blue.
+	case "nuget", "powershell_gallery", "chocolatey", "scoop", "winget":
+		return "blue"
+	// pub — Dart cyan.
+	case "pub":
+		return "cyan"
+	// hackage/cpan — functional-language indigo.
+	case "hackage", "cpan":
+		return "indigo"
+	// homebrew — kettle gold.
+	case "homebrew":
+		return "yellow"
+	// distros.
+	case "debian":
+		return "red"
+	case "fedora":
+		return "blue"
+	case "arch", "archlinux", "aur":
+		return "cyan"
+	case "alpine":
+		return "indigo"
+	case "freebsd", "freebsd-ports":
+		return "red"
+	case "netbsd":
+		return "orange"
+	case "openbsd":
+		return "yellow"
+	case "wolfi":
+		return "green"
+	// R and Lua — language blues.
+	case "cran", "luarocks":
+		return "blue"
+	// Mozilla extensions — Firefox orange.
+	case "mozilla":
+		return "orange"
+	// Browser / IDE extension stores.
+	case "chrome", "chrome_ext":
+		return "green"
+	case "vscode", "open_vsx", "openvsx":
+		return "cyan"
+	case "conda", "jfrog":
 		return "green"
 	default:
 		return "slate"
@@ -2061,7 +2262,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 	eco := strings.Trim(r.PathValue("ecosystem"), "/")
-	if eco == "" {
+	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -2070,7 +2271,7 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 
 func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
 	eco := strings.Trim(r.PathValue("ecosystem"), "/")
-	if eco == "" {
+	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -2079,6 +2280,27 @@ func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// validEcosystem accepts a conservative subset of characters real package
+// ecosystems use (alnum, dash, dot, underscore). Anything else — slash,
+// backslash, control bytes, whitespace — is rejected, which defeats
+// open-redirect tricks like "\evil.com" that some browsers normalize into
+// "//evil.com" when emitted as the Location of a relative redirect.
+func validEcosystem(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		ok := c >= 'a' && c <= 'z' ||
+			c >= 'A' && c <= 'Z' ||
+			c >= '0' && c <= '9' ||
+			c == '-' || c == '.' || c == '_'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
@@ -2092,8 +2314,9 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := feedPageData{
-		CSRFToken:       csrfToken(),
-		Nonce:           getNonce(r),
+		CSRFToken:       csrfToken(r, "upload"),
+		Nonce:           nonceFor(r),
+		StyleNonce:      styleNonceFor(r),
 		BuildCommit:     buildCommit,
 		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
@@ -2150,7 +2373,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 
 func handleFormats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	data := struct{ Nonce, StyleNonce string }{Nonce: nonceFor(r), StyleNonce: styleNonceFor(r)}
 	if err := formatsTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "formats",
@@ -2161,7 +2384,7 @@ func handleFormats(w http.ResponseWriter, r *http.Request) {
 
 func handlePoweredBy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	data := struct{ Nonce, StyleNonce string }{Nonce: nonceFor(r), StyleNonce: styleNonceFor(r)}
 	if err := poweredByTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "powered-by",
@@ -2172,7 +2395,7 @@ func handlePoweredBy(w http.ResponseWriter, r *http.Request) {
 
 func handleHelpQuery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data := struct{ Nonce string }{Nonce: getNonce(r)}
+	data := struct{ Nonce, StyleNonce string }{Nonce: nonceFor(r), StyleNonce: styleNonceFor(r)}
 	if err := helpQueryTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
 			"template", "help-query",
@@ -2204,7 +2427,9 @@ func validSHA256(s string) bool {
 
 func handleFile(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
-	sha := r.PathValue("sha256")
+	// Normalize once at the boundary so suffix matching, validation, and
+	// every downstream lookup work on the same lowercase form.
+	sha := strings.ToLower(r.PathValue("sha256"))
 	ip := clientIP(r)
 
 	// GET /file/{sha256} also matches /file/<hash>.json because the wildcard
@@ -2272,13 +2497,10 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		"duration_ms", time.Since(requestStart).Milliseconds(),
 	)
 	data := prepareResultData(r.Context(), res.Filename, sha, &res)
-	data.Nonce = getNonce(r)
+	data.Nonce = nonceFor(r)
+	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
-	// The rescan button is currently shown to everyone — the server-side
-	// isTrustedClient check in handleRescan is the real gate. IsTrusted
-	// is kept on the struct for future per-network UX tweaks.
-	data.IsTrusted = isTrustedClient(r)
-	data.CSRFToken = csrfToken()
+	data.CSRFToken = csrfToken(r, "rescan")
 	if hopperDB.Load() != nil {
 		if cached, ok := latestReport(r.Context(), sha, reqLogger); ok {
 			data.ReportContent = cached.Content
@@ -2916,6 +3138,14 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
+
+	if !downloadRateLimiter.allow(ip) {
+		reqLogger.Warn("download rate limited")
+		w.Header().Set("Retry-After", "360")
+		http.Error(w, "rate limit reached: 10 downloads per hour", http.StatusTooManyRequests)
+		return
+	}
+
 	_, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -2958,22 +3188,36 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		return
 	}
 
-	filename := strings.TrimSpace(res.Filename)
-	if filename == "" {
-		filename = sha
+	// Defense in depth: the UI hides the button above maxDownloadSize, but
+	// a determined client could still hit /file/<sha>.dl directly. Require
+	// hopper to advertise a Content-Length we can trust and reject above
+	// the cap before streaming a single byte.
+	contentLength := resp.Header.Get("Content-Length")
+	size, err := strconv.ParseInt(contentLength, 10, 64)
+	if err != nil || size < 0 {
+		reqLogger.Warn("hopper download missing Content-Length", "value", contentLength)
+		http.Error(w, "download unavailable", http.StatusBadGateway)
+		return
 	}
+	if size > maxDownloadSize {
+		reqLogger.Info("download rejected: file too large", "size_bytes", size, "max_bytes", maxDownloadSize)
+		http.Error(w, "file exceeds the 50 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	filename := sanitizeDownloadFilename(res.Filename, sha)
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
-		"filename": filepath.Base(filename),
+		"filename": filename,
 	}))
-	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
-		w.Header().Set("Content-Length", contentLength)
-	}
+	w.Header().Set("Content-Length", contentLength)
 	if lastModified := resp.Header.Get("Last-Modified"); lastModified != "" {
 		w.Header().Set("Last-Modified", lastModified)
 	}
 
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	// Cap the streamed body to maxDownloadSize even if hopper lied about
+	// Content-Length, so a misbehaving backend can't blow past the limit.
+	if _, err := io.Copy(w, io.LimitReader(resp.Body, maxDownloadSize)); err != nil {
 		reqLogger.Debug("download write failed", "error", err)
 	}
 }
@@ -3006,7 +3250,7 @@ func writeJSON(w http.ResponseWriter, body any, logger *slog.Logger) {
 // the next worker poll picks it up, and prism's local result cache for that
 // SHA is invalidated.
 func handleRescan(w http.ResponseWriter, r *http.Request) {
-	sha := r.PathValue("sha256")
+	sha := strings.ToLower(r.PathValue("sha256"))
 	ip := clientIP(r)
 	reqLogger := logger.With("sha256", sha, "client_ip", ip, "action", "rescan")
 
@@ -3014,11 +3258,14 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
 		return
 	}
+	// The legitimate body is `csrf_token=<~70 bytes>` — 4 KiB is generous
+	// and bounds resource use against a malicious huge-form POST.
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_form", "malformed request")
 		return
 	}
-	if !csrfValid(r.FormValue("csrf_token"), 30*time.Minute) {
+	if !csrfValid(r, "rescan", r.FormValue("csrf_token")) {
 		writeJSONError(w, http.StatusForbidden, "bad_csrf", "CSRF token missing or expired; reload the page and try again")
 		return
 	}
@@ -3046,7 +3293,7 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 // by the archive Files tab's inline source viewer. All responses (success
 // and error) carry a JSON body so the client can parse uniformly.
 func handleFileContents(w http.ResponseWriter, r *http.Request) {
-	sha := r.PathValue("sha256")
+	sha := strings.ToLower(r.PathValue("sha256"))
 	reqLogger := logger.With("sha256", sha, "client_ip", clientIP(r))
 	if !validSHA256(sha) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
@@ -3264,7 +3511,8 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 // value as SHA256, JSON-encoded so it can be safely embedded inside the
 // inline <script> as a JS string literal under the strict CSP nonce.
 type pendingPageData struct {
-	Nonce       string
+	Nonce       string // script-src nonce
+	StyleNonce  string // style-src nonce
 	BuildCommit string
 	Filename    string
 	SHA256      string
@@ -3284,7 +3532,8 @@ func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string)
 		shaJSON = []byte(`""`)
 	}
 	data := pendingPageData{
-		Nonce:       getNonce(r),
+		Nonce:       nonceFor(r),
+		StyleNonce:  styleNonceFor(r),
 		BuildCommit: buildCommit,
 		Filename:    filename,
 		SHA256:      sha,
@@ -3301,11 +3550,17 @@ func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string)
 
 const (
 	// waitPollInterval controls how often the SSE wait loop checks hopper
-	// for a populated cleave_result. 50 ms is well under a single screen
-	// refresh and keeps the worker→browser propagation indistinguishable
-	// from instant to a human. The status query is a single indexed
-	// boolean read; the cost per active waiter is negligible.
-	waitPollInterval = 50 * time.Millisecond
+	// for a populated cleave_result. 500 ms is fast enough that the
+	// worker→browser delay is imperceptible (typical analyses take seconds)
+	// while keeping hopper QPS bounded under many concurrent waiters.
+	waitPollInterval = 500 * time.Millisecond
+	// waitMaxClientsTotal caps simultaneous SSE waiters across all clients;
+	// past this point we 503 new connections so a coordinated browser swarm
+	// can't pin hopper. Real concurrent waiters in normal use are dozens.
+	waitMaxClientsTotal = 256
+	// waitMaxClientsPerIP caps simultaneous waiters from one source. A
+	// single user only needs as many as they have open pending tabs.
+	waitMaxClientsPerIP = 4
 	// waitMaxDuration bounds a single SSE connection. The browser auto-
 	// reconnects on close, so we recycle the underlying DB poll loop
 	// every five minutes — bounding goroutine lifetime if a tab is left
@@ -3316,6 +3571,42 @@ const (
 	// SSE comments are syntactic no-ops on the client side.
 	waitHeartbeatInterval = 15 * time.Second
 )
+
+// sanitizeDownloadFilename produces a Content-Disposition-safe filename from
+// a sample's stored filename. Strips path components, control bytes (Cc), and
+// Unicode format chars (Cf) — the latter covers directional overrides like
+// RLO that can disguise a binary's extension in the browser download UI.
+// Falls back to sha when nothing usable remains.
+func sanitizeDownloadFilename(stored, sha string) string {
+	name := filepath.Base(strings.TrimSpace(stored))
+	if name == "." || name == "/" || name == "" {
+		return sha
+	}
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return sha
+	}
+	return out
+}
+
+// readyPayload returns the JSON body for the SSE "ready" event. sha has
+// already been validated as 64-hex by handleFileWait, but using json.Marshal
+// keeps escaping correct if the input shape ever changes.
+func readyPayload(sha string) string {
+	b, err := json.Marshal(map[string]string{"sha256": sha})
+	if err != nil {
+		return `{"sha256":""}`
+	}
+	return string(b)
+}
 
 // handleFileWait is the SSE notification channel for the pending page.
 // It tight-polls hopper for cleave_result every waitPollInterval and
@@ -3328,7 +3619,7 @@ const (
 // from hopper entirely (404-like state) so the browser doesn't sit
 // staring at "Analyzing…" forever.
 func handleFileWait(w http.ResponseWriter, r *http.Request) {
-	sha := r.PathValue("sha256")
+	sha := strings.ToLower(r.PathValue("sha256"))
 	if !validSHA256(sha) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
 		return
@@ -3338,6 +3629,14 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hopper not connected", http.StatusServiceUnavailable)
 		return
 	}
+
+	ip := clientIP(r)
+	if !waitAcquire(ip) {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "too many concurrent waiters", http.StatusTooManyRequests)
+		return
+	}
+	defer waitRelease(ip)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -3383,7 +3682,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 			emit("missing", `{"reason":"not found"}`)
 			return
 		case analyzed:
-			emit("ready", `{"sha256":"`+sha+`"}`)
+			emit("ready", readyPayload(sha))
 			return
 		}
 	}
@@ -3408,7 +3707,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if analyzed {
-				emit("ready", `{"sha256":"`+sha+`"}`)
+				emit("ready", readyPayload(sha))
 				return
 			}
 		}
@@ -3419,7 +3718,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 // JSON poll the page falls back to if EventSource gives up (no SSE
 // support, hostile proxy, etc.). Same backing query as handleFileWait.
 func handleFileStatus(w http.ResponseWriter, r *http.Request) {
-	sha := r.PathValue("sha256")
+	sha := strings.ToLower(r.PathValue("sha256"))
 	if !validSHA256(sha) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
 		return
@@ -3485,10 +3784,11 @@ func hopperUploadURL(filename string) string {
 // prism's /file/<sha> page (with the SSE wait endpoint) shows the result
 // the moment a worker finishes.
 //
-//nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
 // uploadEnabled gates browser uploads. Set to false while the feature is
 // being reworked; the handler short-circuits to a 503 and the UI greys out
 // the button. Restore to true to re-enable end-to-end.
+//
+//nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
 var uploadEnabled = false
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -3514,12 +3814,12 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !rateLimiter.allow(ip) {
+	if !uploadRateLimiter.allow(ip) {
 		reqLogger.Warn("upload rate limited")
 		renderError(w, r, http.StatusTooManyRequests, errorData{
 			Icon:    "⏳",
 			Title:   "Rate limit reached",
-			Message: "Too many uploads. Please wait a minute before trying again.",
+			Message: "Too many uploads. Please wait 30 seconds before trying again.",
 		})
 		return
 	}
@@ -3560,7 +3860,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 					Icon:  "⚖",
 					Title: "File too large",
-					Message: "The web interface accepts files up to 100 MB. For larger files, use " +
+					MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
 						`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
 				})
 				return
@@ -3578,7 +3878,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		case "csrf_token":
 			buf, rerr := io.ReadAll(io.LimitReader(part, 1024))
 			_ = part.Close() //nolint:errcheck // best-effort
-			if rerr != nil || !csrfValid(string(buf), 30*time.Minute) {
+			if rerr != nil || !csrfValid(r, "upload", string(buf)) {
 				reqLogger.Warn("invalid or missing CSRF token", "read_err", rerr)
 				renderError(w, r, http.StatusForbidden, errorData{
 					Icon:    "🔒",
@@ -3606,26 +3906,38 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			filename := filepath.Base(part.FileName())
 			reqLogger = reqLogger.With("filename", filename)
-			reqLogger.Info("streaming upload to hopper")
+			reqLogger.Info("forwarding upload to hopper")
 
-			res, uerr := streamUploadToHopper(ctx, part, filename, reqLogger)
+			// Cap the file part's body even though the whole request is already
+			// behind MaxBytesReader: a malformed multipart with one giant
+			// non-file leading part could otherwise waste outbound bandwidth
+			// to hopper before MaxBytesReader fires.
+			res, uerr := uploadToHopper(ctx, io.LimitReader(part, maxUploadSize), filename, reqLogger)
 			_ = part.Close() //nolint:errcheck // best-effort
 			if uerr != nil {
 				var maxErr *http.MaxBytesError
-				if errors.As(uerr, &maxErr) {
+				switch {
+				case errors.As(uerr, &maxErr):
 					renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 						Icon:    "⚖",
 						Title:   "File too large",
 						Message: "The web interface accepts files up to 100 MB.",
 					})
-					return
+				case errors.Is(uerr, errUploadTokenUnavailable):
+					reqLogger.Warn("upload rejected: hopper token unavailable", "error", uerr)
+					renderError(w, r, http.StatusServiceUnavailable, errorData{
+						Icon:    "⏳",
+						Title:   "Service warming up",
+						Message: "The analysis service isn't ready yet. Please try again in a moment.",
+					})
+				default:
+					reqLogger.Error("hopper upload failed", "error", uerr)
+					renderError(w, r, http.StatusBadGateway, errorData{
+						Icon:    "⚠",
+						Title:   "Upload failed",
+						Message: "Couldn't reach the analysis service. Please try again shortly.",
+					})
 				}
-				reqLogger.Error("hopper upload failed", "error", uerr)
-				renderError(w, r, http.StatusBadGateway, errorData{
-					Icon:    "⚠",
-					Title:   "Upload failed",
-					Message: "Couldn't reach the analysis service. Please try again shortly.",
-				})
 				return
 			}
 			reqLogger.Info("upload accepted by hopper",
@@ -3651,28 +3963,156 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// streamUploadToHopper opens a POST /api/upload to hopper and copies body
-// straight through. No buffering on prism's side — Go's transport uses
-// chunked transfer-encoding for a request body of unknown length, so the
-// upload-side memory footprint is the transport's internal copy buffer.
-func streamUploadToHopper(ctx context.Context, body io.Reader, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
+// errUploadTokenUnavailable means hopper hasn't yet provisioned the upload
+// token (typically because the hopper service is still warming up). The
+// upload handler surfaces this as a 503-equivalent UX to the user.
+var errUploadTokenUnavailable = errors.New("hopper upload token unavailable")
+
+// uploadTokenKey is the hopper KV key carrying the Bearer token for
+// POST /api/upload. Rotations are signalled by hopper returning 401 to a
+// previously-valid token; the next read picks up the new value.
+const uploadTokenKey = "upload_token"
+
+// uploadToHopper POSTs body to hopper /api/upload with a Bearer token read
+// from hopper's KV table. The body is buffered up front so the request can
+// be safely retried with backoff (and so the 401 rotation path can resend
+// the same bytes). The buffer is bounded by the request-level
+// MaxBytesReader plus the per-part io.LimitReader the caller wraps around
+// the multipart part. On a 401 (token rotation signal) we re-read the
+// token from KV and retry the upload exactly once.
+func uploadToHopper(ctx context.Context, body io.Reader, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
+	db := hopperDB.Load()
+	if db == nil {
+		return nil, errUploadTokenUnavailable
+	}
+	buf, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("read upload body: %w", err)
+	}
 	target := hopperUploadURL(filename)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+
+	token, err := fetchUploadToken(ctx, db, log)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := postUploadWithRetry(ctx, target, buf, token, log)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		_ = resp.Body.Close() //nolint:errcheck // best-effort
+		log.Warn("hopper rejected upload token; refetching and retrying once")
+		token, err = fetchUploadToken(ctx, db, log)
+		if err != nil {
+			return nil, err
+		}
+		resp, err = postUploadWithRetry(ctx, target, buf, token, log) //nolint:bodyclose // closed by readUploadResponse below
+		if err != nil {
+			return nil, err
+		}
+	}
+	return readUploadResponse(resp, log)
+}
+
+// fetchUploadToken reads the upload token from hopper's KV with exponential
+// backoff and jitter. ErrNotFound is treated as terminal — it signals that
+// hopper hasn't been provisioned yet, and no amount of retrying will help
+// inside this request's lifetime; we map it to errUploadTokenUnavailable so
+// the handler can render a clean "warming up" page.
+func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (string, error) {
+	var token string
+	err := retry.Do(
+		func() error {
+			v, err := db.KVGet(ctx, uploadTokenKey)
+			if errors.Is(err, hopper.ErrNotFound) {
+				return retry.Unrecoverable(errUploadTokenUnavailable)
+			}
+			if err != nil {
+				return err
+			}
+			token = v
+			return nil
+		},
+		retry.Context(ctx),
+		retry.Attempts(0),
+		retry.Delay(200*time.Millisecond),
+		retry.MaxDelay(10*time.Second),
+		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
+		retry.LastErrorOnly(true),
+		retry.OnRetry(func(n uint, err error) {
+			log.Warn("upload token fetch retry", "attempt", n+1, "error", err)
+		}),
+	)
+	if errors.Is(err, errUploadTokenUnavailable) {
+		return "", errUploadTokenUnavailable
+	}
+	if err != nil {
+		return "", fmt.Errorf("fetch upload token: %w", err)
+	}
+	return token, nil
+}
+
+// postUploadWithRetry POSTs to hopper /api/upload with exponential backoff
+// and jitter. Only transport errors and 5xx responses trigger a retry —
+// 4xx (including 401) is returned to the caller as-is so token-rotation
+// handling stays in uploadToHopper. The retry budget is bounded by ctx.
+func postUploadWithRetry(ctx context.Context, target string, buf []byte, token string, log *slog.Logger) (*http.Response, error) {
+	var resp *http.Response
+	err := retry.Do(
+		func() error {
+			r, err := postOnce(ctx, target, buf, token)
+			if err != nil {
+				return err
+			}
+			if r.StatusCode >= 500 {
+				snippet, _ := io.ReadAll(io.LimitReader(r.Body, 1024)) //nolint:errcheck // diagnostics only
+				_ = r.Body.Close()                                     //nolint:errcheck // best-effort
+				return fmt.Errorf("hopper /api/upload status %d: %s", r.StatusCode, strings.TrimSpace(string(snippet)))
+			}
+			resp = r
+			return nil
+		},
+		retry.Context(ctx),
+		retry.Attempts(0),
+		retry.Delay(500*time.Millisecond),
+		retry.MaxDelay(30*time.Second),
+		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
+		retry.LastErrorOnly(true),
+		retry.OnRetry(func(n uint, err error) {
+			log.Warn("hopper upload retry", "attempt", n+1, "error", err)
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// postOnce performs a single POST /api/upload with the given Bearer token.
+// Body is read from buf so retries can replay it.
+func postOnce(ctx context.Context, target string, buf []byte, token string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
 	if err != nil {
 		return nil, fmt.Errorf("build hopper request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
 	if err != nil {
 		return nil, fmt.Errorf("hopper request: %w", err)
 	}
+	return resp, nil
+}
+
+// readUploadResponse closes resp and parses hopper's JSON envelope.
+func readUploadResponse(resp *http.Response, log *slog.Logger) (*hopperUploadResponse, error) {
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
 			log.Debug("hopper response body close failed", "error", cerr)
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096)) //nolint:errcheck // diagnostics only
 		return nil, fmt.Errorf("hopper /api/upload status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	var ur hopperUploadResponse
@@ -3718,6 +4158,10 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		data.RescanAllowed = time.Since(analyzedAt) >= rescanCooldown
 	}
 	data.SourceURL, data.SourceLabel = sourceDisplay(res.SourceURL, res.SourceDomain)
+	if res.Ecosystem != "" {
+		data.Ecosystem = res.Ecosystem
+		data.EcosystemURL = ecosystemURL(res.Ecosystem)
+	}
 	if !res.CreatedAt.IsZero() {
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))
@@ -3816,6 +4260,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		if file.Depth == 0 {
 			data.FileType = strings.ToUpper(file.FileType)
 			data.Size = formatBytes(file.Size)
+			data.SizeBytes = file.Size
 			break
 		}
 	}
@@ -3823,6 +4268,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	if data.FileType == "" && len(report.Files) > 0 {
 		data.FileType = strings.ToUpper(report.Files[0].FileType)
 		data.Size = formatBytes(report.Files[0].Size)
+		data.SizeBytes = report.Files[0].Size
 	}
 
 	// Extract findings for formula generation
@@ -4878,9 +5324,11 @@ var chromaStylesheet = func() template.CSS {
 }()
 
 // highlightLines tokenises body with the lexer matching filename and returns
-// one HTML fragment per line. Returns nil if no lexer matches; callers then
-// fall back to plain text rendering.
-func highlightLines(body, filename string) []template.HTML {
+// per-line chroma tokens. Returns nil if no lexer matches; callers then
+// fall back to plain text rendering. The client renders each token as a
+// span with the Class as its className and Text as textContent — no HTML
+// is constructed server-side, so there is no innerHTML attack surface.
+func highlightLines(body, filename string) [][]ContentToken {
 	if filename == "" || body == "" {
 		return nil
 	}
@@ -4893,11 +5341,11 @@ func highlightLines(body, filename string) []template.HTML {
 	if err != nil {
 		return nil
 	}
-	var lines []template.HTML
-	var sb strings.Builder
+	var lines [][]ContentToken
+	var current []ContentToken
 	emit := func() {
-		lines = append(lines, template.HTML(sb.String())) //nolint:gosec // we html-escape every value before writing
-		sb.Reset()
+		lines = append(lines, current)
+		current = nil
 	}
 	for tok := iter(); tok != chroma.EOF; tok = iter() {
 		class := chroma.StandardTypes[tok.Type]
@@ -4911,16 +5359,7 @@ func highlightLines(body, filename string) []template.HTML {
 			if part == "" {
 				continue
 			}
-			escaped := html.EscapeString(part)
-			if class == "" {
-				sb.WriteString(escaped)
-				continue
-			}
-			sb.WriteString(`<span class="`)
-			sb.WriteString(class)
-			sb.WriteString(`">`)
-			sb.WriteString(escaped)
-			sb.WriteString(`</span>`)
+			current = append(current, ContentToken{Class: class, Text: part})
 		}
 	}
 	emit() // final line, even if empty
@@ -4960,7 +5399,7 @@ func renderTextContent(body []byte, findings []finding, filename string) []Conte
 		line = strings.TrimRight(line, "\r")
 		cl := ContentLine{Number: i + 1, Text: line}
 		if i < len(highlights) {
-			cl.HTML = highlights[i]
+			cl.Tokens = highlights[i]
 		}
 		if line == "" {
 			out = append(out, cl)
@@ -5308,7 +5747,6 @@ func (r *litmusMlResponse) suspiciousT() float64 { return r.Thresholds[0] }
 func (r *litmusMlResponse) hostileT() float64    { return r.Thresholds[1] }
 
 // v4 cleave types are defined above: cleaveReport, cleaveFile, finding.
-
 
 // v4: cleave output deserializes directly into cleaveReport via json tags.
 // parseAPIResponse and uploadToGCS removed.

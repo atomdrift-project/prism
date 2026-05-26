@@ -140,18 +140,13 @@ load_rc_config $name
 : ${prism_enable:="NO"}
 : ${prism_litmus_addr:="litmus:49999"}
 : ${prism_hopper_api_addr:="hopper-api:8081"}
-# CIDRs whose clients may trigger operator actions (rescan button).
-# Replaces (does not extend) prism's built-in baseline, so this string
-# repeats the RFC1918 + loopback defaults and appends the lab's static
-# range. Override per-host with: bastille sysrc <jail> prism_trusted_subnets=...
-: ${prism_trusted_subnets:="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7,136.47.201.0/24"}
 
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
 prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper"
-command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --trusted-subnets=${prism_trusted_subnets}"
+command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public"
 
 run_rc_command "$1"
 EOF

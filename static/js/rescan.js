@@ -1,7 +1,7 @@
-// Operator rescan button — POSTs to /file/<sha>/rescan with a CSRF token,
-// shows inline feedback. Rendered server-side only when the client IP is
-// in a trusted subnet (see --trusted-subnets); the endpoint enforces the
-// same check, so this client-side script is a UX layer, not a gate.
+// Rescan button — POSTs to /file/<sha>/rescan with a CSRF token, shows
+// inline feedback. The button is rendered only when the last analysis is
+// older than rescanCooldown; abuse is bounded server-side by CSRF, a
+// global token bucket, and a per-SHA cooldown.
 
 document.querySelectorAll('.rescan-btn').forEach(btn => {
     btn.addEventListener('click', async () => {

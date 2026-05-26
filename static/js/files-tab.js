@@ -218,10 +218,21 @@ if (millerEl && treeDataEl && detail) {
             div.appendChild(gut);
             const code = document.createElement('span');
             code.className = 'code chroma';
-            // The server emits pre-escaped chroma HTML when a lexer matched
-            // the file; otherwise we render the raw text safely via textContent.
-            if (ln.HTML) {
-                code.innerHTML = ln.HTML;
+            // Server emits a list of chroma tokens {c: className, t: text}
+            // when a lexer matched; otherwise we render the raw text. We
+            // always use textContent / className so attacker-controlled
+            // source bytes can never produce HTML or event handlers.
+            if (ln.Tokens && ln.Tokens.length) {
+                for (const tok of ln.Tokens) {
+                    if (tok.c) {
+                        const span = document.createElement('span');
+                        span.className = tok.c;
+                        span.textContent = tok.t;
+                        code.appendChild(span);
+                    } else {
+                        code.appendChild(document.createTextNode(tok.t));
+                    }
+                }
             } else {
                 code.textContent = ln.Text || '';
             }

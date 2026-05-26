@@ -41,7 +41,7 @@ func TestRouteSetup(t *testing.T) {
 
 func TestSecurityHeadersScriptNonce(t *testing.T) {
 	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nonce := getNonce(r)
+		nonce := nonceFor(r)
 		if nonce == "" {
 			t.Fatal("nonce missing from request context")
 		}

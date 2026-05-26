@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,8 +246,21 @@ func assertClassification(t *testing.T, filePath, filename, wantClass string) {
 func uploadFile(t *testing.T, filePath, filename string) (sha string, body []byte) {
 	t.Helper()
 
-	// Fetch the index page to get a fresh CSRF token.
-	indexResp, err := http.Get(prismBase + "/") //nolint:noctx
+	// CSRF tokens are bound to a per-browser session cookie set on the
+	// first GET, so the client must preserve cookies across requests.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New: %v", err)
+	}
+	client := &http.Client{
+		Jar:     jar,
+		Timeout: 2 * time.Minute,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	indexResp, err := client.Get(prismBase + "/") //nolint:noctx
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -279,13 +293,6 @@ func uploadFile(t *testing.T, filePath, filename string) (sha string, body []byt
 		t.Fatalf("copy file data: %v", err)
 	}
 	mw.Close()
-
-	client := &http.Client{
-		Timeout: 2 * time.Minute,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
 
 	resp, err := client.Post(prismBase+"/upload", mw.FormDataContentType(), &buf)
 	if err != nil {

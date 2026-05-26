@@ -18,6 +18,7 @@ func TestResultTemplateParses(t *testing.T) {
 		"buildCommitShort": func() string { return "abcde" },
 		"mul":              func(a, b float64) float64 { return a * b },
 		"formulaQuery":     func(s string) string { return s },
+		"ecoColor":         func(string) string { return "slate" },
 		"bandGradient": func(_, _, _ float64) template.CSS {
 			return template.CSS("linear-gradient(90deg, #fff, #000)")
 		},

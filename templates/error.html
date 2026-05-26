@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{.Title}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
-    <style nonce="{{.Nonce}}">
+    <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
         :root {
             --carbon: #0a0a0a;
@@ -193,7 +193,7 @@
         <div class="error-box">
             {{if .ShowBeaker}}<div class="error-beaker"><img src="/static/beaker.webp" alt="Beaker panicking" /></div>{{else}}<div class="error-icon">{{.Icon}}</div>{{end}}
             <div class="error-title">{{.Title}}</div>
-            <div class="error-message">{{.Message}}</div>
+            <div class="error-message">{{if .MessageHTML}}{{.MessageHTML}}{{else}}{{.Message}}{{end}}</div>
             {{if .Detail}}<div class="error-detail">{{.Detail}}</div>{{end}}
             <a href="/" class="btn btn-primary">{{.Action}}</a>
         </div>
