@@ -64,8 +64,12 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Start prism pointing at litmus.
-	prismCmd := exec.Command(prismBin, "--no-cache", "--litmus-addr="+litmusAddr)
+	// Start prism. Uploads now flow prism → hopper → worker rather than
+	// prism → litmus, so this integration test needs the surrounding
+	// hopper + worker setup configured separately (via HOPPER_DSN /
+	// HOPPER_API_ADDR) before it'll exercise a real analysis path.
+	_ = litmusAddr
+	prismCmd := exec.Command(prismBin, "--no-cache")
 	prismCmd.Env = append(os.Environ(),
 		fmt.Sprintf("PORT=%d", prismPort),
 		"GCS_BUCKET=",

@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -19,7 +18,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime"
-	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -72,8 +70,7 @@ var (
 	formatsTemplate    *template.Template
 	poweredByTemplate  *template.Template
 	helpQueryTemplate  *template.Template
-	litmusAddr         string       // Address of litmus server (e.g., "127.0.0.1:8080")
-	litmusClient       *http.Client // HTTP client for litmus server
+	pendingTemplate    *template.Template
 	hopperAPIAddr      string       // Address of hopper API server (e.g., "hopper-api:8081")
 	hopperClient       *http.Client // HTTP client for hopper API server
 	cache              *fido.TieredCache[string, storedResult]
@@ -878,10 +875,6 @@ func main() {
 			port = strings.TrimPrefix(arg, "--port=")
 		case arg == "--port" && i+1 < len(os.Args[1:]):
 			port = os.Args[i+2]
-		case strings.HasPrefix(arg, "--litmus-addr="):
-			litmusAddr = strings.TrimPrefix(arg, "--litmus-addr=")
-		case arg == "--litmus-addr" && i+1 < len(os.Args[1:]):
-			litmusAddr = os.Args[i+2]
 		case strings.HasPrefix(arg, "--hopper-api-addr="):
 			hopperAPIAddr = strings.TrimPrefix(arg, "--hopper-api-addr=")
 		case arg == "--hopper-api-addr" && i+1 < len(os.Args[1:]):
@@ -1048,6 +1041,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	pendingTemplate, tmplErr = template.New("pending.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/pending.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 
 	// Connect to hopper sample registry. Explicit --db, HOPPER_DSN, and
 	// FALLOUT_DB override the local hopper default. If the first attempt
@@ -1128,7 +1126,6 @@ func main() {
 
 	logger.Info("server starting",
 		"port", port,
-		"litmus_addr", litmusAddr,
 		"hopper_api_addr", hopperAPIAddr,
 	)
 
@@ -1179,6 +1176,8 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
 	mux.HandleFunc("GET /file/{sha256}/contents", handleFileContents)
+	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
+	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
@@ -1191,30 +1190,20 @@ func newMux() *http.ServeMux {
 
 // loadConfig loads configuration from environment variables.
 func loadConfig() {
-	// LITMUS_ADDR from env (flag takes precedence)
-	if litmusAddr == "" {
-		litmusAddr = os.Getenv("LITMUS_ADDR")
-	}
-	if litmusAddr == "" {
-		litmusAddr = "127.0.0.1:49999"
-	}
 	if hopperAPIAddr == "" {
 		hopperAPIAddr = os.Getenv("HOPPER_API_ADDR")
 	}
 	if hopperAPIAddr == "" {
 		hopperAPIAddr = defaultHopperAPIAddr
 	}
-
-	// Initialize HTTP client for litmus server
-	litmusClient = &http.Client{
-		Timeout: 150 * time.Second, // 120s analysis + buffer
-	}
+	// 5-minute timeout covers a worst-case 100 MB upload over a slow
+	// link plus hopper's local fsync + DB insert. Reads from /api/file
+	// and similar smaller fetches finish well inside this budget.
 	hopperClient = &http.Client{
 		Timeout: 5 * time.Minute,
 	}
 
 	logger.Debug("configuration loaded",
-		"LITMUS_ADDR", litmusAddr,
 		"HOPPER_API_ADDR", hopperAPIAddr,
 		"PORT", os.Getenv("PORT"),
 	)
@@ -1237,6 +1226,17 @@ func (sr *statusRecorder) Write(b []byte) (int, error) {
 	n, err := sr.ResponseWriter.Write(b)
 	sr.bytes += n
 	return n, err
+}
+
+// Flush forwards to the underlying ResponseWriter's Flusher if it has one.
+// Needed by the SSE wait endpoint: wrapping an http.ResponseWriter hides
+// the embedded interface implementations behind the wrapper's method set,
+// so without this forward the cast `w.(http.Flusher)` in handleFileWait
+// would fail and the stream would never push events.
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // requestLogger logs every HTTP request with method, path, status, and duration.
@@ -2237,6 +2237,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 	cacheHit, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
+		var pend *pendingAnalysisError
+		if errors.As(err, &pend) {
+			reqLogger.Info("rendering pending state", "filename", pend.Filename)
+			renderPending(w, r, sha, pend.Filename)
+			return
+		}
 		reqLogger.Warn("failed to retrieve or regenerate result",
 			"error", err,
 			"hopper_api_addr", hopperAPIAddr,
@@ -2569,10 +2575,22 @@ func envelopeNeedsEnrichment(rawLitmus string) bool {
 	return hopperWasCompacted(env["raw"])
 }
 
+// pendingAnalysisError signals that a sample exists in hopper but has not
+// been analyzed yet (cleave_result is NULL). Handlers should render the
+// "Analyzing…" page and not cache the partial result.
+type pendingAnalysisError struct {
+	SHA      string
+	Filename string
+}
+
+func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
+
 // fetchFromHopper loads a sample from hopper and reshapes it into the
 // storedResult shape expected by the rest of prism. Returns an error whose
 // message contains "not found" when the sample is absent, so HTTP handlers
-// render a 404 instead of a 500.
+// render a 404 instead of a 500. Returns *pendingAnalysisError when the
+// sample row exists but no worker has produced a cleave result yet — the
+// expected state during the upload→worker handoff.
 //
 // When the sample's stored cleave result has been compacted (children
 // stripped — see hopper.compactCleaveResultForStorage), reassemble children
@@ -2589,6 +2607,13 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
 		}
 		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
+	}
+
+	if len(sample.CleaveResult) == 0 {
+		return storedResult{}, &pendingAnalysisError{
+			SHA:      sha,
+			Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
+		}
 	}
 
 	res, err := storedResultFromHopperSample(sample)
@@ -3235,7 +3260,232 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 }
 
-//nolint:revive,maintidx // renderError calls are more verbose than http.Error but worth it for UX
+// pendingPageData feeds templates/pending.html. SHA256JSON is the same
+// value as SHA256, JSON-encoded so it can be safely embedded inside the
+// inline <script> as a JS string literal under the strict CSP nonce.
+type pendingPageData struct {
+	Nonce       string
+	BuildCommit string
+	Filename    string
+	SHA256      string
+	SHA256JSON  template.JS
+}
+
+// renderPending serves the "Analyzing…" wait page for a SHA whose sample
+// row exists in hopper but has no cleave_result yet. The page opens an
+// SSE connection to /file/<sha>/wait that flips to a result-page reload
+// the moment a worker writes the cleave result.
+func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string) {
+	if filename == "" {
+		filename = sha[:12] + "…"
+	}
+	shaJSON, err := json.Marshal(sha)
+	if err != nil {
+		shaJSON = []byte(`""`)
+	}
+	data := pendingPageData{
+		Nonce:       getNonce(r),
+		BuildCommit: buildCommit,
+		Filename:    filename,
+		SHA256:      sha,
+		SHA256JSON:  template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Pending pages must never be cached: a CDN that pins this could
+	// serve "Analyzing…" forever even after the real result lands.
+	w.Header().Set("Cache-Control", "no-store")
+	if err := pendingTemplate.Execute(w, data); err != nil {
+		logger.Error("template execution failed", "template", "pending", "error", err)
+	}
+}
+
+const (
+	// waitPollInterval controls how often the SSE wait loop checks hopper
+	// for a populated cleave_result. 50 ms is well under a single screen
+	// refresh and keeps the worker→browser propagation indistinguishable
+	// from instant to a human. The status query is a single indexed
+	// boolean read; the cost per active waiter is negligible.
+	waitPollInterval = 50 * time.Millisecond
+	// waitMaxDuration bounds a single SSE connection. The browser auto-
+	// reconnects on close, so we recycle the underlying DB poll loop
+	// every five minutes — bounding goroutine lifetime if a tab is left
+	// open indefinitely.
+	waitMaxDuration = 5 * time.Minute
+	// waitHeartbeatInterval keeps proxies that buffer streamed responses
+	// (nginx, Cloudflare) from killing the connection during long waits.
+	// SSE comments are syntactic no-ops on the client side.
+	waitHeartbeatInterval = 15 * time.Second
+)
+
+// handleFileWait is the SSE notification channel for the pending page.
+// It tight-polls hopper for cleave_result every waitPollInterval and
+// emits a `ready` event the instant the column is populated. After
+// emitting (or after waitMaxDuration) it closes the stream; the browser
+// reloads on `ready` and EventSource auto-reconnects on natural close.
+//
+// The handler returns immediately for SHAs that are either already
+// analyzed (worker finished between handleFile and SSE open) or absent
+// from hopper entirely (404-like state) so the browser doesn't sit
+// staring at "Analyzing…" forever.
+func handleFileWait(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha256")
+	if !validSHA256(sha) {
+		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		return
+	}
+	db := hopperDB.Load()
+	if db == nil {
+		http.Error(w, "hopper not connected", http.StatusServiceUnavailable)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no") // nginx: disable response buffering
+	w.WriteHeader(http.StatusOK)
+
+	ctx, cancel := context.WithTimeout(r.Context(), waitMaxDuration)
+	defer cancel()
+
+	emit := func(event, data string) bool {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	heartbeat := func() bool {
+		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	pollTicker := time.NewTicker(waitPollInterval)
+	defer pollTicker.Stop()
+	heartbeatTicker := time.NewTicker(waitHeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
+	// Initial probe before the first tick — covers the worker-finishes-
+	// before-SSE-open race so the browser doesn't wait an extra 50 ms
+	// for a result that already exists.
+	if exists, analyzed, err := db.SampleAnalyzed(ctx, sha); err == nil {
+		switch {
+		case !exists:
+			emit("missing", `{"reason":"not found"}`)
+			return
+		case analyzed:
+			emit("ready", `{"sha256":"`+sha+`"}`)
+			return
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeatTicker.C:
+			if !heartbeat() {
+				return
+			}
+		case <-pollTicker.C:
+			exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
+			if err != nil {
+				// Transient DB hiccup: keep polling. A heartbeat will
+				// have fired if the connection is alive.
+				continue
+			}
+			if !exists {
+				emit("missing", `{"reason":"not found"}`)
+				return
+			}
+			if analyzed {
+				emit("ready", `{"sha256":"`+sha+`"}`)
+				return
+			}
+		}
+	}
+}
+
+// handleFileStatus is the no-SSE fallback for the pending page: a single
+// JSON poll the page falls back to if EventSource gives up (no SSE
+// support, hostile proxy, etc.). Same backing query as handleFileWait.
+func handleFileStatus(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha256")
+	if !validSHA256(sha) {
+		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		return
+	}
+	db := hopperDB.Load()
+	if db == nil {
+		http.Error(w, `{"error":"hopper not connected"}`, http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
+	if err != nil {
+		http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	resp := map[string]bool{"exists": exists, "ready": analyzed}
+	_ = json.NewEncoder(w).Encode(resp) //nolint:errcheck,errchkjson // best-effort response
+}
+
+// hopperUploadResponse mirrors hopper's POST /api/upload response shape.
+type hopperUploadResponse struct {
+	SHA256          string `json:"sha256"`
+	AlreadyAnalyzed bool   `json:"already_analyzed"`
+	Size            int64  `json:"size"`
+}
+
+// hopperUploadURL builds the absolute URL of hopper's POST /api/upload
+// endpoint, with the optional filename hint URL-encoded. Mirrors the
+// shape of hopperFileURL so both routes resolve from the same admin-
+// configured hopper-api host.
+func hopperUploadURL(filename string) string {
+	base := strings.TrimSpace(hopperAPIAddr)
+	if base == "" {
+		base = defaultHopperAPIAddr
+	}
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		u = &url.URL{Scheme: "http", Host: defaultHopperAPIAddr}
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/upload"
+	q := url.Values{}
+	if filename != "" {
+		q.Set("filename", filename)
+	}
+	u.RawQuery = q.Encode()
+	u.Fragment = ""
+	return u.String()
+}
+
+// handleUpload streams a browser upload directly to hopper's /api/upload
+// without buffering. The browser sends a multipart/form-data body with two
+// fields, csrf_token (first) and file (second); we iterate them with
+// MultipartReader so the file bytes flow straight from the inbound
+// connection to the outbound hopper connection. No temp file in prism, no
+// in-memory copy of the payload, no synchronous analysis on the request
+// path — hopper picks up the row via its upload-tier worker queue and
+// prism's /file/<sha> page (with the SSE wait endpoint) shows the result
+// the moment a worker finishes.
+//
+//nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()
 	h := sha256.Sum256(fmt.Appendf(nil, "%d-%p", time.Now().UnixNano(), r))
@@ -3249,7 +3499,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"user_agent", r.UserAgent(),
 	)
 
-	// Rate limit per IP.
 	if !rateLimiter.allow(ip) {
 		reqLogger.Warn("upload rate limited")
 		renderError(w, r, http.StatusTooManyRequests, errorData{
@@ -3259,227 +3508,166 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
 	reqLogger.Info("upload request received")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	// 100 MB body cap (the multipart envelope adds a small overhead beyond
+	// the file payload; pad so a 100 MB file with normal boundary/headers
+	// still fits).
+	const maxUploadSize = 100 * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+1<<20)
+
+	// Outbound timeout to hopper — generous to cover a 100 MB upload over
+	// slow links plus hopper's local fsync and DB insert.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	// Cap total request body to 100MB to prevent disk exhaustion.
-	// ParseMultipartForm's maxMemory only limits RAM; excess spills to temp files
-	// with no size bound unless we cap the body reader itself.
-	const maxUploadSize = 100 * 1024 * 1024
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	reader, err := r.MultipartReader()
+	if err != nil {
+		reqLogger.Warn("multipart reader init failed", "error", err)
+		renderError(w, r, http.StatusBadRequest, errorData{
+			Icon:    "⚠",
+			Title:   "Upload failed",
+			Message: "Something went wrong reading your file. Please try again.",
+		})
+		return
+	}
 
-	reqLogger.Debug("parsing multipart form", "max_memory", "100MB")
-	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-		if err.Error() == "http: request body too large" {
-			reqLogger.Warn("upload rejected: file too large", "error", err, "max_bytes", maxUploadSize)
-			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
-				Icon:  "⚖",
-				Title: "File too large",
-				Message: "The web interface accepts files up to 100 MB. For larger files, use " +
-					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
-			})
-		} else {
-			reqLogger.Error("failed to parse multipart form", "error", err)
+	csrfChecked := false
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
+				renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
+					Icon:  "⚖",
+					Title: "File too large",
+					Message: "The web interface accepts files up to 100 MB. For larger files, use " +
+						`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+				})
+				return
+			}
+			reqLogger.Warn("multipart next-part failed", "error", err)
 			renderError(w, r, http.StatusBadRequest, errorData{
 				Icon:    "⚠",
 				Title:   "Upload failed",
 				Message: "Something went wrong reading your file. Please try again.",
 			})
+			return
 		}
-		return
-	}
 
-	// Validate CSRF token (30-minute window). Must come after ParseMultipartForm
-	// so that form values from multipart bodies are accessible.
-	if !csrfValid(r.FormValue("csrf_token"), 30*time.Minute) {
-		reqLogger.Warn("invalid or missing CSRF token")
-		renderError(w, r, http.StatusForbidden, errorData{
-			Icon:    "🔒",
-			Title:   "Session expired",
-			Message: "Your form session has expired. Please reload the page and try again.",
-		})
-		return
-	}
+		switch part.FormName() {
+		case "csrf_token":
+			buf, rerr := io.ReadAll(io.LimitReader(part, 1024))
+			_ = part.Close() //nolint:errcheck // best-effort
+			if rerr != nil || !csrfValid(string(buf), 30*time.Minute) {
+				reqLogger.Warn("invalid or missing CSRF token", "read_err", rerr)
+				renderError(w, r, http.StatusForbidden, errorData{
+					Icon:    "🔒",
+					Title:   "Session expired",
+					Message: "Your form session has expired. Please reload the page and try again.",
+				})
+				return
+			}
+			csrfChecked = true
 
-	file, fileHeader, err := r.FormFile("file")
-	if err != nil {
-		reqLogger.Error("failed to read uploaded file", "error", err)
-		renderError(w, r, http.StatusBadRequest, errorData{
-			Icon:    "⚠",
-			Title:   "No file received",
-			Message: "We didn't receive a file. Please select a file and try again.",
-		})
-		return
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			reqLogger.Debug("failed to close uploaded file", "error", err)
-		}
-	}()
+		case "file":
+			if !csrfChecked {
+				// Browsers serialize hidden inputs in DOM order, so csrf_token
+				// (declared first in the upload template) always reaches the
+				// server before the file field. Anything else is either a
+				// hand-crafted client or tampering.
+				_ = part.Close() //nolint:errcheck // best-effort
+				reqLogger.Warn("file part arrived before csrf_token")
+				renderError(w, r, http.StatusForbidden, errorData{
+					Icon:    "🔒",
+					Title:   "Session expired",
+					Message: "Your form session has expired. Please reload the page and try again.",
+				})
+				return
+			}
+			filename := filepath.Base(part.FileName())
+			reqLogger = reqLogger.With("filename", filename)
+			reqLogger.Info("streaming upload to hopper")
 
-	filename := filepath.Base(fileHeader.Filename)
-	ext := filepath.Ext(filename)
-	reqLogger = reqLogger.With("filename", filename, "size", fileHeader.Size, "ext", ext)
-	reqLogger.Info("file received")
-
-	tempPattern := "litmus-*"
-	if ext != "" {
-		tempPattern = "litmus-*" + ext
-	}
-	tempFile, err := os.CreateTemp("", tempPattern)
-	if err != nil {
-		reqLogger.Error("failed to create temp file", "error", err)
-		renderError(w, r, http.StatusInternalServerError, errorData{
-			Icon:    "⚠",
-			Title:   "Server error",
-			Message: "Something went wrong on our end. Please try again shortly.",
-		})
-		return
-	}
-	tempPath := tempFile.Name()
-	reqLogger.Debug("temp file created", "path", tempPath)
-
-	// cleanupWg tracks only the background GCS upload goroutine.
-	// Analysis runs synchronously inside cache.Fetch, so the temp file is
-	// guaranteed to exist for the duration of that call.  The defer below
-	// waits for GCS (if started) before removing the file.
-	var cleanupWg sync.WaitGroup
-	defer func() {
-		cleanupWg.Wait()
-		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			reqLogger.Debug("failed to remove temp file", "path", tempPath, "error", err)
-		} else {
-			reqLogger.Debug("temp file removed", "path", tempPath)
-		}
-	}()
-
-	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(tempFile, hash), file)
-	if err != nil {
-		if cerr := tempFile.Close(); cerr != nil {
-			reqLogger.Debug("failed to close temp file", "error", cerr)
-		}
-		reqLogger.Error("failed to write temp file", "error", err, "bytes_written", written)
-		renderError(w, r, http.StatusInternalServerError, errorData{
-			Icon:    "⚠",
-			Title:   "Server error",
-			Message: "Something went wrong on our end. Please try again shortly.",
-		})
-		return
-	}
-	if err := tempFile.Close(); err != nil {
-		reqLogger.Debug("failed to close temp file after write", "error", err)
-	}
-
-	sha256Hex := hex.EncodeToString(hash.Sum(nil))
-	reqLogger = reqLogger.With("sha256", sha256Hex)
-	reqLogger.Info("file written to temp", "bytes", written)
-
-	// Upload to GCS if configured (background, simultaneous to analysis).
-	// GCS upload removed — will migrate to R2.
-
-	// If ?refresh=1, evict any cached result so the analysis runs fresh.
-	if r.URL.Query().Get("refresh") == "1" {
-		reqLogger.Info("refresh requested, evicting cached result", "sha256", sha256Hex)
-		if err := cache.Delete(ctx, sha256Hex); err != nil {
-			reqLogger.Debug("cache eviction failed (may not exist)", "error", err)
-		}
-	}
-
-	// Run litmus analysis via fido.Fetch to deduplicate concurrent requests
-	// With --no-cache, uses null store which doesn't persist but still deduplicates
-	reqLogger.Info("starting/joining analysis fetch", "sha256", sha256Hex, "filename", filename)
-	fetchStart := time.Now()
-	res, err := cache.Fetch(ctx, sha256Hex, func(_ context.Context) (storedResult, error) {
-		reqLogger.Info("cache miss, executing new analysis", "sha256", sha256Hex)
-		lctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
-
-		analysisStart := time.Now()
-		//nolint:contextcheck // analysis uses its own timeout independent of request context
-		lr, runErr := runLitmus(lctx, tempPath, filename, reqLogger)
-		analysisDuration := time.Since(analysisStart)
-
-		if runErr != nil {
-			reqLogger.Error("litmus analysis failed",
-				"error", runErr,
-				"duration_ms", analysisDuration.Milliseconds(),
+			res, uerr := streamUploadToHopper(ctx, part, filename, reqLogger)
+			_ = part.Close() //nolint:errcheck // best-effort
+			if uerr != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(uerr, &maxErr) {
+					renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
+						Icon:    "⚖",
+						Title:   "File too large",
+						Message: "The web interface accepts files up to 100 MB.",
+					})
+					return
+				}
+				reqLogger.Error("hopper upload failed", "error", uerr)
+				renderError(w, r, http.StatusBadGateway, errorData{
+					Icon:    "⚠",
+					Title:   "Upload failed",
+					Message: "Couldn't reach the analysis service. Please try again shortly.",
+				})
+				return
+			}
+			reqLogger.Info("upload accepted by hopper",
+				"sha256", res.SHA256,
+				"size", res.Size,
+				"already_analyzed", res.AlreadyAnalyzed,
+				"total_duration_ms", time.Since(requestStart).Milliseconds(),
 			)
-			return storedResult{}, fmt.Errorf("litmus run error: %w", runErr)
+			http.Redirect(w, r, "/file/"+res.SHA256, http.StatusSeeOther)
+			return
+
+		default:
+			_ = part.Close() //nolint:errcheck // ignore unknown parts
 		}
-
-		reqLogger.Info("litmus analysis completed",
-			"duration_ms", analysisDuration.Milliseconds(),
-			"classification", lr.Classification,
-		)
-
-		// Store in hopper sample registry (best-effort, inside fetch closure
-		// so it only runs on cache miss — i.e. once per new analysis).
-		// Path is required by hopper's validSample guard; the uploaded
-		// filename is the only user-meaningful identifier we have, and
-		// re-uploads of the same content just bump last_seen_at on the
-		// matching sample_locations row.
-		//nolint:contextcheck // hopper writes share the analysis lctx (decoupled from request) so they can complete after a client disconnect
-		if db := hopperDB.Load(); db != nil {
-			if insertErr := db.InsertSample(lctx, &hopper.Sample{
-				SHA256:      sha256Hex,
-				Source:      "upload",
-				Filename:    filename,
-				Path:        "upload/" + filename,
-				Label:       "unknown",
-				LabelSource: "upload",
-				SizeBytes:   written,
-			}); insertErr != nil {
-				reqLogger.Debug("hopper insert failed", "error", insertErr)
-			}
-			if len(lr.CleaveJSON) > 0 {
-				if err := db.UpdateCleaveResult(lctx, sha256Hex, lr.CleaveJSON, nil, ""); err != nil {
-					reqLogger.Debug("hopper UpdateCleaveResult failed", "error", err)
-				}
-			}
-			if len(lr.LitmusEnvelope) > 0 {
-				if err := db.UpdateLitmusResult(lctx, sha256Hex, lr.LitmusEnvelope); err != nil {
-					reqLogger.Debug("hopper UpdateLitmusResult failed", "error", err)
-				}
-			}
-		}
-
-		now := time.Now().UTC()
-		return storedResult{
-			Filename:       filename,
-			RawLitmus:      lr.RawLitmus,
-			Classification: lr.Classification,
-			Formula:        lr.Formula,
-			FileType:       lr.FileType,
-			CachedAt:       now,
-			CreatedAt:      now,
-			AnalyzedAt:     now,
-		}, nil
-	})
-
-	fetchDuration := time.Since(fetchStart)
-	if err != nil {
-		reqLogger.Error("analysis fetch failed", "error", err, "fetch_duration_ms", fetchDuration.Milliseconds())
-		renderError(w, r, http.StatusInternalServerError, errorData{
-			Icon:  "⚠",
-			Title: "Analysis failed",
-			Message: "Something went wrong analyzing this file. Please try again, or use " +
-				`<a href="https://codeberg.org/atomdrift/litmus">litmus</a> for local analysis.`,
-		})
-		return
 	}
 
-	reqLogger.Info("request completed, redirecting to result",
-		"total_duration_ms", time.Since(requestStart).Milliseconds(),
-		"fetch_duration_ms", fetchDuration.Milliseconds(),
-		"cached_filename", res.Filename,
-		"raw_bytes", len(res.RawLitmus),
-	)
+	// Ran out of parts without seeing "file".
+	reqLogger.Warn("upload missing file part")
+	renderError(w, r, http.StatusBadRequest, errorData{
+		Icon:    "⚠",
+		Title:   "No file received",
+		Message: "We didn't receive a file. Please select a file and try again.",
+	})
+}
 
-	http.Redirect(w, r, "/file/"+sha256Hex, http.StatusSeeOther)
+// streamUploadToHopper opens a POST /api/upload to hopper and copies body
+// straight through. No buffering on prism's side — Go's transport uses
+// chunked transfer-encoding for a request body of unknown length, so the
+// upload-side memory footprint is the transport's internal copy buffer.
+func streamUploadToHopper(ctx context.Context, body io.Reader, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
+	target := hopperUploadURL(filename)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+	if err != nil {
+		return nil, fmt.Errorf("build hopper request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
+	if err != nil {
+		return nil, fmt.Errorf("hopper request: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Debug("hopper response body close failed", "error", cerr)
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("hopper /api/upload status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var ur hopperUploadResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&ur); err != nil {
+		return nil, fmt.Errorf("decode hopper response: %w", err)
+	}
+	if !validSHA256(ur.SHA256) {
+		return nil, fmt.Errorf("hopper returned invalid sha256: %q", ur.SHA256)
+	}
+	return &ur, nil
 }
 
 // prepareResultData converts raw cleave output to template data.
@@ -5104,207 +5292,8 @@ func classificationName(c int) string {
 func (r *litmusMlResponse) suspiciousT() float64 { return r.Thresholds[0] }
 func (r *litmusMlResponse) hostileT() float64    { return r.Thresholds[1] }
 
-// primaryFile extracts formula, file_type, and sha from the first (dp=0)
-// entry in the raw cleave report.
-func primaryFile(raw json.RawMessage) (formula, fileType, sha string) {
-	var report struct {
-		Files []struct {
-			Formula  string `json:"f"`
-			FileType string `json:"type"`
-			SHA256   string `json:"sha"`
-			Depth    int    `json:"dp"`
-		} `json:"fs"`
-	}
-	if json.Unmarshal(raw, &report) != nil || len(report.Files) == 0 {
-		return "", "", ""
-	}
-	for _, f := range report.Files {
-		if f.Depth == 0 {
-			return f.Formula, f.FileType, f.SHA256
-		}
-	}
-	f := report.Files[0]
-	return f.Formula, f.FileType, f.SHA256
-}
-
 // v4 cleave types are defined above: cleaveReport, cleaveFile, finding.
 
-// litmusResult holds the output of a runLitmus call.
-type litmusResult struct {
-	RawLitmus      string
-	Classification string
-	Formula        string
-	FileType       string
-	CleaveJSON     []byte
-	LitmusEnvelope []byte
-}
-
-// runLitmus sends a file to the litmus server for analysis.
-func runLitmus(
-	ctx context.Context,
-	filePath, originalFilename string,
-	reqLogger *slog.Logger,
-) (litmusResult, error) {
-	startTime := time.Now()
-
-	fileInfo, err := os.Stat(filePath)
-	if err != nil {
-		return litmusResult{}, fmt.Errorf("failed to stat file: %w", err)
-	}
-
-	reqLogger.Info("sending file to litmus server",
-		"litmus_addr", litmusAddr,
-		"file_path", filePath,
-		"file_size", fileInfo.Size(),
-	)
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return litmusResult{}, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			reqLogger.Debug("failed to close file", "error", err)
-		}
-	}()
-
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	part, err := writer.CreateFormFile("file", originalFilename)
-	if err != nil {
-		return litmusResult{}, fmt.Errorf("failed to create form file: %w", err)
-	}
-
-	written, err := io.Copy(part, file)
-	if err != nil {
-		return litmusResult{}, fmt.Errorf("failed to copy file to form: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return litmusResult{}, fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	bodyBytes := buf.Bytes()
-	contentType := writer.FormDataContentType()
-	reqLogger.Debug("multipart form created",
-		"body_size", len(bodyBytes),
-		"file_bytes_written", written,
-		"content_type", contentType,
-	)
-
-	analyzeURL := fmt.Sprintf("http://%s/analyze", litmusAddr) //nolint:revive // http is correct: litmus is a local internal service
-
-	// retryCtx bounds how long we will keep retrying when litmus is unreachable.
-	// Individual HTTP requests still use ctx so an in-flight analysis is not cut short.
-	retryCtx, retryCancel := context.WithTimeout(ctx, time.Minute)
-	defer retryCancel()
-
-	var fullResp litmusFullResponse
-	var mlResp litmusMlResponse
-	var attempt int
-	var rawBody []byte
-	if retryErr := retry.Do(
-		func() error {
-			attempt++
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, analyzeURL, bytes.NewReader(bodyBytes))
-			if err != nil {
-				return retry.Unrecoverable(fmt.Errorf("failed to create request: %w", err))
-			}
-			req.Header.Set("Content-Type", contentType)
-			req.ContentLength = int64(len(bodyBytes))
-
-			reqLogger.Debug("sending HTTP request to litmus",
-				"url", analyzeURL,
-				"content_length", req.ContentLength,
-				"attempt", attempt,
-			)
-
-			resp, err := litmusClient.Do(req) //nolint:gosec // SSRF risk accepted: litmusAddr is operator-configured, not user-supplied
-			if err != nil {
-				reqLogger.Warn("litmus HTTP request failed, will retry",
-					"error", err,
-					"attempt", attempt,
-					"duration_ms", time.Since(startTime).Milliseconds(),
-				)
-				return fmt.Errorf("HTTP request failed: %w", err)
-			}
-			defer func() {
-				if err := resp.Body.Close(); err != nil {
-					reqLogger.Debug("failed to close response body", "error", err)
-				}
-			}()
-
-			reqLogger.Debug("received HTTP response from litmus",
-				"status", resp.StatusCode,
-				"duration_ms", time.Since(startTime).Milliseconds(),
-				"attempt", attempt,
-			)
-
-			// Cap response read to 64MB to prevent OOM from a misbehaving litmus server.
-			const maxResponseSize = 64 * 1024 * 1024
-			body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-			if err != nil {
-				return fmt.Errorf("failed to read response: %w", err)
-			}
-
-			if resp.StatusCode != http.StatusOK {
-				// Truncate body for logging to prevent log storage exhaustion.
-				logBody := string(body)
-				if len(logBody) > 1024 {
-					logBody = logBody[:1024] + "...(truncated)"
-				}
-				reqLogger.Error("litmus server returned error",
-					"status", resp.StatusCode,
-					"body", logBody,
-					"attempt", attempt,
-				)
-				// 4xx errors are not retryable (bad request, too large, etc.)
-				if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-					return retry.Unrecoverable(fmt.Errorf("litmus server returned status %d: %s", resp.StatusCode, string(body)))
-				}
-				return fmt.Errorf("litmus server returned status %d: %s", resp.StatusCode, string(body))
-			}
-
-			if err := json.Unmarshal(body, &fullResp); err != nil {
-				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus response: %w", err))
-			}
-			if err := json.Unmarshal(fullResp.ML, &mlResp); err != nil {
-				return retry.Unrecoverable(fmt.Errorf("failed to parse litmus ml section: %w", err))
-			}
-			rawBody = body
-			return nil
-		},
-		retry.Context(retryCtx),
-		retry.Attempts(20),
-		retry.Delay(200*time.Millisecond),
-		retry.MaxDelay(10*time.Second),
-		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
-	); retryErr != nil {
-		return litmusResult{}, fmt.Errorf("failed to send request to litmus server: %w", retryErr)
-	}
-
-	formula, fileType, _ := primaryFile(fullResp.Raw)
-
-	reqLogger.Info("litmus analysis complete",
-		"total_duration_ms", time.Since(startTime).Milliseconds(),
-		"classification", classificationName(mlResp.Classification),
-		"probability", mlResp.Probability,
-		"formula", formula,
-		"file_type", fileType,
-		"version", mlResp.Version,
-		"raw_bytes", len(rawBody),
-	)
-
-	return litmusResult{
-		RawLitmus:      string(rawBody),
-		CleaveJSON:     fullResp.Raw,
-		LitmusEnvelope: fullResp.ML,
-		Classification: classificationName(mlResp.Classification),
-		Formula:        formula,
-		FileType:       fileType,
-	}, nil
-}
 
 // v4: cleave output deserializes directly into cleaveReport via json tags.
 // parseAPIResponse and uploadToGCS removed.
