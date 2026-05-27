@@ -986,11 +986,20 @@ type sectionInfo struct {
 }
 
 type finding struct {
-	ID       string   `json:"i"`
-	Desc     string   `json:"d,omitempty"`
+	ID   string `json:"i"`
+	Desc string `json:"d,omitempty"`
+	// Evidence values (cleave's compact `e`). Parallel to Locations when
+	// the latter is non-empty; same index = same match.
 	Evidence []string `json:"e,omitempty"`
-	Crit     int      `json:"l"`
-	Conf     float64  `json:"c,omitempty"`
+	// Locations is cleave's compact `el` — one entry per Evidence item,
+	// or empty when the finding was never rolled up through an archive
+	// member. Archive-attributed entries look like
+	// "archive:<member-path>", with optional "!" nesting for archives
+	// inside archives. Used by aggregateArchiveCategories to point the
+	// user at the inner file a container-level trait actually matched.
+	Locations []string `json:"el,omitempty"`
+	Crit      int      `json:"l"`
+	Conf      float64  `json:"c,omitempty"`
 }
 
 //nolint:maintidx,gocognit // main is inherently complex: flag parsing, config, template init, server setup
@@ -4631,6 +4640,62 @@ func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[s
 	return out
 }
 
+// resolveSourceFiles decides which file(s) a finding should be attributed
+// to. The container itself rarely matches a trait directly — most
+// container-level findings are roll-ups of inner-file matches that cleave
+// records in the finding's `el` (Locations) slice as `archive:<member>`.
+// When those locations resolve to known inner files we emit one source
+// per distinct inner file; otherwise we fall back to the file the
+// finding currently lives on (the historical behavior).
+//
+// Each returned entry is `(Path, SHA256)` of an attribution target —
+// the caller bumps counts when the same trait fires repeatedly on it.
+func resolveSourceFiles(current *cleaveFile, f finding, pathToFile map[string]*cleaveFile) []FindingSource {
+	if len(f.Locations) == 0 {
+		return []FindingSource{{Path: displayPath(current.Path), SHA256: current.SHA256}}
+	}
+	const prefix = "archive:"
+	seen := make(map[string]bool, len(f.Locations))
+	out := make([]FindingSource, 0, len(f.Locations))
+	for _, loc := range f.Locations {
+		if loc == "" {
+			continue
+		}
+		// Strip the "archive:" prefix. Anything without it is a
+		// non-archive semantic label (e.g. "import") that we can't
+		// resolve to a file — skip those.
+		member := strings.TrimPrefix(loc, prefix)
+		if member == loc {
+			continue
+		}
+		// For archives-in-archives cleave uses "outer.tgz!inner.go".
+		// Our flat file list stores those as "outer.tgz!!inner.go"
+		// via displayPath — try the exact match first, then a "!" → "!!"
+		// normalization as a fallback for the nested case.
+		target, ok := pathToFile[member]
+		if !ok {
+			target = pathToFile[strings.ReplaceAll(member, "!", "!!")]
+		}
+		if target == nil {
+			continue
+		}
+		if seen[target.SHA256] {
+			continue
+		}
+		seen[target.SHA256] = true
+		out = append(out, FindingSource{Path: displayPath(target.Path), SHA256: target.SHA256})
+	}
+	if len(out) == 0 {
+		// `el` was present but none of the entries resolved to a file we
+		// know about (nested archive we didn't extract, mangled path,
+		// etc.). Keep the existing fallback rather than silently dropping
+		// the finding from the sources list — the container-only filter
+		// downstream will then handle it consistently.
+		return []FindingSource{{Path: displayPath(current.Path), SHA256: current.SHA256}}
+	}
+	return out
+}
+
 func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	categoryNames := map[string]string{
 		"objectives":      "Objectives",
@@ -4657,10 +4722,18 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	// entry is just a rollup of inner-file findings — link to the actual
 	// file the trait was inherited from, not the wrapping archive.
 	containerSHAs := make(map[string]bool)
+	// Path → file map used to back-attribute container-level findings to
+	// the inner file that actually produced the match. Cleave's compact
+	// `el` carries an "archive:<member-path>" string per evidence item;
+	// we resolve that member-path against the same `displayPath` form
+	// we already use elsewhere so existing inner files line up directly.
+	pathToFile := make(map[string]*cleaveFile)
 	for i := range files {
 		if files[i].Depth == 0 {
 			containerSHAs[files[i].SHA256] = true
+			continue
 		}
+		pathToFile[displayPath(files[i].Path)] = &files[i]
 	}
 
 	for i := range files {
@@ -4702,15 +4775,17 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 			for _, e := range f.Evidence {
 				agg.evidence[e] = true
 			}
-			src, ok := agg.sources[file.SHA256]
-			if !ok {
-				agg.sources[file.SHA256] = &FindingSource{
-					Path:   displayPath(file.Path),
-					SHA256: file.SHA256,
-					Count:  1,
+			for _, t := range resolveSourceFiles(file, f, pathToFile) {
+				src, ok := agg.sources[t.SHA256]
+				if !ok {
+					agg.sources[t.SHA256] = &FindingSource{
+						Path:   t.Path,
+						SHA256: t.SHA256,
+						Count:  1,
+					}
+				} else {
+					src.Count++
 				}
-			} else {
-				src.Count++
 			}
 		}
 	}
