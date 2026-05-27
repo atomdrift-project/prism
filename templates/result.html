@@ -167,6 +167,76 @@
             z-index: 2;
         }
         .hero-nav:hover { color: var(--iron); background: var(--mist); }
+        /* Keyboard shortcut help dialog. <dialog> handles focus trap +
+           Esc-to-close natively; we just paint it. ::backdrop dims the
+           page so the dialog reads as floating above. */
+        dialog.kbd-help {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0;
+            background: var(--white);
+            color: var(--carbon);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+            max-width: 360px;
+            width: calc(100% - 32px);
+        }
+        dialog.kbd-help::backdrop {
+            background: rgba(10, 10, 10, 0.35);
+        }
+        .kbd-help-form { padding: 18px 22px 20px; }
+        .kbd-help-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .kbd-help-head h2 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            color: var(--carbon);
+        }
+        .kbd-help-close {
+            background: none;
+            border: none;
+            font: inherit;
+            font-size: 20px;
+            line-height: 1;
+            color: var(--slate);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+        .kbd-help-close:hover { color: var(--carbon); background: var(--mist); }
+        .kbd-help-list {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px 16px;
+            align-items: center;
+            margin: 0;
+        }
+        .kbd-help-list dt { margin: 0; }
+        .kbd-help-list dd {
+            margin: 0;
+            font-size: 13px;
+            color: var(--graphite);
+        }
+        .kbd-help-list kbd {
+            display: inline-block;
+            min-width: 22px;
+            padding: 3px 8px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--carbon);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 1;
+        }
         .hero-nav-prev { left: 8px; }
         .hero-nav-next { right: 8px; }
         .hero-has-nav .verdict-bar-left { padding-left: 24px; }
@@ -1828,7 +1898,7 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP)"><span aria-hidden="true">⇩ </span>download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}
@@ -1842,7 +1912,7 @@
                         <span class="meta-label">Analyzed</span>
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
-                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" aria-label="Re-queue this sample for analysis"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
+                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
                         </span>
                     </div>
                     {{end}}
