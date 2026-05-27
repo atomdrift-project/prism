@@ -12,12 +12,28 @@
 #
 # Downtime model
 # --------------
-# Service stays running across all config and binary-staging steps. The only
-# moment of downtime is the final `service prism restart`, gated behind a
-# diff: if neither the binary nor rc.d/prism changed, no restart happens.
-# Binary is staged into /usr/local/bin/prism.new and atomically renamed into
-# place just before restart, so we never overwrite a running executable
-# (FreeBSD ETXTBSY) and never have a window with no binary present.
+# Effectively zero. The new prism is brought up alongside the running one
+# using SO_REUSEPORT_LB on FreeBSD (SO_REUSEPORT on Linux/macOS in tests),
+# so both processes bind the same port at the same time and the kernel
+# routes new connections to whichever is alive. The rollout:
+#
+#   1. Stages the new binary at /usr/local/bin/prism.new (running prism
+#      keeps its old inode; no ETXTBSY risk).
+#   2. Renames .new -> live path (atomic on the same filesystem).
+#   3. Spawns the replacement via daemon(8) with /var/run/prism.next.pid
+#      and /var/log/prism.next.log so it can run beside the old.
+#   4. Polls http://127.0.0.1:8080/_/health until the replacement answers.
+#   5. SIGTERMs the old PID. main.go's 5-second graceful shutdown closes
+#      its listener immediately (kernel stops routing new conns to it)
+#      and drains in-flight requests before exiting.
+#   6. Renames prism.next.pid -> prism.pid so `service prism stop/restart`
+#      keeps managing the right process going forward.
+#
+# If the replacement fails its health check, the old prism keeps serving
+# and the rollout exits non-zero; the bad PID is cleaned up. SSE clients
+# on the old process (e.g. /file/<sha>/wait) are cut at SIGTERM and the
+# browser-side reconnect logic in rescan.js / pending page re-establishes
+# the stream against the new prism.
 
 set -ex
 
@@ -252,17 +268,85 @@ else
 fi
 
 if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
-    # Atomic on the same filesystem; the running prism keeps its old inode
-    # until restart. Done immediately before the restart to keep the window
-    # between "binary changed on disk" and "service restarted" minimal.
-    if doas bastille cmd "$RUN" test -f /usr/local/bin/prism.new; then
-        doas bastille cmd "$RUN" mv -f /usr/local/bin/prism.new /usr/local/bin/prism
-    fi
     if doas bastille cmd "$RUN" service prism status >/dev/null 2>&1; then
-        log "Restarting prism service"
-        doas bastille service "$RUN" prism restart
+        # ---- Hot-swap path -------------------------------------------------
+        # The running prism listens with SO_REUSEPORT(_LB) so we can bring
+        # the replacement up on the same port, prove it's healthy, then
+        # SIGTERM the predecessor. Users see no connection-refused gap.
+        OLD_PID=$(doas bastille cmd "$RUN" cat /var/run/prism.pid 2>/dev/null || echo "")
+        [ -z "$OLD_PID" ] && die "service prism is running but /var/run/prism.pid is missing"
+        log "Hot-swap: old prism PID = $OLD_PID"
+
+        # Atomic rename — the running process keeps its old inode (FreeBSD
+        # only ETXTBSYs on write-open of a running executable, not on
+        # rename). The next daemon() spawn picks up the new binary.
+        doas bastille cmd "$RUN" mv -f /usr/local/bin/prism.new /usr/local/bin/prism
+
+        # Pull the runtime config from sysrc so a parallel start matches
+        # what rc.d/prism would do. Falls back to the same defaults the
+        # rc.d script declares above.
+        PRISM_LITMUS_ADDR=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_litmus_addr 2>/dev/null' || true)
+        [ -z "$PRISM_LITMUS_ADDR" ] && PRISM_LITMUS_ADDR="litmus:49999"
+        PRISM_HOPPER_API_ADDR=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_hopper_api_addr 2>/dev/null' || true)
+        [ -z "$PRISM_HOPPER_API_ADDR" ] && PRISM_HOPPER_API_ADDR="hopper-api:8081"
+
+        log "Starting replacement prism alongside old one"
+        # daemon flags mirror rc.d/prism's command_args; only pidfile and
+        # logfile differ so the two instances don't fight. -R 5 keeps the
+        # restart-on-exit guarantee in case the new process crashes mid-
+        # bootstrap.
+        doas bastille cmd "$RUN" /usr/sbin/daemon \
+            -c -f -P /var/run/prism.next.pid -S -R 5 -o /var/log/prism.next.log \
+            -u prism /usr/bin/env \
+                HOME=/home/prism \
+                PORT=8080 \
+                LITMUS_ADDR="$PRISM_LITMUS_ADDR" \
+                HOPPER_API_ADDR="$PRISM_HOPPER_API_ADDR" \
+                HOPPER_DSN=postgres://hopper@hopper-db/hopper \
+                OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp \
+                /usr/local/bin/prism --public
+
+        log "Waiting for replacement to become healthy"
+        # Poll the in-jail healthcheck. We can't tell which prism answers
+        # any given request (kernel-routed), but as soon as /_/health is
+        # 200 we know at least one is up; combined with the next.pid
+        # existing and being a fresh PID we know it's the new one.
+        deadline=$(( $(date +%s) + 30 ))
+        until doas bastille cmd "$RUN" sh -c 'fetch -qo - http://127.0.0.1:8080/_/health >/dev/null 2>&1 || curl -fsS http://127.0.0.1:8080/_/health >/dev/null 2>&1'; do
+            if [ "$(date +%s)" -gt "$deadline" ]; then
+                log "Replacement failed health check — rolling back"
+                if doas bastille cmd "$RUN" test -f /var/run/prism.next.pid; then
+                    BAD_PID=$(doas bastille cmd "$RUN" cat /var/run/prism.next.pid 2>/dev/null || true)
+                    [ -n "$BAD_PID" ] && doas bastille cmd "$RUN" kill -KILL "$BAD_PID" 2>/dev/null || true
+                    doas bastille cmd "$RUN" rm -f /var/run/prism.next.pid
+                fi
+                die "replacement prism never reached /_/health; old prism still running"
+            fi
+            sleep 1
+        done
+        log "Replacement is healthy"
+
+        log "Draining old prism (SIGTERM $OLD_PID)"
+        doas bastille cmd "$RUN" kill -TERM "$OLD_PID" 2>/dev/null || true
+        # Wait up to graceful-shutdown deadline (5s in main.go) plus headroom.
+        deadline=$(( $(date +%s) + 20 ))
+        while doas bastille cmd "$RUN" kill -0 "$OLD_PID" 2>/dev/null; do
+            if [ "$(date +%s)" -gt "$deadline" ]; then
+                log "Old prism didn't exit within 20s — sending SIGKILL"
+                doas bastille cmd "$RUN" kill -KILL "$OLD_PID" 2>/dev/null || true
+                break
+            fi
+            sleep 1
+        done
+
+        # Promote the next pidfile so `service prism stop/restart/status`
+        # keeps managing the right process going forward.
+        doas bastille cmd "$RUN" mv -f /var/run/prism.next.pid /var/run/prism.pid
+        log "Hot-swap complete"
     else
-        log "Starting prism service"
+        # ---- First deploy (no prism running) -------------------------------
+        log "First-deploy: staging binary + service start"
+        doas bastille cmd "$RUN" mv -f /usr/local/bin/prism.new /usr/local/bin/prism
         doas bastille service "$RUN" prism start
     fi
 else

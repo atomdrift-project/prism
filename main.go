@@ -1275,7 +1275,22 @@ func main() {
 		"hopper_api_addr", hopperAPIAddr,
 	)
 
-	var lc net.ListenConfig
+	// SO_REUSEPORT(_LB) on the listening socket so the deploy rollout
+	// can start the new prism alongside the old one — see
+	// hacks/rollout-bastille.sh. The kernel routes new connections to
+	// whichever process is up; we SIGTERM the predecessor only after
+	// the new one is verified accepting.
+	lc := net.ListenConfig{
+		Control: func(_, _ string, c syscall.RawConn) error {
+			var inner error
+			if err := c.Control(func(fd uintptr) {
+				inner = setReusePort(fd)
+			}); err != nil {
+				return err
+			}
+			return inner
+		},
+	}
 	ln, err := lc.Listen(ctx, "tcp", server.Addr)
 	if err != nil {
 		logger.Error("listen failed", "addr", server.Addr, "error", err)
