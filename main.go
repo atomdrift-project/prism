@@ -318,8 +318,15 @@ func (tl *tokenLimiter) reap() {
 	}
 }
 
-// Upload: 1 every 30 seconds, burst of 2 (a single quick retry).
+// Upload: 1 every 30 seconds per IP, burst of 2 (a single quick retry).
 var uploadRateLimiter = newTokenLimiter(2, 1.0/30.0)
+
+// uploadGlobalLimiter caps the total upload rate across all clients so a
+// botnet rotating IPs can't bypass the per-IP limiter and overwhelm the
+// hopper analyzer pipeline. 5/min sustained, burst of 10 absorbs a small
+// crowd of legitimate users without queueing. Bypassing both this and the
+// per-IP limiter requires both a botnet *and* patience.
+var uploadGlobalLimiter = newTokenBucket(5.0/60.0, 10)
 
 // Download: 25 per hour, no burst above the hourly budget.
 var downloadRateLimiter = newTokenLimiter(25, 25.0/3600.0)
@@ -630,6 +637,12 @@ type resultData struct {
 	Formula        template.HTML
 	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
 	CSRFToken      string // signed CSRF token for operator actions (rescan)
+	// DownloadToken is a separate CSRF token bound to the "download" action.
+	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
+	// gated to button-driven flows: the token only validates for the browser
+	// session that fetched the page, within csrfMaxAge. Bots, link previews,
+	// pasted URLs from another browser, and stale wayback captures all fail.
+	DownloadToken string
 	FileType       string
 	MoleculeJSON   template.JS
 	Duration       string
@@ -810,6 +823,9 @@ type feedPageData struct {
 	FilteredCount   int
 	Refresh         bool
 	HasHopper       bool
+	// UploadEnabled mirrors the package-level toggle so the template can
+	// pick the real upload form vs. the disabled placeholder.
+	UploadEnabled bool
 }
 
 type cachedFeedSnapshot struct {
@@ -1039,11 +1055,30 @@ func main() {
 	cli := flag.NewFlagSet("prism", flag.ExitOnError)
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
 	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: atomdrift lab branding and Secure cookies")
+	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
+	}
+	// Env-var fallback so the rc.d script can flip uploads without
+	// shipping a new binary. CLI flag wins if both are set.
+	uploadsFlagSet := false
+	cli.Visit(func(f *flag.Flag) {
+		if f.Name == "uploads" {
+			uploadsFlagSet = true
+		}
+	})
+	if !uploadsFlagSet {
+		if v := os.Getenv("PRISM_UPLOADS"); v != "" {
+			switch strings.ToLower(v) {
+			case "1", "true", "yes", "on":
+				uploadEnabled = true
+			case "0", "false", "no", "off":
+				uploadEnabled = false
+			}
+		}
 	}
 
 	if dbDSN == "" {
@@ -1636,8 +1671,8 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 	if domain != "" {
 		q.Domains = []string{domain}
 	}
-	if class, ok := criticalityClass(criticality); ok {
-		q.LitmusClasses = []int{class}
+	if classes, ok := criticalityClasses(criticality); ok {
+		q.LitmusClasses = classes
 	} else {
 		q.RequireLitmus = true
 	}
@@ -1733,6 +1768,7 @@ var feedPrecacheVariants = []struct{ ecosystem, domain, criticality, formula str
 	{"", "", "", ""},
 	{"", "", "hostile", ""},
 	{"", "", "suspicious", ""},
+	{"", "", "suspicious_plus", ""},
 	{"", "", "benign", ""},
 }
 
@@ -1942,22 +1978,29 @@ func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger
 	return res, nil
 }
 
-func criticalityClass(criticality string) (int, bool) {
+// criticalityClasses translates a UI/URL criticality token into the litmus
+// class integers the feed query filters on. Single-band tokens return a
+// one-element slice; "suspicious_plus" is the union of suspicious + hostile,
+// which is the filter operators ask for most often — "show me anything that
+// isn't benign". Unrecognized tokens return (nil, false).
+func criticalityClasses(criticality string) ([]int, bool) {
 	switch criticality {
 	case "benign":
-		return 0, true
+		return []int{0}, true
 	case "suspicious":
-		return 1, true
+		return []int{1}, true
 	case "hostile":
-		return 2, true
+		return []int{2}, true
+	case "suspicious_plus":
+		return []int{1, 2}, true
 	default:
-		return 0, false
+		return nil, false
 	}
 }
 
 func normalizeCriticality(criticality string) string {
 	criticality = strings.ToLower(strings.TrimSpace(criticality))
-	if _, ok := criticalityClass(criticality); ok {
+	if _, ok := criticalityClasses(criticality); ok {
 		return criticality
 	}
 	return ""
@@ -2359,6 +2402,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
+		UploadEnabled:   uploadEnabled,
 		Nonce:           nonceFor(r),
 		StyleNonce:      styleNonceFor(r),
 		BuildCommit:     buildCommit,
@@ -2545,6 +2589,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "rescan")
+	data.DownloadToken = csrfToken(r, "download")
 	if hopperDB.Load() != nil {
 		if cached, ok := latestReport(r.Context(), sha, reqLogger); ok {
 			data.ReportContent = cached.Content
@@ -3183,10 +3228,21 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 
+	// Gate downloads to button-driven flows. The token in ?t=<…> is
+	// session-bound and short-lived (csrfMaxAge), so a copy-pasted URL,
+	// a search-engine fetch, or a wayback capture all fail. Mirrors the
+	// rescan/upload CSRF protection but on a GET, where the token rides
+	// in the query string rather than a form body.
+	if !csrfValid(r, "download", r.URL.Query().Get("t")) {
+		reqLogger.Warn("download rejected: missing or invalid token")
+		http.Error(w, "download is button-only; reload the file page and try again", http.StatusForbidden)
+		return
+	}
+
 	if !downloadRateLimiter.allow(ip) {
 		reqLogger.Warn("download rate limited")
 		w.Header().Set("Retry-After", "360")
-		http.Error(w, "rate limit reached: 10 downloads per hour", http.StatusTooManyRequests)
+		http.Error(w, "rate limit reached: 25 downloads per hour", http.StatusTooManyRequests)
 		return
 	}
 
@@ -3890,9 +3946,10 @@ func hopperUploadURL(filename string) string {
 // prism's /file/<sha> page (with the SSE wait endpoint) shows the result
 // the moment a worker finishes.
 //
-// uploadEnabled gates browser uploads. Set to false while the feature is
-// being reworked; the handler short-circuits to a 503 and the UI greys out
-// the button. Restore to true to re-enable end-to-end.
+// uploadEnabled gates browser uploads. Controlled via the --uploads CLI
+// flag or PRISM_UPLOADS env var (1/true/yes/on to enable); both default
+// to off so a fresh deploy is closed-by-default. When false the handler
+// short-circuits to a 503 and the UI greys out the button.
 //
 //nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
 var uploadEnabled = false
@@ -3920,6 +3977,18 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Global cap first: catches IP-rotating abuse that would otherwise
+	// slip past the per-IP limiter. Per-IP cap second: protects against
+	// a single noisy client hammering a fresh budget.
+	if !uploadGlobalLimiter.Allow() {
+		reqLogger.Warn("upload rate limited (global)")
+		renderError(w, r, http.StatusTooManyRequests, errorData{
+			Icon:    "⏳",
+			Title:   "Rate limit reached",
+			Message: "The upload queue is busy. Please wait a moment and try again.",
+		})
+		return
+	}
 	if !uploadRateLimiter.allow(ip) {
 		reqLogger.Warn("upload rate limited")
 		renderError(w, r, http.StatusTooManyRequests, errorData{
@@ -3954,10 +4023,30 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	csrfChecked := false
+	// Bound the number of multipart parts we'll process. Legitimate uploads
+	// have two (csrf_token + file). Adversarial requests with thousands of
+	// empty parts would otherwise consume CPU on header parsing under the
+	// body-byte cap. 8 is generous headroom for browsers that might serialize
+	// extras (e.g. a future "_charset_" field).
+	const maxParts = 8
+	parts := 0
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
+		}
+		parts++
+		if parts > maxParts {
+			reqLogger.Warn("upload rejected: too many multipart parts", "parts", parts)
+			if part != nil {
+				_ = part.Close() //nolint:errcheck // best-effort
+			}
+			renderError(w, r, http.StatusBadRequest, errorData{
+				Icon:    "⚠",
+				Title:   "Upload failed",
+				Message: "Malformed upload. Please try again.",
+			})
+			return
 		}
 		if err != nil {
 			var maxErr *http.MaxBytesError
@@ -4140,7 +4229,11 @@ func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (str
 			return nil
 		},
 		retry.Context(ctx),
-		retry.Attempts(0),
+		// Bound retry budget so a hopper outage doesn't keep an upload
+		// request alive for the full 5-minute context window. 6 attempts
+		// with 200 ms base + backoff caps total wait around 3–4 seconds,
+		// which is fast enough for the user to see a "warming up" page.
+		retry.Attempts(6),
 		retry.Delay(200*time.Millisecond),
 		retry.MaxDelay(10*time.Second),
 		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),

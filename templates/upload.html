@@ -474,9 +474,18 @@
                 <a href="/" class="logo">{{template "wordmark" .}}</a>
                 <p class="tagline">{{template "tagline" .}}</p>
             </div>
+            {{if .UploadEnabled}}
+            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+                <input type="file" name="file" id="file-input" required />
+                <label class="upload-button" for="file-input">Upload</label>
+                <div id="upload-status" class="top-upload-status"></div>
+            </form>
+            {{else}}
             <div class="top-upload">
-                <span class="upload-button is-disabled" aria-disabled="true" title="Temporarily disabled while we rework this feature">Upload</span>
+                <span class="upload-button is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
             </div>
+            {{end}}
         </nav>
 
         <section class="intro">
@@ -511,6 +520,7 @@
                         <select name="criticality" id="criticality">
                             <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
                             <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
+                            <option value="suspicious_plus" {{if eq .SelectedCrit "suspicious_plus"}}selected{{end}}>Suspicious + Hostile</option>
                             <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
                             <option value="benign" {{if eq .SelectedCrit "benign"}}selected{{end}}>Benign</option>
                         </select>

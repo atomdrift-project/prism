@@ -51,7 +51,8 @@ function setAnalyzingStatus(fileName) {
 // The search box is the canonical view of the URL state. Supported tokens
 // (whitespace-separated, case-insensitive keys):
 //   sha256:<hex>   → /file/<hex> redirect
-//   crit:<v>       → ?criticality=<v>   (hostile | suspicious | benign, or >2/>=2/=1/2)
+//   crit:<v>       → ?criticality=<v>   (hostile | suspicious | suspicious_plus | benign,
+//                                        or >2/>=2/=1/2 — see critFromNumeric)
 //   ecosystem:<v>  → path /<v>/ (alias eco:)
 //   domain:<v>     → ?domain=<v>
 //   m:<formula>    → ?m=<formula>       (alias malecule:, formula:)
@@ -64,20 +65,22 @@ const SHA_RE = /^[a-f0-9]{64}$/i;
 // Heuristic for a chemical formula like "C6H12O6" or "NaCl" — starts with
 // a capital, then alternating element symbols and digit runs, no spaces.
 const FORMULA_RE = /^([A-Z][a-z]?\d*)+$/;
-const CRIT_NAMES = new Set(['hostile', 'suspicious', 'benign']);
+const CRIT_NAMES = new Set(['hostile', 'suspicious', 'suspicious_plus', 'benign']);
 
 function critFromNumeric(raw) {
-    // crit:>2 → hostile, crit:>=2 → suspicious (lowest that satisfies),
-    // crit:=N or crit:N → exact band. The backend takes a single
-    // criticality, so >=N collapses to the threshold itself.
+    // crit:>2 → hostile, crit:>=2 → suspicious + hostile (multi-band union
+    // the backend supports as "suspicious_plus"), crit:=N or crit:N →
+    // exact band. crit:>N falls back to the named band above N.
     const m = raw.match(/^(>=|<=|>|<|=)?\s*(\d+)$/);
     if (!m) return '';
     const op = m[1] || '=';
     const n = parseInt(m[2], 10);
     const byClass = { 3: 'hostile', 2: 'suspicious', 1: 'benign' };
+    if (op === '>=' && n === 2) return 'suspicious_plus';
     if (op === '>') return byClass[n + 1] || '';
     if (op === '<') return byClass[n - 1] || '';
-    // >=, <=, = all collapse to the named band at N
+    // >=N and <=N (other than the special case above) and = all collapse
+    // to the named band at N.
     return byClass[n] || '';
 }
 

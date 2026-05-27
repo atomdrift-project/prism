@@ -162,7 +162,7 @@ prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
 prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp"
-command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public"
+command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --uploads"
 
 run_rc_command "$1"
 EOF
@@ -304,7 +304,7 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
                 HOPPER_API_ADDR="$PRISM_HOPPER_API_ADDR" \
                 HOPPER_DSN=postgres://hopper@hopper-db/hopper \
                 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp \
-                /usr/local/bin/prism --public
+                /usr/local/bin/prism --public --uploads
 
         log "Waiting for replacement to become healthy"
         # Poll the in-jail healthcheck. We can't tell which prism answers
