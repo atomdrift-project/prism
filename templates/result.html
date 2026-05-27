@@ -502,7 +502,7 @@
             cursor: default;
         }
         /* Download-original-bytes button, shown next to Size. Only rendered
-           server-side when SizeBytes is in (0, 50 MB] and the download
+           server-side when SizeBytes is in (0, 150 MB] and the download
            rate limit hasn't fired. Same visual weight as .rescan-btn so
            they share the inline-meta look. */
         .download-btn {
@@ -1927,7 +1927,7 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 157286400)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 150 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}
@@ -1941,7 +1941,7 @@
                         <span class="meta-label">Analyzed</span>
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
-                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
+                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
                         </span>
                     </div>
                     {{end}}

@@ -321,8 +321,8 @@ func (tl *tokenLimiter) reap() {
 // Upload: 1 every 30 seconds, burst of 2 (a single quick retry).
 var uploadRateLimiter = newTokenLimiter(2, 1.0/30.0)
 
-// Download: 10 per hour, no burst above the hourly budget.
-var downloadRateLimiter = newTokenLimiter(10, 10.0/3600.0)
+// Download: 25 per hour, no burst above the hourly budget.
+var downloadRateLimiter = newTokenLimiter(25, 25.0/3600.0)
 
 // sseWaiters tracks concurrent SSE wait connections (total + per IP) so we
 // can refuse new ones when caps are exceeded.
@@ -365,9 +365,10 @@ func waitRelease(ip string) {
 }
 
 // maxDownloadSize caps the on-disk sample size eligible for /file/<sha>.dl.
-// Browsers that have to fight through Cloudflare on a 50 MB stream are not
-// the target audience here; larger samples are CLI-only via litmus.
-const maxDownloadSize int64 = 50 * 1024 * 1024
+// Browsers that have to fight through Cloudflare on a multi-hundred-MB
+// stream are not the target audience here; larger samples are CLI-only
+// via litmus.
+const maxDownloadSize int64 = 150 * 1024 * 1024
 
 // clientIP extracts the client IP from the request.
 //
@@ -643,6 +644,12 @@ type resultData struct {
 	ReportContent  string
 	AnalyzedAgo    string
 	AnalyzedAt     string
+	// AnalyzedAtMillis is the unix-ms timestamp of the most recent
+	// analysis, exposed to JS via a data-attribute on the rescan button
+	// so the rescan-then-wait flow can ask the server "tell me when a
+	// fresh analysis lands AFTER this point" instead of accepting the
+	// already-stale result.
+	AnalyzedAtMillis int64
 	RiskLabel      string
 	FirstSeenAgo   string
 	FirstSeenAt    string
@@ -3238,7 +3245,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 	if size > maxDownloadSize {
 		reqLogger.Info("download rejected: file too large", "size_bytes", size, "max_bytes", maxDownloadSize)
-		http.Error(w, "file exceeds the 50 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
+		http.Error(w, "file exceeds the 150 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -3710,18 +3717,45 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	heartbeatTicker := time.NewTicker(waitHeartbeatInterval)
 	defer heartbeatTicker.Stop()
 
+	// Optional ?after=<unix-ms> turns this into a "wait for a re-analysis"
+	// stream: ready only fires when AnalyzedAt is strictly later than the
+	// caller's snapshot. Used by the rescan flow so the browser doesn't
+	// pick up the already-stale analysis the rescan was meant to replace.
+	after := parseAfterMillis(r.URL.Query().Get("after"))
+
+	check := func() (state string, payload string) {
+		if after.IsZero() {
+			exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
+			if err != nil {
+				return "", ""
+			}
+			switch {
+			case !exists:
+				return "missing", `{"reason":"not found"}`
+			case analyzed:
+				return "ready", readyPayload(sha)
+			}
+			return "pending", ""
+		}
+		// Fresh-analysis mode: pull the full row so we can compare the
+		// timestamp. This is a heavier query than SampleAnalyzed but
+		// only fires once per poll, well within hopper's budget.
+		sample, err := db.SampleBySHA256(ctx, sha)
+		if err != nil || sample == nil {
+			return "missing", `{"reason":"not found"}`
+		}
+		if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(after) {
+			return "ready", readyPayload(sha)
+		}
+		return "pending", ""
+	}
+
 	// Initial probe before the first tick — covers the worker-finishes-
 	// before-SSE-open race so the browser doesn't wait an extra 50 ms
 	// for a result that already exists.
-	if exists, analyzed, err := db.SampleAnalyzed(ctx, sha); err == nil {
-		switch {
-		case !exists:
-			emit("missing", `{"reason":"not found"}`)
-			return
-		case analyzed:
-			emit("ready", readyPayload(sha))
-			return
-		}
+	if state, payload := check(); state == "missing" || state == "ready" {
+		emit(state, payload)
+		return
 	}
 
 	for {
@@ -3733,22 +3767,27 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-pollTicker.C:
-			exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
-			if err != nil {
-				// Transient DB hiccup: keep polling. A heartbeat will
-				// have fired if the connection is alive.
-				continue
-			}
-			if !exists {
-				emit("missing", `{"reason":"not found"}`)
-				return
-			}
-			if analyzed {
-				emit("ready", readyPayload(sha))
+			state, payload := check()
+			if state == "missing" || state == "ready" {
+				emit(state, payload)
 				return
 			}
 		}
 	}
+}
+
+// parseAfterMillis parses an ?after=<unix-ms> query value into a UTC
+// time. Returns the zero time on missing / invalid input so callers can
+// fall back to the "no threshold" branch.
+func parseAfterMillis(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	ms, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms).UTC()
 }
 
 // handleFileStatus is the no-SSE fallback for the pending page: a single
@@ -3767,15 +3806,45 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
-	if err != nil {
-		http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
-		return
+	// `?after=<unix-ms>` makes ready dependent on a strictly newer
+	// analysis, matching handleFileWait. Same use case: post-rescan
+	// polling that needs to ignore the pre-rescan result.
+	after := parseAfterMillis(r.URL.Query().Get("after"))
+	exists := false
+	ready := false
+	var analyzedAtMillis int64
+	if !after.IsZero() {
+		sample, err := db.SampleBySHA256(ctx, sha)
+		if err != nil {
+			http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if sample != nil {
+			exists = true
+			if sample.AnalyzedAt != nil {
+				analyzedAtMillis = sample.AnalyzedAt.UnixMilli()
+				ready = sample.AnalyzedAt.After(after)
+			}
+		}
+	} else {
+		var (
+			analyzed bool
+			err      error
+		)
+		exists, analyzed, err = db.SampleAnalyzed(ctx, sha)
+		if err != nil {
+			http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
+			return
+		}
+		ready = analyzed
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	resp := map[string]bool{"exists": exists, "ready": analyzed}
-	_ = json.NewEncoder(w).Encode(resp) //nolint:errcheck,errchkjson // best-effort response
+	resp := map[string]any{"exists": exists, "ready": ready}
+	if analyzedAtMillis > 0 {
+		resp["analyzed_at"] = analyzedAtMillis
+	}
+	_ = json.NewEncoder(w).Encode(resp) //nolint:errcheck,errchkjson // map[string]any with primitive values is JSON-safe
 }
 
 // hopperUploadResponse mirrors hopper's POST /api/upload response shape.
@@ -4192,6 +4261,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		}
 		data.AnalyzedAt = analyzedAt.Format("2 Jan 2006 15:04 UTC")
 		data.AnalyzedAgo = timeAgo(time.Since(analyzedAt))
+		data.AnalyzedAtMillis = analyzedAt.UnixMilli()
 		data.RescanAllowed = time.Since(analyzedAt) >= rescanCooldown
 	}
 	data.SourceURL, data.SourceLabel = sourceDisplay(res.SourceURL, res.SourceDomain)

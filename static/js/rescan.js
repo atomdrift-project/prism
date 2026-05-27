@@ -18,13 +18,14 @@ function announce(msg) {
 }
 
 // Subscribe to /file/<sha>/wait — the same SSE channel the pending page
-// uses while a worker is analyzing for the first time. After a successful
-// rescan request the row is cleared in hopper, so `ready` here means the
-// worker has produced fresh results and the page should reload to show
-// them. We fall back to polling /status if EventSource isn't available
-// (older browsers, hostile proxies that mangle text/event-stream).
-function watchForCompletion(sha, btn) {
-  const url = "/file/" + encodeURIComponent(sha) + "/wait";
+// uses while a worker is analyzing for the first time. We pass the pre-
+// rescan analyzed_at timestamp as ?after=<unix-ms>; the server only
+// fires `ready` once AnalyzedAt is strictly newer than that snapshot,
+// so a stale "already analyzed once" state can't trigger an instant
+// reload. Falls back to polling /status if EventSource isn't usable.
+function watchForCompletion(sha, after, btn) {
+  const qs = after ? "?after=" + encodeURIComponent(after) : "";
+  const url = "/file/" + encodeURIComponent(sha) + "/wait" + qs;
   const onReady = () => {
     btn.textContent = "↻ reloading…";
     announce("Rescan complete. Reloading.");
@@ -50,9 +51,11 @@ function watchForCompletion(sha, btn) {
       btn.classList.add("is-error");
       announce("Rescan failed: sample no longer present.");
     });
-    // Cap how long we keep the channel open. The server-side
-    // waitMaxDuration is its own ceiling; this is a client-side belt for
-    // misbehaving proxies. 10 minutes is well beyond a normal rescan.
+    // When the server hits its own waitMaxDuration it just closes the
+    // connection — natural EventSource behavior is to auto-reconnect,
+    // which we want (analysis may take several minutes). Cap the total
+    // session client-side at 10 minutes so a stuck job doesn't keep
+    // reconnecting forever.
     setTimeout(
       () => {
         if (done) return;
@@ -64,14 +67,15 @@ function watchForCompletion(sha, btn) {
     return;
   }
 
-  // Polling fallback: ask /status every 5s, give up after 10 minutes.
+  // Polling fallback: ask /status every 5s with the same `after=` so
+  // we don't see the stale result. Give up after 10 minutes.
   const start = Date.now();
   const tick = async () => {
     if (Date.now() - start > 10 * 60 * 1000) return;
     try {
-      const r = await fetch("/file/" + encodeURIComponent(sha) + "/status", {
-        cache: "no-store",
-      });
+      const statusURL =
+        "/file/" + encodeURIComponent(sha) + "/status" + qs;
+      const r = await fetch(statusURL, { cache: "no-store" });
       if (r.ok) {
         const j = await r.json();
         if (j && j.ready) {
@@ -91,6 +95,11 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const sha = btn.dataset.sha;
     const csrf = btn.dataset.csrf;
+    // analyzed-at is a unix-ms timestamp the server rendered onto the
+    // button. We capture it BEFORE the POST so the wait can recognize a
+    // strictly-newer analysis. Zero is fine: omitting `after=` falls
+    // back to the original "first ever analysis" semantics.
+    const after = btn.dataset.analyzedAt || "";
     if (!sha || !csrf || btn.disabled) return;
 
     btn.disabled = true;
@@ -119,14 +128,14 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
         announce(msg);
         return;
       }
-      btn.textContent = "↻ analyzing…";
+      btn.textContent = "↻ waiting…";
       btn.classList.add("is-done");
-      btn.title = "Sample has been re-queued; waiting for worker to finish.";
+      btn.title = "Sample has been re-queued; waiting for a fresh analysis.";
       announce("Sample queued. Waiting for analysis to finish.");
       // We only auto-reload when the user themselves triggered the rescan
       // on this page — visiting the same page in another tab won't poll
       // because that tab never observed a successful POST here.
-      watchForCompletion(sha, btn);
+      watchForCompletion(sha, after, btn);
     } catch (err) {
       btn.textContent = "✕ network error";
       btn.classList.add("is-error");
