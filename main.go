@@ -4652,6 +4652,16 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 		conf     float64
 	}
 	bucket := make(map[string]*aggregated)
+	// Track which SHAs are archive containers (depth 0). When a trait fires
+	// inside the archive as well as on the container itself, the container
+	// entry is just a rollup of inner-file findings — link to the actual
+	// file the trait was inherited from, not the wrapping archive.
+	containerSHAs := make(map[string]bool)
+	for i := range files {
+		if files[i].Depth == 0 {
+			containerSHAs[files[i].SHA256] = true
+		}
+	}
 
 	for i := range files {
 		file := &files[i]
@@ -4719,7 +4729,17 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 			evidence = evidence[:4]
 		}
 		sources := make([]FindingSource, 0, len(agg.sources))
-		for _, s := range agg.sources {
+		hasInner := false
+		for sha := range agg.sources {
+			if !containerSHAs[sha] {
+				hasInner = true
+				break
+			}
+		}
+		for sha, s := range agg.sources {
+			if hasInner && containerSHAs[sha] {
+				continue
+			}
 			sources = append(sources, *s)
 		}
 		sort.Slice(sources, func(i, j int) bool {
