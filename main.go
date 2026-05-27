@@ -37,6 +37,7 @@ import (
 	"unicode"
 
 	"codeberg.org/atomdrift/hopper"
+	"codeberg.org/atomdrift/obs"
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -994,10 +995,18 @@ type finding struct {
 
 //nolint:maintidx,gocognit // main is inherently complex: flag parsing, config, template init, server setup
 func main() {
-	// Initialize structured logger with JSON output for production
-	logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
+	// Initialize structured logger with JSON output for production. Tee
+	// through obs so records also reach OTLP/Loki without touching the
+	// existing stdout-JSON contract container log collectors rely on.
+	baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+
+	ctx, cancelApp := context.WithCancel(context.Background())
+	obsShutdown, err := obs.Init(ctx, obs.Config{ServiceName: "prism", DisableSlog: true})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "obs init: %v\n", err) //nolint:forbidigo // pre-logger startup error
+		os.Exit(1)
+	}
+	logger = slog.New(obs.TeeSlog(baseHandler, "prism"))
 	slog.SetDefault(logger)
 
 	// Parse command-line flags via the stdlib flag package. Single-dash and
@@ -1042,8 +1051,6 @@ func main() {
 		"pid", os.Getpid(),
 		"public_mode", publicMode,
 	)
-
-	ctx, cancelApp := context.WithCancel(context.Background())
 
 	// Load configuration from environment
 	loadConfig()
@@ -1183,6 +1190,9 @@ func main() {
 		} else {
 			hopperDB.Store(db)
 			logger.Info("hopper connected", "hopper_db_host", hopperDSNHost(dbDSN))
+			if err := obs.PoolStats("prism", db.Pool()); err != nil {
+				logger.Warn("pool stats registration", "error", err)
+			}
 			go refreshFeedCacheLoop(ctx)
 		}
 	}
@@ -1191,7 +1201,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           requestLogger(securityHeaders(mux)),
+		Handler:           obs.Middleware(requestLogger(securityHeaders(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
@@ -1238,6 +1248,11 @@ func main() {
 			if err := parentArchiveCache.Close(); err != nil {
 				logger.Error("failed to close fido parent-archive cache", "error", err)
 			}
+		}
+
+		// Flush OTel exporters last so the shutdown logs/spans go out.
+		if err := obsShutdown(shutdownCtx); err != nil {
+			logger.Warn("obs shutdown", "error", err)
 		}
 
 		close(done)
@@ -1302,6 +1317,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /help/query", handleHelpQuery)
 	mux.HandleFunc("GET /_/health", handleHealth)
+	mux.Handle("GET /_/metrik", obs.MetricsHandler())
 	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
 	mux.HandleFunc("GET /{ecosystem}/", handleEcosystem)
 	return mux
@@ -1369,7 +1385,7 @@ func requestLogger(next http.Handler) http.Handler {
 
 		// Health checks and static assets at debug to reduce noise.
 		level := slog.LevelInfo
-		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/_/health" {
+		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/_/health" || r.URL.Path == "/_/metrik" {
 			level = slog.LevelDebug
 		}
 		logger.Log(r.Context(), level, "http request",
