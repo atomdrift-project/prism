@@ -524,6 +524,13 @@
             border-color: var(--toxic-muted);
             background: var(--toxic-dim);
         }
+        /* Brief confirmation that the filename was copied to clipboard
+           alongside the download. Mirrors .rescan-btn.is-done. */
+        .download-btn.is-done {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
         /* Source provenance row. The label is a hostname (or domain
            fallback) so it fits the narrow column; the full URL lives in
            the href + title. Ellipsizes if the hostname is still too
@@ -1898,7 +1905,7 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}

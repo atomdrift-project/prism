@@ -34,6 +34,41 @@ if (hero) {
 }
 
 wireKeys();
+wireDownloadClipboard();
+
+// Browser save dialogs default to the URL's basename — for our download
+// route that's `<sha>.dl`, which is useless when the user actually wants
+// the original filename. Copy the real basename to the clipboard on
+// click (both mouse and the `d` shortcut route here, since the keyboard
+// path calls `.click()`) so the user can paste it into the save dialog.
+function wireDownloadClipboard() {
+  const link = document.querySelector(".download-btn[data-basename]");
+  if (!link) return;
+  const live = document.getElementById("a11y-live");
+  link.addEventListener("click", () => {
+    const name = link.dataset.basename;
+    if (!name || !navigator.clipboard?.writeText) return;
+    // Fire-and-forget: we don't await this. Clipboard writes have to
+    // happen synchronously inside the user-gesture handler, and the
+    // download navigation continues regardless.
+    navigator.clipboard.writeText(name).then(
+      () => {
+        link.classList.add("is-done");
+        setTimeout(() => link.classList.remove("is-done"), 1500);
+        if (live) {
+          live.textContent = "";
+          requestAnimationFrame(() => {
+            live.textContent = "Filename " + name + " copied to clipboard.";
+          });
+        }
+      },
+      () => {
+        /* clipboard write blocked (e.g. insecure origin) — let the
+           download proceed silently */
+      },
+    );
+  });
+}
 
 function makeArrow(target, dir) {
   const a = document.createElement("a");
