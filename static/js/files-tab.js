@@ -23,15 +23,11 @@ if (millerEl && treeDataEl && detail) {
     const sectionBlocks = Array.from(detail.querySelectorAll('.files-detail-block'));
     const sourceView = detail.querySelector('#files-source-view');
     const sourceEl = detail.querySelector('#fs-source');
-    const traitsEl = detail.querySelector('#fs-traits');
     const contentsCache = new Map(); // sha -> { lines, isText, tooLarge, sizeStr, fileType }; bounded by CACHE_MAX
     let currentSourceSha = null;     // sha currently rendered in source view
-
-    let traitOccurrence = {};
-    const occEl = document.getElementById('trait-occurrence-data');
-    if (occEl) {
-        try { traitOccurrence = JSON.parse(occEl.textContent || '{}'); } catch (_) { traitOccurrence = {}; }
-    }
+    // trait ID -> { crit, lines: [] } for the file currently in source view.
+    // Used by chip clicks and by `&trait=…` hash navigation.
+    let currentTraitIndex = new Map();
 
     const placeholderLabels = {
         findings: 'No traits.',
@@ -51,7 +47,7 @@ if (millerEl && treeDataEl && detail) {
     // Path stack: directory nodes currently expanded, root-first.
     // Always at least one entry (the synthetic root); columns past index 0
     // represent each drilled-into directory.
-    const state = { pathStack: [tree], selectedSha: null };
+    const state = { pathStack: [tree], selectedSha: null, pendingTrait: null, pendingLine: null };
 
     function classForRisk(node) {
         const r = node.d ? (node.mr || '') : (node.r || '');
@@ -243,104 +239,89 @@ if (millerEl && treeDataEl && detail) {
         sourceEl.appendChild(frag);
     }
 
-    function renderTraitsSidebar(lines) {
-        if (!traitsEl) return;
-        // Build trait → [line numbers] index from the lines we just rendered.
-        const idx = new Map(); // traitID -> { crit, lines: [] }
+    const RISK_RANK = { hostile: 3, suspicious: 2, notable: 1, baseline: 0 };
+
+    function buildTraitIndex(lines) {
+        // trait ID -> { crit: highest-risk-seen, lines: [] in source order }.
+        const idx = new Map();
         for (const ln of lines) {
             if (!ln.Traits) continue;
             for (const t of ln.Traits) {
                 if (!idx.has(t)) idx.set(t, { crit: ln.Risk || 'notable', lines: [] });
                 const entry = idx.get(t);
                 entry.lines.push(ln.Number);
-                // Keep the most severe crit seen on any line touching this trait.
-                const rank = { hostile: 3, suspicious: 2, notable: 1, baseline: 0 };
-                if ((rank[ln.Risk] || 0) > (rank[entry.crit] || 0)) entry.crit = ln.Risk;
+                if ((RISK_RANK[ln.Risk] || 0) > (RISK_RANK[entry.crit] || 0)) entry.crit = ln.Risk;
             }
         }
-        traitsEl.innerHTML = '';
-        if (idx.size === 0) {
-            traitsEl.innerHTML = '<div class="fs-traits-h">No traits fired in this file.</div>';
-            return;
-        }
-        const h = document.createElement('div');
-        h.className = 'fs-traits-h';
-        h.textContent = `${idx.size} trait${idx.size === 1 ? '' : 's'} · click to jump`;
-        traitsEl.appendChild(h);
-        // Sort by crit then alpha
-        const rank = { hostile: 3, suspicious: 2, notable: 1, baseline: 0 };
-        const entries = Array.from(idx.entries()).sort((a, b) => {
-            const ra = rank[a[1].crit] || 0;
-            const rb = rank[b[1].crit] || 0;
-            if (ra !== rb) return rb - ra;
-            return a[0].localeCompare(b[0]);
-        });
+        return idx;
+    }
+
+    function renderTopTraits(sha, idx) {
+        // Top 3 chips by crit (suspicious+ only) then by line count, then alpha.
+        const slot = detail.querySelector('.files-detail-toptraits[data-toptraits-for="' + sha + '"]');
+        if (!slot) return;
+        slot.innerHTML = '';
+        const entries = Array.from(idx.entries())
+            .filter(([_, info]) => (RISK_RANK[info.crit] || 0) >= 2)
+            .sort((a, b) => {
+                const ra = RISK_RANK[a[1].crit] || 0;
+                const rb = RISK_RANK[b[1].crit] || 0;
+                if (ra !== rb) return rb - ra;
+                if (a[1].lines.length !== b[1].lines.length) return b[1].lines.length - a[1].lines.length;
+                return a[0].localeCompare(b[0]);
+            })
+            .slice(0, 3);
         for (const [traitID, info] of entries) {
-            const card = document.createElement('div');
-            card.className = 'fs-trait';
-            card.dataset.lines = info.lines.join(',');
-            const head = document.createElement('div');
-            head.className = 'fs-trait-head';
-            const crit = document.createElement('span');
-            crit.className = 'crit ' + info.crit;
-            head.appendChild(crit);
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'fs-chip';
+            chip.title = traitID + ' · ' + info.lines.length + (info.lines.length === 1 ? ' line' : ' lines');
+            const dot = document.createElement('span');
+            dot.className = 'fs-chip-dot ' + info.crit;
+            chip.appendChild(dot);
             const id = document.createElement('span');
-            id.className = 'fs-trait-id';
+            id.className = 'fs-chip-id';
             id.textContent = traitID;
-            id.title = traitID;
-            head.appendChild(id);
-            const ln = document.createElement('span');
-            ln.className = 'fs-trait-lines';
-            ln.textContent = info.lines.length + (info.lines.length === 1 ? ' line' : ' lines');
-            head.appendChild(ln);
-            card.appendChild(head);
-            card.addEventListener('click', () => jumpToTrait(card, info.lines));
-
-            const occ = traitOccurrence[traitID];
-            if (occ && occ.n > 1) {
-                const also = document.createElement('div');
-                also.className = 'fs-trait-also';
-                const other = occ.n - 1;
-                also.textContent = 'also in ' + other + ' other file' + (other === 1 ? '' : 's') + ' ↗';
-                also.dataset.archiveId = occ.d || '';
-                also.addEventListener('click', ev => {
-                    ev.stopPropagation();
-                    pivotToTraits(occ.d);
-                });
-                card.appendChild(also);
-            }
-
-            traitsEl.appendChild(card);
+            chip.appendChild(id);
+            const n = document.createElement('span');
+            n.className = 'fs-chip-n';
+            n.textContent = '×' + info.lines.length;
+            chip.appendChild(n);
+            chip.addEventListener('click', ev => {
+                ev.stopPropagation();
+                scrollToLine(info.lines[0], info.lines);
+            });
+            slot.appendChild(chip);
         }
     }
 
-    function pivotToTraits(archiveID) {
-        const traitsTab = document.querySelector('.tab[data-tab="traits"]');
-        if (traitsTab) traitsTab.click();
-        if (!archiveID) return;
-        const card = document.querySelector('#tab-traits .finding-card[data-trait-id="' + cssEscape(archiveID) + '"]');
-        if (!card) return;
-        document.querySelectorAll('#tab-traits .finding-card.open').forEach(c => c.classList.remove('open'));
-        card.classList.add('open');
-        card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    function bestLineNumber(lines) {
+        // criticality * confidence proxy: risk-rank (severity) weighted by
+        // trait count on that line (more matches → more confidence).
+        let bestN = null;
+        let bestScore = 0;
+        for (const ln of lines) {
+            const rank = RISK_RANK[ln.Risk] || 0;
+            if (rank === 0) continue;
+            const score = rank * 100 + (ln.Traits ? ln.Traits.length : 0);
+            if (score > bestScore) {
+                bestScore = score;
+                bestN = ln.Number;
+            }
+        }
+        return bestN;
     }
 
-    function cssEscape(s) {
-        if (window.CSS && CSS.escape) return CSS.escape(s);
-        return s.replace(/(["'\\\[\]])/g, '\\$1');
-    }
-
-    function jumpToTrait(card, lines) {
-        if (!lines || !lines.length) return;
-        traitsEl.querySelectorAll('.fs-trait').forEach(t => t.classList.remove('active'));
-        card.classList.add('active');
+    function scrollToLine(target, flashLines) {
+        if (!sourceEl || !target) return;
         sourceEl.querySelectorAll('.fs-line.flash').forEach(l => l.classList.remove('flash'));
-        for (const n of lines) {
+        const flashSet = flashLines && flashLines.length ? flashLines : [target];
+        for (const n of flashSet) {
             const el = sourceEl.querySelector('#fs-line-' + n);
             if (el) el.classList.add('flash');
         }
-        const first = sourceEl.querySelector('#fs-line-' + lines[0]);
-        if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        const anchor = sourceEl.querySelector('#fs-line-' + target);
+        if (anchor) anchor.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
 
     function setSourceSubtabAvailable(sha, available) {
@@ -387,7 +368,11 @@ if (millerEl && treeDataEl && detail) {
 
     function renderSourceError(msg) {
         if (sourceEl) sourceEl.innerHTML = '<div class="fs-source-placeholder">Couldn’t load source: ' + msg + '</div>';
-        if (traitsEl) traitsEl.innerHTML = '';
+    }
+
+    function clearTopTraits(sha) {
+        const slot = detail.querySelector('.files-detail-toptraits[data-toptraits-for="' + sha + '"]');
+        if (slot) slot.innerHTML = '';
     }
 
     async function maybeRenderSource(sha) {
@@ -416,22 +401,44 @@ if (millerEl && treeDataEl && detail) {
 
         if (!data.isText) {
             setSourceSubtabAvailable(sha, false);
+            clearTopTraits(sha);
             return;
         }
         setSourceSubtabAvailable(sha, true);
         if (data.tooLarge) {
             sourceEl.innerHTML = '<div class="fs-source-placeholder">File is ' + (data.sizeStr || 'large') + ' — too large to display inline. Use the ↗ link to open it in its own page.</div>';
-            traitsEl.innerHTML = '';
+            clearTopTraits(sha);
         } else {
             currentSourceSha = sha;
-            renderSourceLines(data.lines || []);
-            renderTraitsSidebar(data.lines || []);
+            const lines = data.lines || [];
+            renderSourceLines(lines);
+            currentTraitIndex = buildTraitIndex(lines);
+            renderTopTraits(sha, currentTraitIndex);
             // Auto-show the source sub-tab when first available; user can switch away.
             const header = headers.find(h => h.dataset.fileSha === sha);
             const sub = header && header.querySelector('.files-subtab.active');
             if (sub && sub.dataset.sub === 'findings') {
                 showSection(sha, 'source');
             }
+            // Decide the initial scroll target. Priority:
+            //   1. explicit &line=N from the hash
+            //   2. &trait=<id> → first line of that trait
+            //   3. highest-rank line (severity × trait count)
+            let target = null;
+            let flash = null;
+            if (state.pendingLine) {
+                target = state.pendingLine;
+                state.pendingLine = null;
+            } else if (state.pendingTrait) {
+                const info = currentTraitIndex.get(state.pendingTrait);
+                if (info && info.lines.length) {
+                    target = info.lines[0];
+                    flash = info.lines;
+                }
+                state.pendingTrait = null;
+            }
+            if (!target) target = bestLineNumber(lines);
+            if (target) scrollToLine(target, flash);
         }
     }
 
@@ -565,8 +572,13 @@ if (millerEl && treeDataEl && detail) {
     }
 
     function applyHash() {
-        const m = location.hash.replace(/^#/, '').match(/file=([0-9a-f]{8,64})/i);
+        const h = location.hash.replace(/^#/, '');
+        const m = h.match(/file=([0-9a-f]{8,64})/i);
         if (!m) return false;
+        const tm = h.match(/(?:^|&)trait=([^&]+)/);
+        state.pendingTrait = tm ? decodeURIComponent(tm[1]) : null;
+        const lm = h.match(/(?:^|&)line=(\d+)/);
+        state.pendingLine = lm ? parseInt(lm[1], 10) : null;
         // Bring the Files tab forward — links from the Traits tab's expanded
         // sources rely on this to actually become visible.
         const filesTab = document.querySelector('.tab[data-tab="files"]');

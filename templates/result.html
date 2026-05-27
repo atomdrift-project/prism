@@ -100,6 +100,12 @@
             margin-bottom: 24px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
         }
+        /* Compact form used when the Files tab is active: collapse the
+           molecule + formula block so the file explorer below has room.
+           Double-click the hero to expand it back. */
+        .hero.compact { cursor: zoom-in; margin-bottom: 12px; }
+        .hero.compact .hero-body { display: none; }
+        .hero.compact .verdict-meta { padding-bottom: 12px; }
         /* Hero head — filename + verdict pill on one row; no full-bleed tint. */
         .verdict-bar {
             padding: 16px 26px 4px;
@@ -792,10 +798,9 @@
         /* Inline source viewer (text files inside an archive) */
         .files-source-view {
             display: none;
-            grid-template-columns: minmax(0, 1fr) 280px;
             min-height: 360px;
         }
-        .files-source-view.active { display: grid; }
+        .files-source-view.active { display: block; }
         .fs-source {
             overflow: auto;
             max-height: 600px;
@@ -845,74 +850,54 @@
             overflow-x: visible;
             color: var(--carbon);
         }
-        .fs-traits {
-            background: var(--cream);
-            border-left: 1px solid var(--border);
-            padding: 14px 14px;
-            overflow-y: auto;
-            max-height: 600px;
+        /* Top-traits chip strip below the filename. Shows up to three
+           suspicious-or-hostile traits that fired on this file; clicking a
+           chip jumps the source viewer to the first matching line. */
+        .files-detail-toptraits {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 10px;
         }
-        .fs-traits-h {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--slate);
-            margin-bottom: 8px;
-        }
-        /* Source-viewer trait cards — same visual family as .finding-card
-           but compact for the narrow right sidebar. */
-        .fs-trait {
-            padding: 9px 11px;
+        .files-detail-toptraits:empty { display: none; }
+        .fs-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 9px 3px 7px;
+            font: inherit;
+            font-size: 11.5px;
+            line-height: 1.4;
             border: 1px solid var(--border);
+            border-radius: 999px;
             background: var(--white);
-            border-radius: 6px;
-            margin-bottom: 4px;
+            color: var(--iron);
             cursor: pointer;
-            transition: border-color 0.1s, background 0.1s;
+            max-width: 320px;
+            transition: border-color 0.1s, color 0.1s, background 0.1s;
         }
-        .fs-trait:hover { border-color: var(--toxic-muted); }
-        .fs-trait.active { border-color: var(--toxic-muted); background: var(--toxic-dim); }
-        .fs-trait-head { display: flex; align-items: center; gap: 8px; }
-        .fs-trait .crit { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
-        .fs-trait .crit.hostile { background: var(--hostile); }
-        .fs-trait .crit.suspicious { background: var(--suspicious); }
-        .fs-trait .crit.notable { background: var(--notable); }
-        .fs-trait-id {
+        .fs-chip:hover { border-color: var(--toxic-muted); color: var(--carbon); }
+        .fs-chip-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .fs-chip-dot.hostile { background: var(--hostile); }
+        .fs-chip-dot.suspicious { background: var(--suspicious); }
+        .fs-chip-dot.notable { background: var(--notable); }
+        .fs-chip-id {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 11px;
-            color: var(--iron);
-            flex: 1;
-            min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
+            white-space: nowrap;
         }
-        /* Lines indicator: small pill rhymes with .files-pill in finding-card. */
-        .fs-trait-lines {
+        .fs-chip-n {
             font-size: 10.5px;
             color: var(--slate);
             font-variant-numeric: tabular-nums;
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 7px;
-            background: var(--white);
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            white-space: nowrap;
         }
-        .fs-trait.active .fs-trait-lines { border-color: var(--toxic-muted); color: var(--carbon); }
-        /* "Also in N other files" pivot — small affordance separated by a
-           hairline so the click target is obvious without dominating the card. */
-        .fs-trait-also {
-            font-size: 10.5px;
-            color: var(--slate);
-            margin-top: 7px;
-            padding-top: 7px;
-            border-top: 1px solid var(--border);
-            cursor: pointer;
-            transition: color 0.1s;
-        }
-        .fs-trait-also:hover { color: var(--toxic-muted); }
         .fs-source-placeholder {
             padding: 40px 24px;
             text-align: center;
@@ -920,14 +905,6 @@
             font-size: 13px;
         }
         @media (max-width: 760px) {
-            .files-source-view.active {
-                grid-template-columns: 1fr;
-            }
-            .fs-traits {
-                border-left: none;
-                border-top: 1px solid var(--border);
-                max-height: 220px;
-            }
             .files-miller-col {
                 max-width: 320px;
             }
@@ -2010,6 +1987,7 @@
                                 <a class="files-detail-open" href="/file/{{.SHA256}}" title="open in own page">↗</a>
                                 <span class="files-detail-size">{{.SizeStr}}</span>
                             </div>
+                            <div class="files-detail-toptraits" data-toptraits-for="{{.SHA256}}"></div>
                             <div class="files-detail-subtabs">
                                 <button class="files-subtab" data-sub="source" hidden>Source</button>
                                 <button class="files-subtab active" data-sub="findings">Traits</button>
@@ -2022,7 +2000,6 @@
                         {{end}}{{end}}
                         <div class="files-source-view" id="files-source-view">
                             <div class="fs-source" id="fs-source"></div>
-                            <aside class="fs-traits" id="fs-traits"></aside>
                         </div>
                         {{range .FileFindings}}
                         <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="findings" hidden>

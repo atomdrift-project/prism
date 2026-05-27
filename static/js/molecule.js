@@ -750,7 +750,16 @@ function activateTab(name) {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     tabEl.classList.add('active');
     contentEl.classList.add('active');
+    // Files tab needs the screen real estate; collapse the molecule hero
+    // into a compact strip. Other tabs get the full hero back.
+    const hero = document.querySelector('.hero');
+    if (hero) hero.classList.toggle('compact', name === 'files');
     return true;
+}
+
+const heroEl = document.querySelector('.hero');
+if (heroEl) {
+    heroEl.addEventListener('dblclick', () => heroEl.classList.toggle('compact'));
 }
 
 document.querySelectorAll('.tab').forEach(tab => {

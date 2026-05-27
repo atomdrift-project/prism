@@ -8,9 +8,16 @@
 document.addEventListener('click', ev => {
     const link = ev.target.closest('a.finding-source');
     if (link) {
-        // Let the card-toggle handler skip this event; the browser still
-        // navigates to the hash, which fires hashchange and selects the file.
         ev.stopPropagation();
+        // Carry the originating trait into the hash so files-tab.js can
+        // highlight the matching trait card and scroll to its first line.
+        const card = link.closest('.finding-card');
+        const tid = card && card.dataset.traitId;
+        if (tid) {
+            ev.preventDefault();
+            const sha = link.dataset.sha || '';
+            location.hash = 'file=' + sha + '&trait=' + encodeURIComponent(tid);
+        }
         return;
     }
     const card = ev.target.closest('.finding-card.expandable');
