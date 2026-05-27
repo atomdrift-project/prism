@@ -221,6 +221,16 @@
             border-bottom: none;
             word-break: break-all;
         }
+        /* The SHA itself is a link to VirusTotal — there's almost always
+           more context out there for a real sample than we ship locally.
+           Hairline underline keeps the link affordance subtle since the
+           label "SHA256" sits next to it. */
+        .verdict-meta a {
+            color: inherit;
+            border-bottom: 1px dotted var(--slate);
+            transition: color 0.12s, border-color 0.12s;
+        }
+        .verdict-meta a:hover { color: var(--carbon); border-bottom-color: var(--carbon); }
         /* Verdict pill — small chip in the hero head corner, tinted by severity. */
         .verdict {
             display: inline-flex;
@@ -1025,18 +1035,46 @@
             padding: 2px 6px;
             border-radius: 4px;
         }
-        .files-detail-sha {
+        /* SHA line sits below the file header: label + full hash link to
+           VirusTotal + a small copy button. Quiet monospace strip so it
+           doesn't compete with the filename row above. */
+        .files-detail-sha-line {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: -4px;
+            margin-bottom: 12px;
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
+            font-size: 12.5px;
+            color: var(--slate);
+            word-break: break-all;
+        }
+        .files-detail-sha-link {
+            color: var(--iron);
+            border-bottom: 1px dotted var(--slate);
+            min-width: 0;
+            transition: color 0.12s, border-color 0.12s;
+        }
+        .files-detail-sha-link:hover { color: var(--carbon); border-bottom-color: var(--carbon); }
+        .files-detail-sha {
+            font-family: 'Inter', -apple-system, sans-serif;
+            font-size: 12px;
             color: var(--slate);
             cursor: pointer;
-            padding: 6px 10px;
+            padding: 4px 10px;
             border: 1px solid var(--border);
             border-radius: 4px;
             background: var(--white);
+            flex-shrink: 0;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
         }
-        .files-detail-sha:hover { color: var(--carbon); }
-        .files-detail-sha.copied { color: var(--toxic-muted); border-color: var(--toxic-muted); }
+        .files-detail-sha:hover { color: var(--carbon); border-color: var(--toxic-muted); }
+        .files-detail-sha.copied {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
         .files-detail-open {
             display: inline-flex;
             align-items: center;
@@ -1731,7 +1769,7 @@
                     <span class="hero-toggle-icon" aria-hidden="true">▴</span>
                 </button>
             </div>
-            <div class="verdict-meta"><span class="sr-only">SHA256: </span>SHA256 {{.SHA256}}</div>
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a></div>
             <div class="hero-body" id="hero-details">
             <div class="molecule-viz">
                 <div class="molecule-container">
@@ -2150,9 +2188,13 @@
                                 {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                                 {{if .Classification}}<span class="file-eval-badge">{{.Classification}}</span>{{end}}
                                 {{if .Formula}}<span class="files-detail-formula" title="formula">{{.Formula}}</span>{{end}}
-                                <button type="button" class="files-detail-sha" data-sha="{{.SHA256}}" aria-label="Copy SHA256: {{.SHA256}}">{{.SHA256Short}}</button>
                                 <a class="files-detail-open" href="/file/{{.SHA256}}" aria-label="Open {{.Basename}} in its own page"><span aria-hidden="true">↗</span></a>
                                 <span class="files-detail-size">{{.SizeStr}}</span>
+                            </div>
+                            <div class="files-detail-sha-line">
+                                <span class="sr-only">SHA256: </span>
+                                <a class="files-detail-sha-link" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>
+                                <button type="button" class="files-detail-sha" data-sha="{{.SHA256}}" aria-label="Copy SHA256 to clipboard"><span aria-hidden="true">⧉ </span>copy</button>
                             </div>
                             <div class="files-detail-toptraits" data-toptraits-for="{{.SHA256}}"></div>
                             <div class="files-detail-subtabs" role="tablist" aria-label="File detail views">

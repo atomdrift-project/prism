@@ -564,7 +564,7 @@
                             <div class="file-line">
                                 <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
                             </div>
-                            <a class="file-sha" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" title="{{.SHA256}}">{{.SHA256}}</a>
+                            <span class="file-sha" title="{{.SHA256}}">{{.SHA256}}</span>
                         </td>
                         <td class="col-eco">
                             {{if .Ecosystem}}
