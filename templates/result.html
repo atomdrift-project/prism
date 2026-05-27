@@ -1340,43 +1340,65 @@
            when aria-expanded flips), so collapsed state is conveyed in the
            accessibility tree too — not just visually. */
         .finding-detail[hidden] { display: none; }
-        ul.finding-sources, ul.finding-evidence {
+        /* Unified matches list: each row is one (evidence, file?) pair.
+           The evidence text is always shown; the file link only renders
+           when cleave's roll-up attribution gave us a known inner file.
+           That way "what matched" and "where it matched" sit on the same
+           line and a reader can choose which they want without having to
+           expand a second view. */
+        ul.finding-matches {
             list-style: none;
             margin: 0;
             padding: 0;
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 13px;
         }
-        ul.finding-sources li, ul.finding-evidence li {
+        .finding-match {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 4px 12px;
             padding: 6px 0;
+            border-top: 1px solid var(--mist);
         }
-        ul.finding-evidence li code {
+        .finding-match:first-child { border-top: none; }
+        .finding-match-evidence {
             color: var(--graphite);
             background: transparent;
             font-size: 13px;
             white-space: pre-wrap;
             word-break: break-all;
+            min-width: 0;
+            flex: 1 1 auto;
         }
         a.finding-source {
             display: inline-flex;
             align-items: baseline;
-            gap: 8px;
-            color: var(--carbon);
+            gap: 6px;
+            color: var(--iron);
             text-decoration: none;
             border-bottom: 1px dotted var(--slate);
+            font-size: 12.5px;
+            flex: 0 1 auto;
+            max-width: 100%;
+            transition: color 0.12s, border-color 0.12s;
         }
         a.finding-source:hover {
-            color: var(--toxic-muted);
+            color: var(--toxic-dark);
             border-bottom-color: var(--toxic-muted);
         }
         .finding-source-path {
-            word-break: break-all;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }
         .finding-source-count {
             color: var(--slate);
             font-size: 12px;
             font-variant-numeric: tabular-nums;
         }
+        .finding-match-arrow { color: var(--slate); }
         .crit-badge {
             display: inline-block;
             width: 14px;
@@ -1855,7 +1877,7 @@
                 <a href="/" class="logo">{{template "wordmark" .}}</a>
                 <p class="tagline">{{template "tagline" .}}</p>
             </div>
-            <a href="/" class="back-link"><span aria-hidden="true">← </span>Analyze another</a>
+            <a href="/" class="back-link" aria-keyshortcuts="x" title="Back to feed (press x)"><span aria-hidden="true">← </span>Analyze another</a>
         </header>
 
         <main id="main-content">
@@ -1997,9 +2019,8 @@
                             <h2 class="category-title">{{.Name}}</h2>
                             <div class="findings-list">
                                 {{range .Findings}}
-                                {{$expandable := or .Sources .Evidence}}
-                                <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                    {{if $expandable}}
+                                <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
+                                    {{if .Matches}}
                                     <button type="button" class="finding-card-toggle" aria-expanded="false">
                                         <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
                                         <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
@@ -2007,21 +2028,17 @@
                                             <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                             <span class="trait-desc">{{.Desc}}</span>
                                         </span>
-                                        {{if .Sources}}<span class="files-pill">{{len .Sources}} file{{if ne (len .Sources) 1}}s{{end}}<span aria-hidden="true"> ▾</span></span>
-                                        {{else}}<span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>{{end}}
+                                        <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
                                     </button>
                                     <div class="finding-detail" hidden>
-                                        {{if .Sources}}
-                                        <ul class="finding-sources">
-                                            {{range .Sources}}
-                                            <li><a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}</a></li>
+                                        <ul class="finding-matches">
+                                            {{range .Matches}}
+                                            <li class="finding-match">
+                                                <code class="finding-match-evidence">{{.Evidence}}</code>
+                                                {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
+                                            </li>
                                             {{end}}
                                         </ul>
-                                        {{else}}
-                                        <ul class="finding-evidence">
-                                            {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
-                                        </ul>
-                                        {{end}}
                                     </div>
                                     {{else}}
                                     <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
@@ -2046,9 +2063,8 @@
                         <h2 class="category-title">{{.Name}}</h2>
                         <div class="findings-list">
                             {{range .Findings}}
-                            {{$expandable := or .Sources .Evidence}}
-                            <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                {{if $expandable}}
+                            <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
+                                {{if .Matches}}
                                 <button type="button" class="finding-card-toggle" aria-expanded="false">
                                     <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
                                     <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
@@ -2056,11 +2072,16 @@
                                         <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                         <span class="trait-desc">{{.Desc}}</span>
                                     </span>
-                                    <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                    <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
                                 </button>
                                 <div class="finding-detail" hidden>
-                                    <ul class="finding-evidence">
-                                        {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
+                                    <ul class="finding-matches">
+                                        {{range .Matches}}
+                                        <li class="finding-match">
+                                            <code class="finding-match-evidence">{{.Evidence}}</code>
+                                            {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
+                                        </li>
+                                        {{end}}
                                     </ul>
                                 </div>
                                 {{else}}
@@ -2326,9 +2347,8 @@
                                 <h2 class="category-title">{{.Name}}</h2>
                                 <div class="findings-list">
                                     {{range .Findings}}
-                                    {{$expandable := or .Sources .Evidence}}
-                                    <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                        {{if $expandable}}
+                                    <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
+                                        {{if .Matches}}
                                         <button type="button" class="finding-card-toggle" aria-expanded="false">
                                             <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
                                             <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
@@ -2336,11 +2356,16 @@
                                                 <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                                 <span class="trait-desc">{{.Desc}}</span>
                                             </span>
-                                            <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                            <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
                                         </button>
                                         <div class="finding-detail" hidden>
-                                            <ul class="finding-evidence">
-                                                {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
+                                            <ul class="finding-matches">
+                                                {{range .Matches}}
+                                                <li class="finding-match">
+                                                    <code class="finding-match-evidence">{{.Evidence}}</code>
+                                                    {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
+                                                </li>
+                                                {{end}}
                                             </ul>
                                         </div>
                                         {{else}}

@@ -131,6 +131,12 @@ function wireKeys() {
         }
         break;
       }
+      case "x":
+        // Mirror the header's "Analyze another" link — quick exit back
+        // to the feed without reaching for the mouse.
+        ev.preventDefault();
+        location.href = "/";
+        break;
       case "?":
         ev.preventDefault();
         openHelp();
@@ -182,6 +188,7 @@ function refreshHelpRows(dialog) {
     rows.push(["r", "Re-queue analysis"]);
   if (document.querySelector(".download-btn"))
     rows.push(["d", "Download original bytes"]);
+  rows.push(["x", "Back to the feed"]);
   rows.push(["?", "This help"]);
   rows.push(["Esc", "Close help"]);
   list.replaceChildren();

@@ -421,20 +421,23 @@ func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[strin
 
 // FindingDisplay represents a single finding for table display.
 type FindingDisplay struct {
-	ID       string
-	Crit     string
-	Desc     string
-	Evidence []string
-	// Sources lists the files that contributed to this aggregated trait. Only
-	// populated for archive-level aggregation; nil for per-file findings.
-	Sources []FindingSource
+	ID      string
+	Crit    string
+	Desc    string
+	Matches []FindingMatch
 }
 
-// FindingSource attributes an aggregated trait back to the file that fired it.
-type FindingSource struct {
-	Path   string
-	SHA256 string
-	Count  int
+// FindingMatch is one row in an expandable trait card. It carries the
+// evidence string (always) plus, when the producing file is known, the
+// inner-file path + SHA so the row can become a clickable link. For
+// archive aggregations evidence and file are populated from cleave's
+// parallel `e` / `el` arrays; for per-file findings the evidence stands
+// on its own (the file is implied by the surrounding view).
+type FindingMatch struct {
+	Evidence string
+	Path     string
+	SHA256   string
+	Count    int
 }
 
 // CategoryGroup groups findings by top-level category.
@@ -4640,60 +4643,28 @@ func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[s
 	return out
 }
 
-// resolveSourceFiles decides which file(s) a finding should be attributed
-// to. The container itself rarely matches a trait directly — most
-// container-level findings are roll-ups of inner-file matches that cleave
-// records in the finding's `el` (Locations) slice as `archive:<member>`.
-// When those locations resolve to known inner files we emit one source
-// per distinct inner file; otherwise we fall back to the file the
-// finding currently lives on (the historical behavior).
-//
-// Each returned entry is `(Path, SHA256)` of an attribution target —
-// the caller bumps counts when the same trait fires repeatedly on it.
-func resolveSourceFiles(current *cleaveFile, f finding, pathToFile map[string]*cleaveFile) []FindingSource {
-	if len(f.Locations) == 0 {
-		return []FindingSource{{Path: displayPath(current.Path), SHA256: current.SHA256}}
+// resolveMatchFile maps cleave's compact `el` location string to the
+// inner file it refers to. Returns nil when the location is empty, isn't
+// an archive-prefixed entry (semantic labels like "import"), or doesn't
+// resolve to any known inner file (nested archives we didn't extract).
+// Callers use the result to set Path/SHA256 on a FindingMatch; when nil
+// the match falls back to either the current file (when not the
+// archive container) or a path-less evidence row.
+func resolveMatchFile(location string, pathToFile map[string]*cleaveFile) *cleaveFile {
+	if location == "" {
+		return nil
 	}
 	const prefix = "archive:"
-	seen := make(map[string]bool, len(f.Locations))
-	out := make([]FindingSource, 0, len(f.Locations))
-	for _, loc := range f.Locations {
-		if loc == "" {
-			continue
-		}
-		// Strip the "archive:" prefix. Anything without it is a
-		// non-archive semantic label (e.g. "import") that we can't
-		// resolve to a file — skip those.
-		member := strings.TrimPrefix(loc, prefix)
-		if member == loc {
-			continue
-		}
-		// For archives-in-archives cleave uses "outer.tgz!inner.go".
-		// Our flat file list stores those as "outer.tgz!!inner.go"
-		// via displayPath — try the exact match first, then a "!" → "!!"
-		// normalization as a fallback for the nested case.
-		target, ok := pathToFile[member]
-		if !ok {
-			target = pathToFile[strings.ReplaceAll(member, "!", "!!")]
-		}
-		if target == nil {
-			continue
-		}
-		if seen[target.SHA256] {
-			continue
-		}
-		seen[target.SHA256] = true
-		out = append(out, FindingSource{Path: displayPath(target.Path), SHA256: target.SHA256})
+	member := strings.TrimPrefix(location, prefix)
+	if member == location {
+		return nil
 	}
-	if len(out) == 0 {
-		// `el` was present but none of the entries resolved to a file we
-		// know about (nested archive we didn't extract, mangled path,
-		// etc.). Keep the existing fallback rather than silently dropping
-		// the finding from the sources list — the container-only filter
-		// downstream will then handle it consistently.
-		return []FindingSource{{Path: displayPath(current.Path), SHA256: current.SHA256}}
+	if f, ok := pathToFile[member]; ok {
+		return f
 	}
-	return out
+	// Archives-in-archives: cleave uses "outer.tgz!inner.go" with a
+	// single `!`; our flat file list stores those as "outer.tgz!!inner.go".
+	return pathToFile[strings.ReplaceAll(member, "!", "!!")]
 }
 
 func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
@@ -4706,10 +4677,13 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	}
 
 	type aggregated struct {
-		evidence map[string]bool
-		// sources keyed by SHA so multiple findings from the same file collapse
-		// into one entry with a count.
-		sources  map[string]*FindingSource
+		// matches keyed by (evidence, fileSHA) so the same evidence value
+		// matched in the same file collapses into one entry with a count.
+		// Entries with empty fileSHA are evidence-only rows (no file
+		// attribution available).
+		matches  map[string]*FindingMatch
+		// Insertion order so we can sort consistently when emitting.
+		order    []string
 		dirPath  string
 		topLevel string
 		desc     string
@@ -4763,8 +4737,7 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 					crit:     f.Crit,
 					conf:     f.Conf,
 					desc:     f.Desc,
-					evidence: make(map[string]bool),
-					sources:  make(map[string]*FindingSource),
+					matches:  make(map[string]*FindingMatch),
 				}
 				bucket[key] = agg
 			} else if f.Crit > agg.crit || (f.Crit == agg.crit && f.Conf > agg.conf) {
@@ -4772,19 +4745,47 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 				agg.conf = f.Conf
 				agg.desc = f.Desc
 			}
-			for _, e := range f.Evidence {
-				agg.evidence[e] = true
-			}
-			for _, t := range resolveSourceFiles(file, f, pathToFile) {
-				src, ok := agg.sources[t.SHA256]
-				if !ok {
-					agg.sources[t.SHA256] = &FindingSource{
-						Path:   t.Path,
-						SHA256: t.SHA256,
-						Count:  1,
+			// Walk evidence and locations in parallel. When cleave has
+			// roll-up attribution (`el` populated), each evidence value
+			// carries its source-file hint at the same index. We resolve
+			// each pair into a (evidence, file?) match. Container-as-source
+			// is dropped here: it's almost always a rollup that we can't
+			// navigate to, so it would render as a dead link.
+			for ei, ev := range f.Evidence {
+				var (
+					path string
+					sha  string
+				)
+				if ei < len(f.Locations) {
+					if target := resolveMatchFile(f.Locations[ei], pathToFile); target != nil {
+						path = displayPath(target.Path)
+						sha = target.SHA256
 					}
+				}
+				if sha == "" && file.Depth > 0 {
+					// No cleave hint, but we know the finding lives on
+					// this inner file directly — use it as the source.
+					path = displayPath(file.Path)
+					sha = file.SHA256
+				}
+				if containerSHAs[sha] {
+					// Drop the archive container as a source — the file
+					// tree skips depth-0 entries so the link wouldn't
+					// resolve. Keep the evidence text; the row just
+					// won't be clickable.
+					path, sha = "", ""
+				}
+				mk := ev + "\x00" + sha
+				if m, ok := agg.matches[mk]; ok {
+					m.Count++
 				} else {
-					src.Count++
+					agg.matches[mk] = &FindingMatch{
+						Evidence: ev,
+						Path:     path,
+						SHA256:   sha,
+						Count:    1,
+					}
+					agg.order = append(agg.order, mk)
 				}
 			}
 		}
@@ -4795,39 +4796,33 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 
 	categoryMap := make(map[string][]FindingDisplay)
 	for _, agg := range bucket {
-		evidence := make([]string, 0, len(agg.evidence))
-		for e := range agg.evidence {
-			evidence = append(evidence, e)
+		matches := make([]FindingMatch, 0, len(agg.matches))
+		for _, k := range agg.order {
+			matches = append(matches, *agg.matches[k])
 		}
-		sort.Strings(evidence)
-		if len(evidence) > 4 {
-			evidence = evidence[:4]
-		}
-		// Drop the archive container as a source. Cleave often attributes a
-		// rollup of inner-file findings to the container too, but the file
-		// tree skips containers (buildFileTreeNodes), so a `#file=<container>`
-		// link can't be navigated to. Falling back to the trait's evidence
-		// (handled by the template's {{if .Sources}}…{{else}} branch) is more
-		// honest than pointing the user back at the archive they're viewing.
-		sources := make([]FindingSource, 0, len(agg.sources))
-		for sha, s := range agg.sources {
-			if containerSHAs[sha] {
-				continue
+		sort.SliceStable(matches, func(i, j int) bool {
+			if matches[i].Count != matches[j].Count {
+				return matches[i].Count > matches[j].Count
 			}
-			sources = append(sources, *s)
-		}
-		sort.Slice(sources, func(i, j int) bool {
-			if sources[i].Count != sources[j].Count {
-				return sources[i].Count > sources[j].Count
+			// Matches with a file link sort ahead of bare evidence so
+			// clickable rows are visually grouped at the top.
+			if (matches[i].SHA256 != "") != (matches[j].SHA256 != "") {
+				return matches[i].SHA256 != ""
 			}
-			return sources[i].Path < sources[j].Path
+			if matches[i].Evidence != matches[j].Evidence {
+				return matches[i].Evidence < matches[j].Evidence
+			}
+			return matches[i].Path < matches[j].Path
 		})
+		const maxMatches = 24
+		if len(matches) > maxMatches {
+			matches = matches[:maxMatches]
+		}
 		categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], FindingDisplay{
-			ID:       agg.dirPath,
-			Crit:     critIntToString(agg.crit),
-			Desc:     agg.desc,
-			Evidence: evidence,
-			Sources:  sources,
+			ID:      agg.dirPath,
+			Crit:    critIntToString(agg.crit),
+			Desc:    agg.desc,
+			Matches: matches,
 		})
 	}
 
@@ -4928,21 +4923,27 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		categoryMap := make(map[string][]FindingDisplay)
 
 		for _, agg := range aggregated {
-			// Convert evidence map to sorted slice
+			// Convert evidence map to sorted slice. Per-file findings
+			// don't carry path attribution (we're already in that file's
+			// context), so each match is an evidence-only row.
 			var evidence []string
 			for e := range agg.evidence {
 				evidence = append(evidence, e)
 			}
 			sort.Strings(evidence)
-			if len(evidence) > 4 {
-				evidence = evidence[:4]
+			if len(evidence) > 8 {
+				evidence = evidence[:8]
+			}
+			matches := make([]FindingMatch, 0, len(evidence))
+			for _, e := range evidence {
+				matches = append(matches, FindingMatch{Evidence: e, Count: 1})
 			}
 
 			fd := FindingDisplay{
-				ID:       agg.dirPath, // Show directory path without top-level
-				Crit:     critIntToString(agg.crit),
-				Desc:     agg.desc,
-				Evidence: evidence,
+				ID:      agg.dirPath, // Show directory path without top-level
+				Crit:    critIntToString(agg.crit),
+				Desc:    agg.desc,
+				Matches: matches,
 			}
 
 			categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], fd)
