@@ -4728,16 +4728,15 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 		if len(evidence) > 4 {
 			evidence = evidence[:4]
 		}
+		// Drop the archive container as a source. Cleave often attributes a
+		// rollup of inner-file findings to the container too, but the file
+		// tree skips containers (buildFileTreeNodes), so a `#file=<container>`
+		// link can't be navigated to. Falling back to the trait's evidence
+		// (handled by the template's {{if .Sources}}…{{else}} branch) is more
+		// honest than pointing the user back at the archive they're viewing.
 		sources := make([]FindingSource, 0, len(agg.sources))
-		hasInner := false
-		for sha := range agg.sources {
-			if !containerSHAs[sha] {
-				hasInner = true
-				break
-			}
-		}
 		for sha, s := range agg.sources {
-			if hasInner && containerSHAs[sha] {
+			if containerSHAs[sha] {
 				continue
 			}
 			sources = append(sources, *s)

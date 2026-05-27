@@ -511,7 +511,7 @@ function autoFitCamera(group, camera, controls) {
   // Multiplier <1 zooms in past the tangent-fit distance so the molecule
   // fills the canvas instead of floating in the middle. Users can still
   // dolly out via OrbitControls if a particularly wide molecule clips.
-  const dist = (sphere.radius / Math.sin(fov / 2)) * 0.77;
+  const dist = (sphere.radius / Math.sin(fov / 2)) * 0.847;
   camera.position.set(dist * 0.5, dist * 0.35, dist * 0.75);
   camera.updateProjectionMatrix();
 }
