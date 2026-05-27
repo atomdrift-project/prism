@@ -14,7 +14,7 @@
             --carbon: #0a0a0a;
             --graphite: #404040;
             --iron: #52525b;
-            --slate: #6b7280;
+            --slate: #555e6d;
             --mist: #f5f5f5;
             --white: #ffffff;
             --cream: #fafaf9;
@@ -46,6 +46,51 @@
             color: inherit;
             text-decoration: none;
         }
+        /* Visually hide content while keeping it available to screen readers.
+           Used for severity badges, off-screen heading labels, and live
+           announcements that should not take up visual space. */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        /* Skip-to-main affordance for keyboard users. Hidden off-screen until
+           focused; then it slides into view as the first interactive item. */
+        .skip-link {
+            position: absolute;
+            left: 16px;
+            top: -40px;
+            background: var(--carbon);
+            color: var(--toxic);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 1000;
+            transition: top 0.15s;
+        }
+        .skip-link:focus { top: 8px; outline: 2px solid var(--toxic); outline-offset: 2px; }
+        /* Universal keyboard focus ring. We only paint it on :focus-visible so
+           mouse clicks don't show a ring, but every interactive element gets a
+           clear focus indicator when navigating by keyboard. */
+        :focus { outline: none; }
+        :focus-visible {
+            outline: 2px solid var(--toxic-muted);
+            outline-offset: 2px;
+            border-radius: 3px;
+        }
+        button:focus-visible,
+        a:focus-visible,
+        [tabindex]:focus-visible {
+            outline: 2px solid var(--toxic-muted);
+            outline-offset: 2px;
+        }
         .container {
             max-width: 1000px;
             margin: 0 auto;
@@ -67,7 +112,7 @@
             color: var(--toxic-muted);
         }
         .beta-tag {
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             color: var(--toxic-dark);
             background: rgba(208, 255, 0, 0.14);
@@ -102,10 +147,29 @@
         }
         /* Compact form used when the Files tab is active: collapse the
            molecule + formula block so the file explorer below has room.
-           Double-click the hero to expand it back. */
-        .hero.compact { cursor: zoom-in; margin-bottom: 12px; }
+           Use the hero-toggle button (or double-click on a pointer device) to
+           expand it back. */
+        .hero.compact { margin-bottom: 12px; }
         .hero.compact .hero-body { display: none; }
         .hero.compact .verdict-meta { padding-bottom: 12px; }
+        /* Disclosure button in the verdict bar. The chevron rotates with
+           aria-expanded so sighted and SR users see the same state. */
+        .hero-toggle {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 8px 12px;
+            min-width: 36px;
+            min-height: 36px;
+            color: var(--iron);
+            cursor: pointer;
+            font: inherit;
+            font-size: 16px;
+            line-height: 1;
+            transition: background 0.1s, border-color 0.1s, color 0.1s;
+        }
+        .hero-toggle:hover { background: var(--mist); color: var(--carbon); }
+        .hero-toggle[aria-expanded="false"] .hero-toggle-icon { display: inline-block; transform: rotate(180deg); }
         /* Hero head — filename + verdict pill on one row; no full-bleed tint. */
         .verdict-bar {
             padding: 16px 26px 4px;
@@ -151,7 +215,7 @@
         }
         .verdict-meta {
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11.5px;
+            font-size: 12.5px;
             color: var(--slate);
             padding: 0 26px;
             border-bottom: none;
@@ -207,7 +271,7 @@
            hidden so it stays clean. Whole card is a link to /?m=… to
            find other samples with the same malecule. */
         .formula-label {
-            font-size: 10.5px;
+            font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.08em;
@@ -294,9 +358,9 @@
             display: inline-flex;
             align-items: center;
             margin-left: 8px;
-            padding: 1px 7px;
+            padding: 5px 10px;
             font: inherit;
-            font-size: 10.5px;
+            font-size: 13px;
             font-family: 'Inter', -apple-system, sans-serif;
             color: var(--slate);
             background: var(--white);
@@ -334,8 +398,8 @@
             display: inline-flex;
             align-items: center;
             margin-left: 8px;
-            padding: 1px 7px;
-            font-size: 10.5px;
+            padding: 5px 10px;
+            font-size: 13px;
             font-family: 'Inter', -apple-system, sans-serif;
             color: var(--slate);
             background: var(--white);
@@ -373,10 +437,10 @@
             display: inline-flex;
             align-items: center;
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 10.5px;
+            font-size: 13px;
             border: 1px solid transparent;
             border-radius: 3px;
-            padding: 1px 6px;
+            padding: 4px 8px;
             letter-spacing: 0.3px;
             text-decoration: none;
         }
@@ -556,11 +620,14 @@
         }
         .galaxy-info-close {
             cursor: pointer;
+            background: none;
+            border: none;
+            font: inherit;
             color: var(--slate);
-            font-size: 18px;
+            font-size: 20px;
             line-height: 1;
-            width: 22px;
-            height: 22px;
+            width: 32px;
+            height: 32px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -586,7 +653,7 @@
             flex-direction: column;
             gap: 3px;
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11.5px;
+            font-size: 12px;
             line-height: 1.4;
         }
         .galaxy-info-findings > div {
@@ -690,7 +757,7 @@
         }
         .files-truncated-notice {
             padding: 6px 12px;
-            font-size: 11px;
+            font-size: 12px;
             color: var(--iron);
             background: var(--cream);
             border-bottom: 1px solid var(--border);
@@ -727,7 +794,7 @@
         .files-miller-col:last-child { border-right: none; }
         .files-miller-colhead {
             padding: 8px 12px;
-            font-size: 10.5px;
+            font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.06em;
             color: var(--slate);
@@ -746,7 +813,8 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 6px 12px;
+            padding: 8px 12px;
+            min-height: 32px;
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 12.5px;
             color: var(--carbon);
@@ -775,7 +843,7 @@
         .files-miller-row .dot.clean { background: var(--clean, #22c55e); opacity: 0.45; }
         .files-miller-row .meta {
             flex-shrink: 0;
-            font-size: 10.5px;
+            font-size: 12px;
             color: var(--slate);
             font-variant-numeric: tabular-nums;
         }
@@ -831,7 +899,7 @@
             text-align: right;
             padding-right: 12px;
             color: var(--slate);
-            font-size: 11px;
+            font-size: 11.5px;
             user-select: none;
             font-variant-numeric: tabular-nums;
         }
@@ -864,10 +932,11 @@
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 3px 9px 3px 7px;
+            padding: 6px 12px 6px 10px;
             font: inherit;
-            font-size: 11.5px;
+            font-size: 12.5px;
             line-height: 1.4;
+            min-height: 32px;
             border: 1px solid var(--border);
             border-radius: 999px;
             background: var(--white);
@@ -888,13 +957,13 @@
         .fs-chip-dot.notable { background: var(--notable); }
         .fs-chip-id {
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11px;
+            font-size: 13px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
         .fs-chip-n {
-            font-size: 10.5px;
+            font-size: 11.5px;
             color: var(--slate);
             font-variant-numeric: tabular-nums;
         }
@@ -958,21 +1027,28 @@
         }
         .files-detail-sha {
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 11px;
+            font-size: 13px;
             color: var(--slate);
             cursor: pointer;
-            padding: 2px 6px;
+            padding: 6px 10px;
             border: 1px solid var(--border);
             border-radius: 4px;
+            background: var(--white);
         }
         .files-detail-sha:hover { color: var(--carbon); }
         .files-detail-sha.copied { color: var(--toxic-muted); border-color: var(--toxic-muted); }
         .files-detail-open {
-            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
             color: var(--slate);
-            padding: 2px 6px;
+            padding: 6px 10px;
+            border-radius: 4px;
+            min-width: 32px;
+            min-height: 32px;
         }
-        .files-detail-open:hover { color: var(--carbon); }
+        .files-detail-open:hover { color: var(--carbon); background: var(--mist); }
         .files-detail-subtabs {
             display: flex;
             gap: 0;
@@ -980,9 +1056,9 @@
             margin-bottom: 12px;
         }
         .files-subtab {
-            padding: 8px 14px;
+            padding: 10px 16px;
             font: inherit;
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 500;
             color: var(--slate);
             background: none;
@@ -1030,9 +1106,36 @@
             transition: border-color 0.1s;
             font-size: 13px;
         }
-        .finding-card.expandable { cursor: pointer; }
         .finding-card.expandable:hover { border-color: var(--toxic-muted); }
         .finding-card.open { border-color: var(--toxic-muted); background: var(--toxic-dim); }
+        /* The expandable card's toggle is a real <button> so keyboard users
+           get the right semantics. We strip the UA defaults and replicate
+           the prior 3-column row layout inside the button. */
+        .finding-card-toggle {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+            background: none;
+            border: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            width: 100%;
+            padding: 0;
+            cursor: pointer;
+        }
+        .finding-card-toggle .trait-body {
+            display: grid;
+            grid-template-columns: 24em 1fr;
+            gap: 14px;
+            align-items: baseline;
+            min-width: 0;
+        }
+        @media (max-width: 640px) {
+            .finding-card-toggle .trait-body { grid-template-columns: 1fr; gap: 2px; }
+        }
         /* Two-column grid: fixed-width trait-id, flex-width description.
            Fixed first column means descriptions line up vertically across
            every card in the list — easy to scan top-to-bottom. The 24em
@@ -1049,7 +1152,7 @@
         }
         .finding-card .trait-id {
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
+            font-size: 13px;
             color: var(--iron);
             min-width: 0;
             overflow: hidden;
@@ -1069,7 +1172,7 @@
             .finding-card .trait-body { grid-template-columns: 1fr; gap: 2px; }
         }
         .finding-card .files-pill {
-            font-size: 11px;
+            font-size: 13px;
             color: var(--slate);
             display: inline-flex;
             align-items: center;
@@ -1082,27 +1185,29 @@
         }
         .finding-card.open .files-pill { background: var(--white); border-color: var(--toxic-muted); color: var(--carbon); }
         .finding-detail {
-            display: none;
             grid-column: 1 / -1;
             padding-top: 10px;
             margin-top: 6px;
             border-top: 1px solid var(--border);
         }
-        .finding-card.open .finding-detail { display: block; }
+        /* The detail panel uses the [hidden] attribute now (managed by JS
+           when aria-expanded flips), so collapsed state is conveyed in the
+           accessibility tree too — not just visually. */
+        .finding-detail[hidden] { display: none; }
         ul.finding-sources, ul.finding-evidence {
             list-style: none;
             margin: 0;
             padding: 0;
             font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
+            font-size: 13px;
         }
         ul.finding-sources li, ul.finding-evidence li {
-            padding: 3px 0;
+            padding: 6px 0;
         }
         ul.finding-evidence li code {
             color: var(--graphite);
             background: transparent;
-            font-size: 11.5px;
+            font-size: 13px;
             white-space: pre-wrap;
             word-break: break-all;
         }
@@ -1123,7 +1228,7 @@
         }
         .finding-source-count {
             color: var(--slate);
-            font-size: 11px;
+            font-size: 12px;
             font-variant-numeric: tabular-nums;
         }
         .crit-badge {
@@ -1222,7 +1327,7 @@
         }
         .parents-badge {
             font-family: 'Oxanium', sans-serif;
-            font-size: 11px;
+            font-size: 13px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
@@ -1235,7 +1340,7 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            font-size: 11px;
+            font-size: 13px;
             color: var(--slate);
             flex-shrink: 0;
         }
@@ -1296,7 +1401,7 @@
         }
         .section-badge {
             display: inline-block;
-            font-size: 11px;
+            font-size: 12px;
             padding: 2px 6px;
             background: var(--isotope-dim);
             color: var(--isotope);
@@ -1304,7 +1409,7 @@
             margin-left: 8px;
         }
         .filetype-tag {
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             padding: 2px 6px;
             background: rgba(107, 114, 128, 0.12);
@@ -1345,7 +1450,7 @@
             background: rgba(0, 0, 0, 0.01);
         }
         .symbol-library {
-            font-size: 11px;
+            font-size: 12px;
             color: var(--iron);
             margin-left: 8px;
         }
@@ -1556,6 +1661,35 @@
             .verdict-bar { padding: 18px 18px 4px; }
             .verdict-meta { padding: 0 18px 12px; }
             .hero-body { padding: 8px 18px 20px; }
+            /* Bump primary controls to ~44px touch targets on small screens
+               (Apple HIG / WCAG 2.5.5). Keeps the desktop density we like
+               while still being friendly to thumbs on a phone. */
+            .tab { padding: 14px 18px; font-size: 14px; }
+            .files-subtab { padding: 12px 18px; font-size: 13.5px; }
+            .files-miller-row { min-height: 40px; padding: 10px 12px; }
+            .fs-chip { min-height: 36px; }
+            .files-detail-sha,
+            .rescan-btn,
+            .download-btn { padding: 8px 12px; font-size: 13px; }
+            .files-detail-open,
+            .hero-toggle { min-width: 44px; min-height: 44px; }
+            .galaxy-info-close { width: 40px; height: 40px; }
+        }
+        /* Respect users who opt out of motion at the OS level. We keep the
+           flash-color change so attention still gets drawn to a jumped-to
+           line, but drop the keyframe animation; programmatic scrolls in JS
+           also check `prefers-reduced-motion` and switch to instant jumps. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.001ms !important;
+                scroll-behavior: auto !important;
+            }
+            .fs-line.flash {
+                animation: none;
+                background: rgba(208, 255, 0, 0.55);
+            }
         }
         /* Chroma syntax highlighting (generated server-side). Scoped under
            .chroma so it only applies inside <code class="chroma"> blocks. */
@@ -1567,6 +1701,7 @@
     </style>
 </head>
 <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     {{template "banner" .}}
     <div class="container">
         <header>
@@ -1574,28 +1709,39 @@
                 <a href="/" class="logo">{{template "wordmark" .}}</a>
                 <p class="tagline">{{template "tagline" .}}</p>
             </div>
-            <a href="/" class="back-link">← Analyze another</a>
+            <a href="/" class="back-link"><span aria-hidden="true">← </span>Analyze another</a>
         </header>
 
-        <section class="hero">
+        <main id="main-content">
+        <!-- Live region used for short status announcements (e.g. "Source
+             loaded", "SHA copied"). The text is replaced from JS; screen
+             readers announce the change because of aria-live="polite". -->
+        <div id="a11y-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+        <section class="hero" aria-labelledby="hero-filename">
             <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
                 <div class="verdict-bar-left">
-                    <span class="band" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
-                    <div class="file-name" title="{{.Filename}}">{{.Filename}}</div>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                    <span class="band" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}" aria-hidden="true"></span>
+                    <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Filename}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                 </div>
                 <div class="verdict">
-                    <span class="verdict-value">{{.Verdict}}</span>
+                    <span class="sr-only">Verdict: </span><span class="verdict-value">{{.Verdict}}</span>
                 </div>
+                <button type="button" class="hero-toggle" id="hero-toggle" aria-expanded="true" aria-controls="hero-details" aria-label="Collapse sample details">
+                    <span class="hero-toggle-icon" aria-hidden="true">▴</span>
+                </button>
             </div>
-            <div class="verdict-meta">SHA256 {{.SHA256}}</div>
-            <div class="hero-body">
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span>SHA256 {{.SHA256}}</div>
+            <div class="hero-body" id="hero-details">
             <div class="molecule-viz">
                 <div class="molecule-container">
-                    <canvas id="molecule-canvas"></canvas>
-                    <div class="galaxy-info" id="galaxy-info">
+                    <canvas id="molecule-canvas" role="img" aria-label="Sample trait clustering diagram. An accessible breakdown of the same traits appears in the Traits tab below."></canvas>
+                    <div class="galaxy-info" id="galaxy-info" role="region" aria-labelledby="galaxy-info-title" aria-live="polite">
                         <div class="galaxy-info-header">
                             <span class="galaxy-info-title" id="galaxy-info-title"></span>
-                            <span class="galaxy-info-close" id="galaxy-info-close">&times;</span>
+                            <button type="button" class="galaxy-info-close" id="galaxy-info-close" aria-label="Close trait details">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
                         </div>
                         <div class="galaxy-info-formula" id="galaxy-info-formula"></div>
                         <div class="galaxy-info-findings" id="galaxy-info-findings"></div>
@@ -1603,17 +1749,17 @@
                 </div>
             </div>
             <div class="molecule-info">
-                <div class="formula-label">Mal-ecule</div>
-                <a class="formula" href="/?m={{.FormulaQuery}}" title="Find other samples with this malecule">
+                <div class="formula-label" id="formula-label">Mal-ecule</div>
+                <a class="formula" href="/?m={{.FormulaQuery}}" aria-describedby="formula-label" aria-label="Find other samples with malecule {{.Formula}}">
                     <span class="formula-text">{{.Formula}}</span>
-                    <span class="formula-arrow">↗</span>
+                    <span class="formula-arrow" aria-hidden="true">↗</span>
                 </a>
                 <div class="meta-table">
                     <div class="meta-row">
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" title="Download original bytes (50 MB max, 10/hour per IP)">⇩ download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 52428800)}}<a class="download-btn" href="/file/{{.SHA256}}.dl" aria-label="Download original bytes ({{.Size}}; 50 MB max, 10 per hour per IP)"><span aria-hidden="true">⇩ </span>download</a>{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}
@@ -1627,7 +1773,7 @@
                         <span class="meta-label">Analyzed</span>
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
-                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" title="Re-queue this sample for analysis">↻ rescan</button>{{end}}
+                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" aria-label="Re-queue this sample for analysis"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
                         </span>
                     </div>
                     {{end}}
@@ -1643,7 +1789,7 @@
                     <div class="meta-row">
                         <span class="meta-label">Source</span>
                         <span class="meta-value source-value">
-                            {{if .SourceURL}}<a class="source-link" href="{{.SourceURL}}" title="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceLabel}} ↗</a>{{else}}<span title="domain only — no exact URL recorded">{{.SourceLabel}}</span>{{end}}
+                            {{if .SourceURL}}<a class="source-link" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer" aria-label="Open source URL {{.SourceURL}} in a new tab">{{.SourceLabel}}<span aria-hidden="true"> ↗</span></a>{{else}}<span title="domain only — no exact URL recorded">{{.SourceLabel}}</span>{{end}}
                         </span>
                     </div>
                     {{end}}
@@ -1659,8 +1805,8 @@
         {{end}}
 
         {{if .Parents}}
-        <div class="parents-panel">
-            <div class="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</div>
+        <section class="parents-panel" aria-labelledby="parents-title">
+            <h2 class="parents-title" id="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</h2>
             <ul class="parents-list">
                 {{range .Parents}}
                 <li class="parents-item">
@@ -1675,47 +1821,50 @@
                 </li>
                 {{end}}
             </ul>
-        </div>
+        </section>
         {{end}}
 
-        <section class="tabs-section">
-            <div class="tabs">
-                <button class="tab active" data-tab="traits">Traits</button>
+        <section class="tabs-section" aria-label="Analysis details">
+            <div class="tabs" role="tablist" aria-label="Analysis sections">
+                <button type="button" class="tab active" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="true" aria-controls="tab-traits" tabindex="0">Traits</button>
                 {{if .IsArchive}}
-                <button class="tab" data-tab="files">Files</button>
+                <button type="button" class="tab" role="tab" id="tabbtn-files" data-tab="files" aria-selected="false" aria-controls="tab-files" tabindex="-1">Files</button>
                 {{else}}
                 {{if .IsText}}
-                <button class="tab" data-tab="contents">Contents</button>
+                <button type="button" class="tab" role="tab" id="tabbtn-contents" data-tab="contents" aria-selected="false" aria-controls="tab-contents" tabindex="-1">Contents</button>
                 {{else}}
-                <button class="tab" data-tab="strings">Strings</button>
+                <button type="button" class="tab" role="tab" id="tabbtn-strings" data-tab="strings" aria-selected="false" aria-controls="tab-strings" tabindex="-1">Strings</button>
                 {{end}}
-                <button class="tab" data-tab="symbols">Symbols</button>
-                {{if .FileSections}}<button class="tab" data-tab="sections">Sections</button>{{end}}
-                <button class="tab" data-tab="metrics">Metrics</button>
-                {{if not .IsText}}<button class="tab" data-tab="kv">Metadata</button>{{end}}
+                <button type="button" class="tab" role="tab" id="tabbtn-symbols" data-tab="symbols" aria-selected="false" aria-controls="tab-symbols" tabindex="-1">Symbols</button>
+                {{if .FileSections}}<button type="button" class="tab" role="tab" id="tabbtn-sections" data-tab="sections" aria-selected="false" aria-controls="tab-sections" tabindex="-1">Sections</button>{{end}}
+                <button type="button" class="tab" role="tab" id="tabbtn-metrics" data-tab="metrics" aria-selected="false" aria-controls="tab-metrics" tabindex="-1">Metrics</button>
+                {{if not .IsText}}<button type="button" class="tab" role="tab" id="tabbtn-kv" data-tab="kv" aria-selected="false" aria-controls="tab-kv" tabindex="-1">Metadata</button>{{end}}
                 {{end}}
-                {{if .ReportContent}}<button class="tab" data-tab="report">Report</button>{{end}}
+                {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
 
-            <div class="tab-content active" id="tab-traits">
+            <div class="tab-content active" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">
                 {{if .IsArchive}}
                     {{if .ArchiveCategories}}
                         {{range .ArchiveCategories}}
                         <div class="category-section">
-                            <div class="category-title">{{.Name}}</div>
+                            <h2 class="category-title">{{.Name}}</h2>
                             <div class="findings-list">
                                 {{range .Findings}}
                                 {{$expandable := or .Sources .Evidence}}
                                 <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
-                                    <div class="trait-body">
-                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                                        <span class="trait-desc">{{.Desc}}</span>
-                                    </div>
                                     {{if $expandable}}
-                                    {{if .Sources}}<span class="files-pill">{{len .Sources}} file{{if ne (len .Sources) 1}}s{{end}} ▾</span>
-                                    {{else}}<span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}} ▾</span>{{end}}
-                                    <div class="finding-detail">
+                                    <button type="button" class="finding-card-toggle" aria-expanded="false">
+                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                        <span class="trait-body">
+                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                            <span class="trait-desc">{{.Desc}}</span>
+                                        </span>
+                                        {{if .Sources}}<span class="files-pill">{{len .Sources}} file{{if ne (len .Sources) 1}}s{{end}}<span aria-hidden="true"> ▾</span></span>
+                                        {{else}}<span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>{{end}}
+                                    </button>
+                                    <div class="finding-detail" hidden>
                                         {{if .Sources}}
                                         <ul class="finding-sources">
                                             {{range .Sources}}
@@ -1727,6 +1876,13 @@
                                             {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
                                         </ul>
                                         {{end}}
+                                    </div>
+                                    {{else}}
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                    <div class="trait-body">
+                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                        <span class="trait-desc">{{.Desc}}</span>
                                     </div>
                                     {{end}}
                                 </div>
@@ -1741,22 +1897,32 @@
                     {{range .FileFindings}}
                     {{range .Categories}}
                     <div class="category-section">
-                        <div class="category-title">{{.Name}}</div>
+                        <h2 class="category-title">{{.Name}}</h2>
                         <div class="findings-list">
                             {{range .Findings}}
                             {{$expandable := or .Sources .Evidence}}
                             <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
-                                <div class="trait-body">
-                                    <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                                    <span class="trait-desc">{{.Desc}}</span>
-                                </div>
                                 {{if $expandable}}
-                                <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}} ▾</span>
-                                <div class="finding-detail">
+                                <button type="button" class="finding-card-toggle" aria-expanded="false">
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                    <span class="trait-body">
+                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                        <span class="trait-desc">{{.Desc}}</span>
+                                    </span>
+                                    <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                </button>
+                                <div class="finding-detail" hidden>
                                     <ul class="finding-evidence">
                                         {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
                                     </ul>
+                                </div>
+                                {{else}}
+                                <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                <div class="trait-body">
+                                    <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                    <span class="trait-desc">{{.Desc}}</span>
                                 </div>
                                 {{end}}
                             </div>
@@ -1776,7 +1942,7 @@
 
             {{if not .IsArchive}}
             {{if .IsText}}
-            <div class="tab-content" id="tab-contents">
+            <div class="tab-content" id="tab-contents" role="tabpanel" aria-labelledby="tabbtn-contents" tabindex="0">
                 {{if .ContentTooLarge}}
                     <div class="no-findings">
                         File is {{.ContentSizeStr}} — too large to display inline.
@@ -1797,7 +1963,7 @@
                 {{end}}
             </div>
             {{else}}
-            <div class="tab-content" id="tab-strings">
+            <div class="tab-content" id="tab-strings" role="tabpanel" aria-labelledby="tabbtn-strings" tabindex="0">
                 {{if .FileStrings}}
                     {{range .FileStrings}}
                     {{if $.IsArchive}}
@@ -1812,7 +1978,7 @@
                     {{if .HasSections}}
                         {{range .Sections}}
                         <div class="category-section">
-                            <div class="category-title">{{.Section}}</div>
+                            <h2 class="category-title">{{.Section}}</h2>
                             <table class="strings-table">
                                 <tbody>
                                     {{range .Strings}}
@@ -1844,7 +2010,7 @@
             </div>
             {{end}}{{/* end if .IsText / else */}}
 
-            <div class="tab-content" id="tab-symbols">
+            <div class="tab-content" id="tab-symbols" role="tabpanel" aria-labelledby="tabbtn-symbols" tabindex="0">
                 {{if .FileSymbols}}
                     {{range .FileSymbols}}
                     {{if $.IsArchive}}
@@ -1858,7 +2024,7 @@
                     {{end}}
                     {{if .Imports}}
                     <div class="category-section">
-                        <div class="category-title">Imports</div>
+                        <h2 class="category-title">Imports</h2>
                         <div class="symbols-list">
                             {{range .Imports}}
                             <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
@@ -1868,7 +2034,7 @@
                     {{end}}
                     {{if .Exports}}
                     <div class="category-section">
-                        <div class="category-title">Exports</div>
+                        <h2 class="category-title">Exports</h2>
                         <div class="symbols-list">
                             {{range .Exports}}
                             <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
@@ -1882,7 +2048,7 @@
                 {{end}}
             </div>
 
-            <div class="tab-content" id="tab-sections">
+            <div class="tab-content" id="tab-sections" role="tabpanel" aria-labelledby="tabbtn-sections" tabindex="0">
                 {{if .FileSections}}
                     {{range .FileSections}}
                     {{if $.IsArchive}}
@@ -1925,7 +2091,7 @@
                 {{end}}
             </div>
 
-            <div class="tab-content" id="tab-metrics">
+            <div class="tab-content" id="tab-metrics" role="tabpanel" aria-labelledby="tabbtn-metrics" tabindex="0">
                 {{if .FileMetrics}}
                     {{range .FileMetrics}}
                     {{if $.IsArchive}}
@@ -1939,7 +2105,7 @@
                     {{end}}
                     {{range .Groups}}
                     <div class="category-section">
-                        <div class="category-title">{{.Name}}</div>
+                        <h2 class="category-title">{{.Name}}</h2>
                         <table class="metrics-table">
                             <tbody>
                                 {{range .Fields}}
@@ -1960,17 +2126,18 @@
             {{end}}{{/* end if not .IsArchive */}}
 
             {{if .IsArchive}}
-            <div class="tab-content" id="tab-files">
+            <div class="tab-content" id="tab-files" role="tabpanel" aria-labelledby="tabbtn-files" tabindex="0">
                 <div class="files-explorer">
-                    <div class="files-search">
-                        <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" />
+                    <div class="files-search" role="search">
+                        <label for="files-search-input" class="sr-only">Filter files in this archive</label>
+                        <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" aria-label="Filter files in this archive" />
                     </div>
                     {{if lt .ShownFiles .TotalFiles}}
                     <div class="files-truncated-notice" title="Files are ranked by ML probability; the lowest-scoring entries are hidden when archives exceed the display cap.">
                         Showing top {{.ShownFiles}} of {{.TotalFiles}} files
                     </div>
                     {{end}}
-                    <div class="files-miller" id="files-miller" role="tree"></div>
+                    <div class="files-miller" id="files-miller" role="tree" aria-label="Archive files. Use arrow keys to navigate, Enter to open."></div>
                     <div class="files-detail-pane" id="files-detail">
                         <div class="files-detail-empty" data-default="1">
                             <div class="files-detail-empty-title">{{.Filename}}</div>
@@ -1983,18 +2150,18 @@
                                 {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                                 {{if .Classification}}<span class="file-eval-badge">{{.Classification}}</span>{{end}}
                                 {{if .Formula}}<span class="files-detail-formula" title="formula">{{.Formula}}</span>{{end}}
-                                <span class="files-detail-sha" title="copy SHA256" data-sha="{{.SHA256}}">{{.SHA256Short}}</span>
-                                <a class="files-detail-open" href="/file/{{.SHA256}}" title="open in own page">↗</a>
+                                <button type="button" class="files-detail-sha" data-sha="{{.SHA256}}" aria-label="Copy SHA256: {{.SHA256}}">{{.SHA256Short}}</button>
+                                <a class="files-detail-open" href="/file/{{.SHA256}}" aria-label="Open {{.Basename}} in its own page"><span aria-hidden="true">↗</span></a>
                                 <span class="files-detail-size">{{.SizeStr}}</span>
                             </div>
                             <div class="files-detail-toptraits" data-toptraits-for="{{.SHA256}}"></div>
-                            <div class="files-detail-subtabs">
-                                <button class="files-subtab" data-sub="source" hidden>Source</button>
-                                <button class="files-subtab active" data-sub="findings">Traits</button>
-                                <button class="files-subtab" data-sub="strings">Strings</button>
-                                <button class="files-subtab" data-sub="symbols">Symbols</button>
-                                <button class="files-subtab" data-sub="metrics">Metrics</button>
-                                <button class="files-subtab" data-sub="kv">Metadata</button>
+                            <div class="files-detail-subtabs" role="tablist" aria-label="File detail views">
+                                <button type="button" class="files-subtab" role="tab" data-sub="source" aria-selected="false" tabindex="-1" hidden>Source</button>
+                                <button type="button" class="files-subtab active" role="tab" data-sub="findings" aria-selected="true" tabindex="0">Traits</button>
+                                <button type="button" class="files-subtab" role="tab" data-sub="strings" aria-selected="false" tabindex="-1">Strings</button>
+                                <button type="button" class="files-subtab" role="tab" data-sub="symbols" aria-selected="false" tabindex="-1">Symbols</button>
+                                <button type="button" class="files-subtab" role="tab" data-sub="metrics" aria-selected="false" tabindex="-1">Metrics</button>
+                                <button type="button" class="files-subtab" role="tab" data-sub="kv" aria-selected="false" tabindex="-1">Metadata</button>
                             </div>
                         </div>
                         {{end}}{{end}}
@@ -2006,22 +2173,32 @@
                             {{if .Categories}}
                             {{range .Categories}}
                             <div class="category-section">
-                                <div class="category-title">{{.Name}}</div>
+                                <h2 class="category-title">{{.Name}}</h2>
                                 <div class="findings-list">
                                     {{range .Findings}}
                                     {{$expandable := or .Sources .Evidence}}
                                     <div class="finding-card{{if $expandable}} expandable{{end}}"{{if $expandable}} data-trait-id="{{.ID}}"{{end}}>
-                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}}"></span>
-                                        <div class="trait-body">
-                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                                            <span class="trait-desc">{{.Desc}}</span>
-                                        </div>
                                         {{if $expandable}}
-                                        <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}} ▾</span>
-                                        <div class="finding-detail">
+                                        <button type="button" class="finding-card-toggle" aria-expanded="false">
+                                            <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                            <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                            <span class="trait-body">
+                                                <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                                <span class="trait-desc">{{.Desc}}</span>
+                                            </span>
+                                            <span class="files-pill">{{len .Evidence}} match{{if ne (len .Evidence) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                        </button>
+                                        <div class="finding-detail" hidden>
                                             <ul class="finding-evidence">
                                                 {{range .Evidence}}<li><code>{{.}}</code></li>{{end}}
                                             </ul>
+                                        </div>
+                                        {{else}}
+                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                        <div class="trait-body">
+                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                            <span class="trait-desc">{{.Desc}}</span>
                                         </div>
                                         {{end}}
                                     </div>
@@ -2039,7 +2216,7 @@
                             {{if .HasSections}}
                                 {{range .Sections}}
                                 <div class="category-section">
-                                    <div class="category-title">{{.Section}}</div>
+                                    <h2 class="category-title">{{.Section}}</h2>
                                     <table class="strings-table">
                                         <tbody>
                                             {{range .Strings}}
@@ -2070,7 +2247,7 @@
                         <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="symbols" hidden>
                             {{if .Imports}}
                             <div class="category-section">
-                                <div class="category-title">Imports</div>
+                                <h2 class="category-title">Imports</h2>
                                 <div class="symbols-list">
                                     {{range .Imports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
                                 </div>
@@ -2078,7 +2255,7 @@
                             {{end}}
                             {{if .Exports}}
                             <div class="category-section">
-                                <div class="category-title">Exports</div>
+                                <h2 class="category-title">Exports</h2>
                                 <div class="symbols-list">
                                     {{range .Exports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
                                 </div>
@@ -2092,7 +2269,7 @@
                             {{if .Groups}}
                             {{range .Groups}}
                             <div class="category-section">
-                                <div class="category-title">{{.Name}}</div>
+                                <h2 class="category-title">{{.Name}}</h2>
                                 <table class="metrics-table">
                                     <tbody>
                                         {{range .Fields}}
@@ -2134,7 +2311,7 @@
             {{end}}{{/* end if .IsArchive */}}
 
             {{if and (not .IsArchive) (not .IsText)}}
-            <div class="tab-content" id="tab-kv">
+            <div class="tab-content" id="tab-kv" role="tabpanel" aria-labelledby="tabbtn-kv" tabindex="0">
                 {{if .FileKVs}}
                     {{range .FileKVs}}
                     <table class="kv-table">
@@ -2154,7 +2331,7 @@
             </div>
             {{end}}
             {{if .ReportContent}}
-            <div class="tab-content" id="tab-report">
+            <div class="tab-content" id="tab-report" role="tabpanel" aria-labelledby="tabbtn-report" tabindex="0">
                 {{if or .ReportProvider .ReportCreated}}
                 <div class="report-meta">
                     {{if .ReportProvider}}<span>Provider {{.ReportProvider}}</span>{{end}}
@@ -2167,8 +2344,9 @@
         </section>
 
         <div class="feedback-prompt">
-            Not seeing what you expected? <a href="https://codeberg.org/atomdrift/lab/issues" target="_blank">Let us know</a>
+            Not seeing what you expected? <a href="https://codeberg.org/atomdrift/lab/issues" target="_blank" rel="noopener noreferrer">Let us know</a>
         </div>
+        </main>
 
         {{template "footer" .}}
     </div>
