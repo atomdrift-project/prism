@@ -11,6 +11,30 @@ const maxSize = 100 * 1024 * 1024; // 100 MB
 
 document.querySelectorAll('[data-gradient]').forEach(el => { el.style.background = el.getAttribute('data-gradient'); });
 
+// When the user clicks into a file from the feed, capture the visible
+// result set into sessionStorage so the result page can render prev/next
+// arrows that iterate through whatever query the user is browsing. Per-tab
+// (sessionStorage) so independent tabs don't trample each other; cleared
+// implicitly when the tab closes or the user lands on another feed page
+// and re-clicks (overwrites the entry).
+document.addEventListener('click', ev => {
+    const link = ev.target.closest('a.file-link[href^="/file/"]');
+    if (!link) return;
+    const all = Array.from(document.querySelectorAll('a.file-link[href^="/file/"]'));
+    const samples = all.map(a => ({
+        sha: (a.getAttribute('href') || '').replace(/^\/file\//, ''),
+        label: (a.textContent || '').trim(),
+    })).filter(s => /^[0-9a-f]{8,64}$/i.test(s.sha));
+    if (samples.length < 2) return; // nothing to iterate through
+    try {
+        sessionStorage.setItem('prism_nav', JSON.stringify({
+            returnUrl: location.pathname + location.search,
+            samples,
+            savedAt: Date.now(),
+        }));
+    } catch (_) { /* private mode / quota — ignore, fall back to no arrows */ }
+});
+
 function setStatusText(message, className = '') {
     uploadStatus.className = 'top-upload-status' + (className ? ' ' + className : '');
     uploadStatus.textContent = message;
