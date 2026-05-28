@@ -1889,7 +1889,7 @@
         <section class="hero" aria-labelledby="hero-filename">
             <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
                 <div class="verdict-bar-left">
-                    <span class="band" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}" aria-hidden="true"></span>
+                    <span class="band" data-gradient="{{if $.Threshold}}{{bandGradient2 .Probability $.Threshold $.Class}}{{else}}{{bandGradient .Probability $.SuspiciousT $.HostileT}}{{end}}" aria-hidden="true"></span>
                     <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Filename}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                 </div>
                 <div class="verdict">
@@ -1899,7 +1899,7 @@
                     <span class="hero-toggle-icon" aria-hidden="true">▴</span>
                 </button>
             </div>
-            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a></div>
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}<span class="verdict-level" title="False-positive severity level (1=loose, 9=paranoid) that selected the deciding threshold">&nbsp;·&nbsp;L{{.Level}}</span>{{end}}</div>
             <div class="hero-body" id="hero-details">
             <div class="molecule-viz">
                 <div class="molecule-container">
@@ -2136,7 +2136,7 @@
                     {{if $.IsArchive}}
                     <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-risk-dot" data-gradient="{{if $.Threshold}}{{bandGradient2 .Probability $.Threshold $.Class}}{{else}}{{bandGradient .Probability $.SuspiciousT $.HostileT}}{{end}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
                         {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
@@ -2183,7 +2183,7 @@
                     {{if $.IsArchive}}
                     <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-risk-dot" data-gradient="{{if $.Threshold}}{{bandGradient2 .Probability $.Threshold $.Class}}{{else}}{{bandGradient .Probability $.SuspiciousT $.HostileT}}{{end}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
                         {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
@@ -2221,7 +2221,7 @@
                     {{if $.IsArchive}}
                     <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-risk-dot" data-gradient="{{if $.Threshold}}{{bandGradient2 .Probability $.Threshold $.Class}}{{else}}{{bandGradient .Probability $.SuspiciousT $.HostileT}}{{end}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
                         {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
@@ -2264,7 +2264,7 @@
                     {{if $.IsArchive}}
                     <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
                         <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{bandGradient .Probability $.SuspiciousT $.HostileT}}"></span>
+                            <span class="file-risk-dot" data-gradient="{{if $.Threshold}}{{bandGradient2 .Probability $.Threshold $.Class}}{{else}}{{bandGradient .Probability $.SuspiciousT $.HostileT}}{{end}}"></span>
                             <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
                         </div>
                         {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}

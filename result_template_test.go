@@ -22,6 +22,9 @@ func TestResultTemplateParses(t *testing.T) {
 		"bandGradient": func(_, _, _ float64) template.CSS {
 			return template.CSS("linear-gradient(90deg, #fff, #000)")
 		},
+		"bandGradient2": func(_, _ float64, _ int) template.CSS {
+			return template.CSS("linear-gradient(90deg, #fff, #000)")
+		},
 		"chromaCSS": func() template.CSS { return "" },
 	}
 	tmpl, err := template.New("result.html").Funcs(funcs).ParseFS(templatesFS,

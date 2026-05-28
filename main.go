@@ -710,13 +710,19 @@ type resultData struct {
 	ArchiveCategories []CategoryGroup
 	HostileT          float64
 	SuspiciousT       float64
-	TotalFiles        int
-	ShownFiles        int
-	Probability       float64
-	IsArchive         bool
-	IsText            bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
-	LimitedInfo       bool
-	RescanAllowed     bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
+	// Threshold/Class/Level populated from v=5 envelopes. Threshold > 0 is
+	// the sentinel for "use the v=5 exact-band path"; v=4 inputs leave it 0
+	// and the template falls back to the legacy two-edge gradient.
+	Threshold     float64
+	Class         int
+	Level         *int
+	TotalFiles    int
+	ShownFiles    int
+	Probability   float64
+	IsArchive     bool
+	IsText        bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
+	LimitedInfo   bool
+	RescanAllowed bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 	// Contents holds the rendered text body of a text file, broken into
 	// annotated lines. Empty for non-text files and archives.
 	Contents []ContentLine
@@ -806,6 +812,10 @@ type feedRow struct {
 	HostileT    float64
 	SuspiciousT float64
 	Probability float64
+	// Threshold/Class populated from v=5 envelopes; Threshold > 0 selects
+	// the exact-band rendering path in templates.
+	Threshold float64
+	Class     int
 }
 
 type feedPageData struct {
@@ -858,6 +868,8 @@ type cachedFeedSample struct {
 	Probability    float64
 	SuspiciousT    float64
 	HostileT       float64
+	Threshold      float64 // v=5 only; zero for v=4 inputs
+	Class          int     // v=5 only; mirrored from envelope for rendering
 }
 
 // cleaveReport is constructed from JSONL output (multiple lines).
@@ -882,6 +894,8 @@ type cleaveFile struct {
 	Exports        []symbolInfo               `json:"exports,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
 	Probability    float64                    `json:"-"` // populated from ml.fs after parsing
+	Threshold      float64                    `json:"-"` // v=5: per-file deciding cutoff (populated from ml.fs[i].threshold)
+	Class          int                        `json:"-"` // v=5: per-file integer class (mirrors Classification for template branching)
 	Size           int64                      `json:"sz"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
@@ -1155,49 +1169,19 @@ func main() {
 		"formulaQuery":     desubscriptFormula,
 		"ecoColor":         ecosystemColor,
 		"chromaCSS":        func() template.CSS { return chromaStylesheet },
-		// bandGradient returns a CSS linear-gradient matching litmus's
-		// two-block confidence indicator. Each classification band has its
-		// own color ramp, and the two gradient stops represent left/right
-		// block colors at the current band progress. Thresholds come from
-		// the litmus response.
+		// bandGradient returns a CSS linear-gradient for v=4 envelopes that
+		// publish both band edges. Each classification band has its own
+		// color ramp; the two gradient stops are left/right block colors at
+		// the current within-band progress.
 		"bandGradient": func(p, suspT, hostT float64) template.CSS {
-			type rgb struct{ r, g, b float64 }
-			mix := func(a, b rgb, t float64) rgb {
-				return rgb{a.r + t*(b.r-a.r), a.g + t*(b.g-a.g), a.b + t*(b.b-a.b)}
-			}
-			css := func(c rgb) string {
-				return fmt.Sprintf("rgb(%d,%d,%d)", int(c.r), int(c.g), int(c.b))
-			}
-
-			var t float64 // band progress [0, 1]
-			var left, right rgb
-
-			switch {
-			case p >= hostT:
-				t = (p - hostT) / (1.0 - hostT)
-				if t > 1 {
-					t = 1
-				}
-				// Hostile: orange-red → saturated red
-				left = mix(rgb{255, 135, 40}, rgb{255, 50, 65}, t)
-				right = mix(rgb{255, 95, 35}, rgb{255, 35, 35}, t)
-			case p >= suspT:
-				t = (p - suspT) / (hostT - suspT)
-				// Suspicious: greenish-yellow → orange
-				left = mix(rgb{170, 190, 45}, rgb{255, 180, 40}, t)
-				right = mix(rgb{235, 220, 65}, rgb{255, 125, 20}, t)
-			default:
-				if suspT > 0 {
-					t = p / suspT
-				}
-				// Benign: teal-green → yellow-green
-				left = mix(rgb{25, 170, 120}, rgb{120, 190, 40}, t)
-				right = mix(rgb{70, 215, 135}, rgb{195, 210, 60}, t)
-			}
-
-			return template.CSS(fmt.Sprintf( //nolint:gosec // input is rgb derived from in-package floats, no user content
-				"linear-gradient(90deg, %s, %s)", css(left), css(right),
-			))
+			return renderBandGradient(p, bandProgressV4(p, suspT, hostT), classifyByThresholds(p, suspT, hostT))
+		},
+		// bandGradient2 is the v=5 path: only the deciding threshold is
+		// known, so within-band progress is measured against (threshold, 1.0)
+		// for non-benign and (0, threshold) for benign. Class drives the
+		// color ramp directly so the rendering is exact for the verdict.
+		"bandGradient2": func(p, threshold float64, class int) template.CSS {
+			return renderBandGradient(p, bandProgressV5(p, threshold, class), class)
 		},
 	}
 	var tmplErr error
@@ -4546,6 +4530,14 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	if data.HostileT == 0 {
 		data.HostileT = 0.887
 	}
+	// v=5 exact-rendering path: Threshold > 0 makes templates branch to
+	// bandGradient2; Level surfaces the FPR severity that selected the
+	// threshold (nil when manual thresholds were used).
+	if mlResp.V == "5" {
+		data.Threshold = mlResp.Threshold
+		data.Class = mlResp.Classification
+		data.Level = mlResp.Level
+	}
 
 	report := &cleaveReport{}
 	if len(fullResp.Raw) > 0 {
@@ -4564,20 +4556,25 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	}
 
 	// Merge ML classifications from ml.fs into cleave report files (matched by id).
+	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs.
 	mlByID := make(map[int]struct {
-		Class int
-		Prob  float64
+		Class     int
+		Prob      float64
+		Threshold float64
 	}, len(mlResp.Files))
 	for _, f := range mlResp.Files {
 		mlByID[f.ID] = struct {
-			Class int
-			Prob  float64
-		}{f.Class, f.Prob}
+			Class     int
+			Prob      float64
+			Threshold float64
+		}{f.Class, f.Prob, f.Threshold}
 	}
 	for i := range report.Files {
 		if ml, ok := mlByID[report.Files[i].ID]; ok {
 			report.Files[i].Classification = classificationName(ml.Class)
 			report.Files[i].Probability = ml.Prob
+			report.Files[i].Threshold = ml.Threshold
+			report.Files[i].Class = ml.Class
 		}
 	}
 
@@ -6189,6 +6186,94 @@ func (r *litmusMlResponse) v5BandEdges() (suspiciousT, hostileT float64) {
 		return t, t + (1-t)*0.5
 	default: // benign: Threshold is the suspicious cutoff (line not crossed)
 		return t, t + (1-t)*0.5
+	}
+}
+
+// bandRGB is one stop of the two-color band gradient.
+type bandRGB struct{ r, g, b float64 }
+
+func mixRGB(a, b bandRGB, t float64) bandRGB {
+	return bandRGB{a.r + t*(b.r-a.r), a.g + t*(b.g-a.g), a.b + t*(b.b-a.b)}
+}
+
+func cssRGB(c bandRGB) string {
+	return fmt.Sprintf("rgb(%d,%d,%d)", int(c.r), int(c.g), int(c.b))
+}
+
+// renderBandGradient builds the linear-gradient CSS for one indicator using
+// the band's two color stops at the given within-band progress.
+func renderBandGradient(_ float64, t float64, class int) template.CSS {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	var left, right bandRGB
+	switch class {
+	case 2: // hostile: orange-red → saturated red
+		left = mixRGB(bandRGB{255, 135, 40}, bandRGB{255, 50, 65}, t)
+		right = mixRGB(bandRGB{255, 95, 35}, bandRGB{255, 35, 35}, t)
+	case 1: // suspicious: greenish-yellow → orange
+		left = mixRGB(bandRGB{170, 190, 45}, bandRGB{255, 180, 40}, t)
+		right = mixRGB(bandRGB{235, 220, 65}, bandRGB{255, 125, 20}, t)
+	default: // benign: teal-green → yellow-green
+		left = mixRGB(bandRGB{25, 170, 120}, bandRGB{120, 190, 40}, t)
+		right = mixRGB(bandRGB{70, 215, 135}, bandRGB{195, 210, 60}, t)
+	}
+	return template.CSS(fmt.Sprintf( //nolint:gosec // rgb derived from in-package floats, no user content
+		"linear-gradient(90deg, %s, %s)", cssRGB(left), cssRGB(right),
+	))
+}
+
+// classifyByThresholds maps (prob, suspT, hostT) to the v=4 integer class.
+func classifyByThresholds(p, suspT, hostT float64) int {
+	switch {
+	case p >= hostT:
+		return 2
+	case p >= suspT:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// bandProgressV4 returns within-band progress [0,1] using both band edges.
+func bandProgressV4(p, suspT, hostT float64) float64 {
+	switch {
+	case p >= hostT:
+		if hostT >= 1 {
+			return 1
+		}
+		return (p - hostT) / (1.0 - hostT)
+	case p >= suspT:
+		if hostT <= suspT {
+			return 0
+		}
+		return (p - suspT) / (hostT - suspT)
+	default:
+		if suspT <= 0 {
+			return 0
+		}
+		return p / suspT
+	}
+}
+
+// bandProgressV5 returns within-band progress [0,1] using the single deciding
+// threshold from a v=5 envelope. For non-benign bands progress is measured
+// over (threshold, 1.0); for benign over (0, threshold).
+func bandProgressV5(p, threshold float64, class int) float64 {
+	switch class {
+	case 2, 1: // hostile or suspicious: prob >= threshold
+		if threshold >= 1 {
+			return 1
+		}
+		return (p - threshold) / (1.0 - threshold)
+	default: // benign: prob < threshold
+		if threshold <= 0 {
+			return 0
+		}
+		return p / threshold
 	}
 }
 
