@@ -33,7 +33,7 @@ func TestAggregateBackAttributesViaLocations(t *testing.T) {
 		},
 	}
 
-	groups := aggregateArchiveCategories(files)
+	groups, _, _ := aggregateArchiveCategories(files)
 	// aggregateArchiveCategories collapses leaf trait IDs to their dir
 	// path (segments 1..n-1), so this rootkit trait rolls up under
 	// "malware/rootkit" rather than the full leaf.
@@ -84,7 +84,7 @@ func TestAggregateDropsUnresolvableContainerSources(t *testing.T) {
 		},
 	}
 
-	groups := aggregateArchiveCategories(files)
+	groups, _, _ := aggregateArchiveCategories(files)
 	for _, g := range groups {
 		for _, f := range g.Findings {
 			for _, m := range f.Matches {

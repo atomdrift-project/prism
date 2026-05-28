@@ -465,6 +465,11 @@ type FileFindingsDisplay struct {
 	FileType       string
 	Categories     []CategoryGroup
 	Probability    float64
+	// TraitTotal is the number of distinct traits the sample produced;
+	// TraitShown is how many survived the top-N cap. When TraitTotal >
+	// TraitShown the Traits tab notes that the list was truncated.
+	TraitTotal int
+	TraitShown int
 }
 
 // FileStringsDisplay represents strings for a single file.
@@ -708,6 +713,11 @@ type resultData struct {
 	// file in an archive (deduped by trait ID). The archive Traits tab
 	// shows this summary; per-file breakdowns live behind the Files tab.
 	ArchiveCategories []CategoryGroup
+	// ArchiveTraitTotal / ArchiveTraitShown mirror the per-file counts for
+	// the aggregated archive Traits tab: total distinct traits vs. how many
+	// survived the top-N cap.
+	ArchiveTraitTotal int
+	ArchiveTraitShown int
 	HostileT          float64
 	SuspiciousT       float64
 	// Threshold/Class/Level populated from v=5 envelopes. Threshold > 0 is
@@ -4871,7 +4881,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 			data.TraitOccurrenceJSON = template.JS(occJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
 		}
 	}
-	data.ArchiveCategories = aggregateArchiveCategories(report.Files)
+	data.ArchiveCategories, data.ArchiveTraitTotal, data.ArchiveTraitShown = aggregateArchiveCategories(report.Files)
 
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
@@ -5048,15 +5058,16 @@ type traitOccurrence struct {
 }
 
 // buildTraitOccurrenceMap counts the distinct files where each full trait ID
-// fires across the archive, keyed by the full ID. Only includes
-// notable-or-higher findings (matches aggregateArchiveCategories).
+// fires across the archive, keyed by the full ID. Includes everything down to
+// component (Crit 1) so the source-view sidebar can pivot into any card the
+// archive Traits tab may render (matches aggregateArchiveCategories).
 func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
 	perTraitFiles := make(map[string]map[string]struct{})
 	perTraitArchive := make(map[string]traitOccurrence)
 	for i := range files {
 		f := &files[i]
 		for _, t := range f.Findings {
-			if t.Crit < 3 {
+			if t.Crit < 1 {
 				continue
 			}
 			parts := strings.Split(t.ID, "/")
@@ -5096,6 +5107,64 @@ func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
 // per-file views). Categories not listed here render after all known
 // ones, sorted alphabetically by key for determinism.
 var canonicalCategoryOrder = []string{"well-known", "objectives", "micro-behaviors", "metadata", "third_party"}
+
+// maxSampleTraits caps how many trait cards a single sample's Traits tab
+// renders. The survivors are the highest criticality*confidence traits;
+// callers surface the dropped count as a "N of M traits shown" note.
+const maxSampleTraits = 20
+
+// scoredTrait pairs a display-ready trait with the numeric criticality and
+// confidence used to rank it against the top-N cap.
+type scoredTrait struct {
+	topLevel string
+	display  FindingDisplay
+	crit     int
+	conf     float64
+}
+
+// selectTopTraits keeps the highest criticality*confidence traits up to
+// maxSampleTraits and groups the survivors into canonically-ordered
+// categories. It returns the grouped categories, the total number of traits
+// before the cap, and how many survived. Within each category traits stay
+// ordered by criticality (desc) then ID, matching the rest of the report.
+func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (groups []CategoryGroup, total, shown int) {
+	total = len(scored)
+	sort.SliceStable(scored, func(i, j int) bool {
+		si := float64(scored[i].crit) * scored[i].conf
+		sj := float64(scored[j].crit) * scored[j].conf
+		if si != sj {
+			return si > sj
+		}
+		if scored[i].crit != scored[j].crit {
+			return scored[i].crit > scored[j].crit
+		}
+		return scored[i].display.ID < scored[j].display.ID
+	})
+	if len(scored) > maxSampleTraits {
+		scored = scored[:maxSampleTraits]
+	}
+	shown = len(scored)
+
+	byCat := make(map[string][]scoredTrait)
+	for _, s := range scored {
+		byCat[s.topLevel] = append(byCat[s.topLevel], s)
+	}
+	categoryMap := make(map[string][]FindingDisplay, len(byCat))
+	for cat, items := range byCat {
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].crit != items[j].crit {
+				return items[i].crit > items[j].crit
+			}
+			return items[i].display.ID < items[j].display.ID
+		})
+		fds := make([]FindingDisplay, len(items))
+		for i, it := range items {
+			fds[i] = it.display
+		}
+		categoryMap[cat] = fds
+	}
+	return orderCategories(categoryMap, displayNames), total, shown
+}
 
 // orderCategories assembles categoryMap's entries into a []CategoryGroup
 // in the canonical order defined by canonicalCategoryOrder, with empty
@@ -5162,7 +5231,7 @@ func resolveMatchFile(location string, pathToFile map[string]*cleaveFile) *cleav
 	return pathToFile[strings.ReplaceAll(member, "!", "!!")]
 }
 
-func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
+func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, total, shown int) {
 	categoryNames := map[string]string{
 		"objectives":      "Objectives",
 		"micro-behaviors": "Micro-behaviors",
@@ -5208,7 +5277,7 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 	for i := range files {
 		file := &files[i]
 		for _, f := range file.Findings {
-			if f.Crit < 3 {
+			if f.Crit < 1 {
 				continue
 			}
 			parts := strings.Split(f.ID, "/")
@@ -5286,10 +5355,10 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 		}
 	}
 	if len(bucket) == 0 {
-		return nil
+		return nil, 0, 0
 	}
 
-	categoryMap := make(map[string][]FindingDisplay)
+	scored := make([]scoredTrait, 0, len(bucket))
 	for _, agg := range bucket {
 		matches := make([]FindingMatch, 0, len(agg.matches))
 		for _, k := range agg.order {
@@ -5313,21 +5382,20 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 		if len(matches) > maxMatches {
 			matches = matches[:maxMatches]
 		}
-		categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], FindingDisplay{
-			ID:      agg.dirPath,
-			Crit:    critIntToString(agg.crit),
-			Desc:    agg.desc,
-			Matches: matches,
+		scored = append(scored, scoredTrait{
+			topLevel: agg.topLevel,
+			crit:     agg.crit,
+			conf:     agg.conf,
+			display: FindingDisplay{
+				ID:      agg.dirPath,
+				Crit:    critIntToString(agg.crit),
+				Desc:    agg.desc,
+				Matches: matches,
+			},
 		})
 	}
 
-	critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
-	for _, findings := range categoryMap {
-		sort.SliceStable(findings, func(i, j int) bool {
-			return critRank[findings[i].Crit] > critRank[findings[j].Crit]
-		})
-	}
-	return orderCategories(categoryMap, categoryNames)
+	return selectTopTraits(scored, categoryNames)
 }
 
 func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
@@ -5361,8 +5429,9 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		aggregated := make(map[string]*aggregatedFinding)
 
 		for _, f := range file.Findings {
-			// Only show notable (3) or higher
-			if f.Crit < 3 {
+			// Include everything down to component (1); the top-N cap
+			// below decides which traits actually render.
+			if f.Crit < 1 {
 				continue
 			}
 
@@ -5414,9 +5483,9 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			}
 		}
 
-		// Group by top-level category
-		categoryMap := make(map[string][]FindingDisplay)
-
+		// Score each aggregated trait so the top-N cap can keep the highest
+		// criticality*confidence ones across every category.
+		scored := make([]scoredTrait, 0, len(aggregated))
 		for _, agg := range aggregated {
 			// Convert evidence map to sorted slice. Per-file findings
 			// don't carry path attribution (we're already in that file's
@@ -5434,32 +5503,20 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				matches = append(matches, FindingMatch{Evidence: e, Count: 1})
 			}
 
-			fd := FindingDisplay{
-				ID:      agg.dirPath, // Show directory path without top-level
-				Crit:    critIntToString(agg.crit),
-				Desc:    agg.desc,
-				Matches: matches,
-			}
-
-			categoryMap[agg.topLevel] = append(categoryMap[agg.topLevel], fd)
-		}
-
-		critRank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
-
-		// Sort findings within each category by criticality (desc), then alphabetically
-		for cat := range categoryMap {
-			findings := categoryMap[cat]
-			sort.Slice(findings, func(i, j int) bool {
-				ci, cj := critRank[findings[i].Crit], critRank[findings[j].Crit]
-				if ci != cj {
-					return ci > cj
-				}
-				return findings[i].ID < findings[j].ID
+			scored = append(scored, scoredTrait{
+				topLevel: agg.topLevel,
+				crit:     agg.crit,
+				conf:     agg.conf,
+				display: FindingDisplay{
+					ID:      agg.dirPath, // Show directory path without top-level
+					Crit:    critIntToString(agg.crit),
+					Desc:    agg.desc,
+					Matches: matches,
+				},
 			})
-			categoryMap[cat] = findings
 		}
 
-		categories := orderCategories(categoryMap, categoryNames)
+		categories, traitTotal, traitShown := selectTopTraits(scored, categoryNames)
 
 		if len(categories) > 0 {
 			// Extract basename
@@ -5483,6 +5540,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				Formula:        file.Formula,
 				FileType:       strings.ToUpper(file.FileType),
 				Categories:     categories,
+				TraitTotal:     traitTotal,
+				TraitShown:     traitShown,
 			})
 		}
 	}

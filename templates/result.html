@@ -1410,6 +1410,13 @@
         .crit-badge.suspicious { background: var(--suspicious); }
         .crit-badge.notable { background: var(--notable); }
         .crit-badge.baseline { background: var(--slate); }
+        .crit-badge.component { background: #aab2bd; }
+        .traits-truncation {
+            margin: 12px 4px 0;
+            font-size: 12px;
+            color: var(--slate);
+            opacity: 0.7;
+        }
         .trait-id {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 13px;
@@ -2053,11 +2060,16 @@
                             </div>
                         </div>
                         {{end}}
+                        {{if gt .ArchiveTraitTotal .ArchiveTraitShown}}
+                        <p class="traits-truncation">{{.ArchiveTraitShown}} of {{.ArchiveTraitTotal}} traits shown</p>
+                        {{end}}
                     {{else}}
                         <div class="no-findings">No notable behaviors detected across this archive.</div>
                     {{end}}
                 {{else if .FileFindings}}
                     {{range .FileFindings}}
+                    {{$traitTotal := .TraitTotal}}
+                    {{$traitShown := .TraitShown}}
                     {{range .Categories}}
                     <div class="category-section">
                         <h2 class="category-title">{{.Name}}</h2>
@@ -2096,6 +2108,9 @@
                             {{end}}
                         </div>
                     </div>
+                    {{end}}
+                    {{if gt $traitTotal $traitShown}}
+                    <p class="traits-truncation">{{$traitShown}} of {{$traitTotal}} traits shown</p>
                     {{end}}
                     {{end}}
                 {{else}}
