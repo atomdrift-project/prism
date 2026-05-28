@@ -830,13 +830,20 @@ type feedPageData struct {
 	SearchQuery     string
 	CSRFToken       string
 	SelectedEco     string
-	Domains         []string
-	Ecosystems      []string
-	Rows            []feedRow
-	TotalCount      int
-	FilteredCount   int
-	Refresh         bool
-	HasHopper       bool
+	// PrevURL/NextURL are empty when there is no adjacent page.
+	PrevURL    string
+	NextURL    string
+	Domains    []string
+	Ecosystems []string
+	Rows       []feedRow
+	// Pages holds the per-page links (empty when a single page covers every
+	// row); Page is the 1-indexed current page over the cached snapshot.
+	Pages         []feedPageLink
+	TotalCount    int
+	FilteredCount int
+	Page          int
+	Refresh       bool
+	HasHopper     bool
 	// UploadEnabled mirrors the package-level toggle so the template can
 	// pick the real upload form vs. the disabled placeholder.
 	UploadEnabled bool
@@ -845,6 +852,13 @@ type feedPageData struct {
 	// listed, and the table grows a "Feed" column showing which source
 	// each row came from. Activated by ?feeds=1 — no dropdown surface.
 	FeedsOnly bool
+}
+
+// feedPageLink is one entry in the feed's pagination strip.
+type feedPageLink struct {
+	URL     string
+	Num     int
+	Current bool
 }
 
 type cachedFeedSnapshot struct {
@@ -1591,7 +1605,15 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 	}
 }
 
-const feedLimit = 100
+// feedPageSize is how many rows render on a single feed page. feedLimit is
+// the total pulled in one cached hopper query (feedPages × feedPageSize), so
+// paging is a pure in-memory slice of the cached snapshot — every page after
+// the first serves from cache with no extra query.
+const (
+	feedPageSize = 100
+	feedPages    = 5
+	feedLimit    = feedPageSize * feedPages
+)
 
 // feedQueryArgs bundles the filter knobs that flow through the feed
 // pipeline. Bundling avoids a long parameter pile and keeps the cache
@@ -2525,6 +2547,55 @@ func validEcosystem(s string) bool {
 	return true
 }
 
+// paginateFeed slices the already-filtered, cached rows down to the page
+// requested via ?page=N (1-indexed) and fills in the navigation links. Every
+// page is served from the same cached snapshot, so only the slice bounds
+// change between pages — no extra hopper query. FilteredCount becomes the
+// number of rows actually shown on the page.
+func paginateFeed(data *feedPageData, r *http.Request) {
+	total := len(data.Rows)
+	totalPages := max((total+feedPageSize-1)/feedPageSize, 1)
+	page := 1
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > page {
+		page = p
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	data.Page = page
+
+	start := (page - 1) * feedPageSize
+	end := min(start+feedPageSize, total)
+	data.Rows = data.Rows[start:end]
+	data.FilteredCount = len(data.Rows)
+
+	if totalPages <= 1 {
+		return
+	}
+	pageURL := func(n int) string {
+		q := r.URL.Query()
+		if n <= 1 {
+			q.Del("page")
+		} else {
+			q.Set("page", strconv.Itoa(n))
+		}
+		if enc := q.Encode(); enc != "" {
+			return r.URL.Path + "?" + enc
+		}
+		return r.URL.Path
+	}
+	data.Pages = make([]feedPageLink, 0, totalPages)
+	for n := 1; n <= totalPages; n++ {
+		data.Pages = append(data.Pages, feedPageLink{Num: n, URL: pageURL(n), Current: n == page})
+	}
+	if page > 1 {
+		data.PrevURL = pageURL(page - 1)
+	}
+	if page < totalPages {
+		data.NextURL = pageURL(page + 1)
+	}
+}
+
 func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	rawQ := strings.TrimSpace(r.URL.Query().Get("q"))
 	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
@@ -2591,7 +2662,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		if data.SelectedQ != "" {
 			data.Rows = filterRowsBySearch(data.Rows, data.SelectedQ)
 		}
-		data.FilteredCount = len(data.Rows)
+		paginateFeed(&data, r)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",

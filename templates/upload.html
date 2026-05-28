@@ -299,6 +299,34 @@
             font-size: 12px;
             white-space: nowrap;
         }
+        .pager {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            padding: 12px;
+            border-top: 1px solid var(--border);
+        }
+        .pager-link {
+            min-width: 32px;
+            padding: 5px 9px;
+            text-align: center;
+            font-size: 13px;
+            color: var(--slate);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            text-decoration: none;
+        }
+        .pager-link:hover { border-color: var(--toxic-dark); color: var(--carbon); }
+        .pager-link.current {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-dark);
+            font-weight: 650;
+        }
+        .pager-link.disabled {
+            color: var(--border);
+            cursor: default;
+        }
         .table-wrap {
             overflow-x: auto;
             background: var(--white);
@@ -605,6 +633,15 @@
                     {{end}}
                 </tbody>
             </table>
+            {{if .Pages}}
+            <nav class="pager" aria-label="Feed pages">
+                {{if .PrevURL}}<a class="pager-link" rel="prev" href="{{.PrevURL}}">Prev</a>{{else}}<span class="pager-link disabled">Prev</span>{{end}}
+                {{range .Pages}}
+                {{if .Current}}<span class="pager-link current" aria-current="page">{{.Num}}</span>{{else}}<a class="pager-link" href="{{.URL}}">{{.Num}}</a>{{end}}
+                {{end}}
+                {{if .NextURL}}<a class="pager-link" rel="next" href="{{.NextURL}}">Next</a>{{else}}<span class="pager-link disabled">Next</span>{{end}}
+            </nav>
+            {{end}}
             {{else}}
             <div class="empty">Connect hopper to show recent records.</div>
             {{end}}
