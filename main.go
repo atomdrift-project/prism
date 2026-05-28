@@ -1638,7 +1638,7 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v3:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v4:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds
 }
 
