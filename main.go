@@ -861,12 +861,29 @@ type feedPageLink struct {
 	Current bool
 }
 
+// queryDiag is a single data-source diagnostic, emitted as an HTML comment at
+// the end of the page (one per query). Duration/Age are pre-formatted strings.
+type queryDiag struct {
+	Name     string
+	Source   string // "cache" or "postgres"
+	Duration string
+	Age      string
+	Params   string
+	Rows     int
+	Bytes    int
+}
+
 type cachedFeedSnapshot struct {
 	GeneratedAt time.Time
 	Rows        []cachedFeedSample
 	Ecosystems  []string
 	Domains     []string
 	TotalCount  int
+	// Bytes is the JSON-serialized size of this snapshot (the same encoding
+	// the localfs cache persists), captured once at build time so the
+	// per-request diagnostics can report payload size without re-marshaling
+	// on a cache hit.
+	Bytes int
 }
 
 type cachedFeedSample struct {
@@ -1642,23 +1659,72 @@ func feedCacheKey(a feedQueryArgs) string {
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds
 }
 
-// loadFeedRows fetches a feed page, caching every query for feedCacheTTL.
+// loadFeedSnapshot fetches a feed page, caching every query for feedCacheTTL.
 // All concurrent requests for the same filter set share one hopper round-
 // trip via fido's built-in singleflight. Pre-cached variants (default +
 // criticality) stay hot via feedPrecacheLoop so high-traffic views never
-// hit a cold loader on the request path.
-func loadFeedRows(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+// hit a cold loader on the request path. The returned queryDiag reports
+// whether the data came from cache, how long the fetch took, the snapshot's
+// age, and its row/byte counts.
+func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (cachedFeedSnapshot, queryDiag, error) {
+	start := time.Now()
+	diag := queryDiag{Name: "index", Source: "postgres", Params: feedDiagParams(a)}
+	var snapshot cachedFeedSnapshot
+	var err error
 	if feedCache == nil {
-		return loadFeedRowsFromHopper(ctx, a, reqLogger)
+		snapshot, err = buildFeedSnapshot(ctx, a, reqLogger)
+	} else {
+		fromCache := true
+		snapshot, err = feedCache.FetchTTL(ctx, feedCacheKey(a), feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
+			fromCache = false
+			return buildFeedSnapshot(lctx, a, reqLogger)
+		})
+		if fromCache {
+			diag.Source = "cache"
+		}
 	}
-	key := feedCacheKey(a)
-	snapshot, err := feedCache.FetchTTL(ctx, key, feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
-		return buildFeedSnapshot(lctx, a, reqLogger)
-	})
 	if err != nil {
-		return nil, nil, nil, 0, err
+		return cachedFeedSnapshot{}, diag, err
 	}
-	return feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, snapshot.Domains, snapshot.TotalCount, nil
+	diag.Duration = time.Since(start).Round(time.Microsecond).String()
+	diag.Age = time.Since(snapshot.GeneratedAt).Round(time.Second).String()
+	diag.Rows = len(snapshot.Rows)
+	diag.Bytes = snapshot.Bytes
+	return snapshot, diag, nil
+}
+
+// feedDiagParams renders the cache-key dimensions of a feed query into a
+// compact comma-separated string for the diagnostics comment. Empty ecosystem
+// and criticality read as "any"; the rarer filters appear only when set.
+func feedDiagParams(a feedQueryArgs) string {
+	parts := []string{
+		"ecosystem=" + firstNonEmpty(diagSafe(a.ecosystem), "any"),
+		"crit=" + firstNonEmpty(diagSafe(a.criticality), "any"),
+	}
+	if a.domain != "" {
+		parts = append(parts, "domain="+diagSafe(a.domain))
+	}
+	if a.formula != "" {
+		parts = append(parts, "formula="+diagSafe(a.formula))
+	}
+	if a.feedsOnly {
+		parts = append(parts, "feeds=1")
+	}
+	return strings.Join(parts, ",")
+}
+
+// diagSafe reduces a request-derived value to plain ASCII alphanumerics
+// (capped at 256 bytes) so it cannot break out of the HTML comment the
+// diagnostics are written into. Anything else is dropped — the diagnostics
+// don't need punctuation, and dropping it removes any injection surface.
+func diagSafe(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s) && b.Len() < 256; i++ {
+		if c := s[i]; c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // buildFeedSnapshot runs the live hopper queries and packages the result
@@ -1669,13 +1735,17 @@ func buildFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Log
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
-	return cachedFeedSnapshot{
+	snap := cachedFeedSnapshot{
 		GeneratedAt: time.Now(),
 		Rows:        cachedFeedSamplesFromRows(rows),
 		Ecosystems:  ecosystems,
 		Domains:     domains,
 		TotalCount:  total,
-	}, nil
+	}
+	if encoded, err := json.Marshal(snap); err == nil {
+		snap.Bytes = len(encoded)
+	}
+	return snap, nil
 }
 
 func loadFeedRowsFromHopper(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
@@ -2630,9 +2700,9 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		data.Title = ecosystem + " Fallout"
 	}
 
+	var diags []queryDiag
 	if hopperDB.Load() != nil {
-		var err error
-		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(
+		snapshot, diag, err := loadFeedSnapshot(
 			r.Context(),
 			feedQueryArgs{
 				ecosystem:   data.SelectedEco,
@@ -2652,13 +2722,16 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			})
 			return
 		}
-		filtered := data.Ecosystems[:0:0]
-		for _, e := range data.Ecosystems {
+		diags = append(diags, diag)
+		data.Rows = feedRowsFromSnapshot(snapshot)
+		data.TotalCount = snapshot.TotalCount
+		data.Domains = snapshot.Domains
+		data.Ecosystems = snapshot.Ecosystems[:0:0]
+		for _, e := range snapshot.Ecosystems {
 			if knownEcosystems[strings.ToLower(e)] {
-				filtered = append(filtered, e)
+				data.Ecosystems = append(data.Ecosystems, e)
 			}
 		}
-		data.Ecosystems = filtered
 		if data.SelectedQ != "" {
 			data.Rows = filterRowsBySearch(data.Rows, data.SelectedQ)
 		}
@@ -2669,6 +2742,24 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			"template", "feed",
 			"error", err,
 		)
+		return
+	}
+	writeQueryDiags(w, diags)
+}
+
+// writeQueryDiags appends one HTML comment per executed query to the response.
+// html/template strips comments from template source, so these are written
+// after Execute rather than from the template itself.
+func writeQueryDiags(w io.Writer, diags []queryDiag) {
+	for _, d := range diags {
+		// Params is the only request-derived field and is reduced to ASCII
+		// alphanumerics by diagSafe, so it cannot break out of the
+		// surrounding HTML comment; gosec's taint analysis can't see the
+		// custom sanitizer.
+		if _, err := fmt.Fprintf(w, "\n<!-- %s source:%s duration:%s age:%s params:%s rows=%d bytes=%d -->", //nolint:gosec // params sanitized by diagSafe
+			d.Name, d.Source, d.Duration, d.Age, d.Params, d.Rows, d.Bytes); err != nil {
+			return
+		}
 	}
 }
 
