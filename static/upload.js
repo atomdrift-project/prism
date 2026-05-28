@@ -25,11 +25,13 @@ document.addEventListener('click', ev => {
         sha: (a.getAttribute('href') || '').replace(/^\/file\//, ''),
         label: (a.textContent || '').trim(),
     })).filter(s => /^[0-9a-f]{8,64}$/i.test(s.sha));
-    if (samples.length < 2) return; // nothing to iterate through
     try {
         sessionStorage.setItem('prism_nav', JSON.stringify({
             returnUrl: location.pathname + location.search,
-            samples,
+            // Fewer than 2 samples means nothing to iterate through, so the
+            // result page renders no prev/next arrows — but we still record
+            // returnUrl so the `x` shortcut returns to this exact feed view.
+            samples: samples.length >= 2 ? samples : [],
             savedAt: Date.now(),
         }));
     } catch (_) { /* private mode / quota — ignore, fall back to no arrows */ }

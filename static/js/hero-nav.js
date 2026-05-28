@@ -9,15 +9,33 @@
 const hero = document.querySelector(".hero");
 let prev = null;
 let next = null;
+// Where the `x` shortcut and the "Analyze another" link return to. Defaults
+// to the bare feed; upgraded to the exact query the user clicked in from
+// (e.g. /?feeds=1) when upload.js stashed it. Same-origin only.
+let returnUrl = "/";
+
+let nav = null;
+try {
+  nav = JSON.parse(sessionStorage.getItem("prism_nav") || "null");
+} catch (_) {
+  nav = null;
+}
+
+// Guard against a poisoned sessionStorage value: only honor a relative path
+// (a single leading slash), never an absolute or protocol-relative URL that
+// would redirect off-site.
+if (
+  nav &&
+  typeof nav.returnUrl === "string" &&
+  nav.returnUrl.startsWith("/") &&
+  !nav.returnUrl.startsWith("//")
+) {
+  returnUrl = nav.returnUrl;
+  const backLink = document.querySelector(".back-link");
+  if (backLink) backLink.setAttribute("href", returnUrl);
+}
 
 if (hero) {
-  let nav = null;
-  try {
-    nav = JSON.parse(sessionStorage.getItem("prism_nav") || "null");
-  } catch (_) {
-    nav = null;
-  }
-
   const samples = nav && Array.isArray(nav.samples) ? nav.samples : null;
   const m = location.pathname.match(/\/file\/([0-9a-f]{8,64})/i);
   const sha = m ? m[1].toLowerCase() : null;
@@ -133,9 +151,10 @@ function wireKeys() {
       }
       case "x":
         // Mirror the header's "Analyze another" link — quick exit back
-        // to the feed without reaching for the mouse.
+        // to the feed the user came from (preserving its query), without
+        // reaching for the mouse.
         ev.preventDefault();
-        location.href = "/";
+        location.href = returnUrl;
         break;
       case "?":
         ev.preventDefault();
