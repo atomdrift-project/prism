@@ -419,6 +419,11 @@
         .col-eco {
             white-space: nowrap;
         }
+        .col-feed {
+            white-space: nowrap;
+            color: var(--iron);
+            font-size: 13px;
+        }
         .file-link {
             color: var(--carbon);
             text-decoration: underline;
@@ -520,7 +525,7 @@
                         <select name="criticality" id="criticality">
                             <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
                             <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
-                            <option value="suspicious_plus" {{if eq .SelectedCrit "suspicious_plus"}}selected{{end}}>Suspicious + Hostile</option>
+                            <option value="&gt;=1" {{if eq .SelectedCrit ">=1"}}selected{{end}}>Suspicious + Hostile</option>
                             <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
                             <option value="benign" {{if eq .SelectedCrit "benign"}}selected{{end}}>Benign</option>
                         </select>
@@ -556,6 +561,7 @@
                         <th class="col-when">Crit</th>
                         <th class="col-file">File</th>
                         <th class="col-eco">Ecosystem</th>
+                        {{if .FeedsOnly}}<th class="col-feed">Feed</th>{{end}}
                         <th class="col-formula">Malecule</th>
                     </tr>
                 </thead>
@@ -581,6 +587,11 @@
                                 {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                             {{end}}
                         </td>
+                        {{if $.FeedsOnly}}
+                        <td class="col-feed">
+                            {{if .Feed}}<a class="cell-link mono" href="?feeds=1">{{.Feed}}</a>{{else}}<span class="mono">-</span>{{end}}
+                        </td>
+                        {{end}}
                         <td>
                             {{if .Formula}}
                             <a class="cell-link mono" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>
@@ -590,7 +601,7 @@
                         </td>
                     </tr>
                     {{else}}
-                    <tr><td colspan="4" class="empty">No matching records.</td></tr>
+                    <tr><td colspan="{{if .FeedsOnly}}5{{else}}4{{end}}" class="empty">No matching records.</td></tr>
                     {{end}}
                 </tbody>
             </table>

@@ -630,19 +630,19 @@ type cachedParents struct {
 //
 //nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
-	SHA256Short    string
-	Filename       string
-	SHA256         string
-	Verdict        string
-	Formula        template.HTML
-	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
-	CSRFToken      string // signed CSRF token for operator actions (rescan)
+	SHA256Short  string
+	Filename     string
+	SHA256       string
+	Verdict      string
+	Formula      template.HTML
+	FormulaQuery string // raw formula with subscript digits desubscripted, for ?m=… links
+	CSRFToken    string // signed CSRF token for operator actions (rescan)
 	// DownloadToken is a separate CSRF token bound to the "download" action.
 	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
 	// gated to button-driven flows: the token only validates for the browser
 	// session that fetched the page, within csrfMaxAge. Bots, link previews,
 	// pasted URLs from another browser, and stale wayback captures all fail.
-	DownloadToken string
+	DownloadToken  string
 	FileType       string
 	MoleculeJSON   template.JS
 	Duration       string
@@ -663,9 +663,9 @@ type resultData struct {
 	// fresh analysis lands AFTER this point" instead of accepting the
 	// already-stale result.
 	AnalyzedAtMillis int64
-	RiskLabel      string
-	FirstSeenAgo   string
-	FirstSeenAt    string
+	RiskLabel        string
+	FirstSeenAgo     string
+	FirstSeenAt      string
 	// SourceURL is the full canonical download URL forager recorded when
 	// the bytes first landed in hopper. Used as the link href; empty for
 	// uploads and legacy rows without provenance.
@@ -683,8 +683,8 @@ type resultData struct {
 	// "/npm/"). Empty when Ecosystem is empty.
 	EcosystemURL string
 	Layout       string
-	BuildCommit string
-	Files       []FileTreeEntry
+	BuildCommit  string
+	Files        []FileTreeEntry
 	// FileTreeJSON is the hierarchical tree of archive contents, JSON-encoded
 	// for the client-side Miller-column renderer. Empty string for non-archive
 	// pages.
@@ -799,9 +799,13 @@ type feedRow struct {
 	SHA256         string
 	Ecosystem      string
 	Filename       string
-	HostileT       float64
-	SuspiciousT    float64
-	Probability    float64
+	// Feed is the hopper.Sample.Feed column — the threat-intel or
+	// registry source name (e.g. "malshare", "npmjs.org"). Surfaced
+	// only on the /?feeds=1 view; left empty in JSON otherwise.
+	Feed        string
+	HostileT    float64
+	SuspiciousT float64
+	Probability float64
 }
 
 type feedPageData struct {
@@ -826,6 +830,11 @@ type feedPageData struct {
 	// UploadEnabled mirrors the package-level toggle so the template can
 	// pick the real upload form vs. the disabled placeholder.
 	UploadEnabled bool
+	// FeedsOnly enables the hidden "malware feeds" view: only label='bad'
+	// samples (threat-intel + curated open-source malware sources) are
+	// listed, and the table grows a "Feed" column showing which source
+	// each row came from. Activated by ?feeds=1 — no dropdown surface.
+	FeedsOnly bool
 }
 
 type cachedFeedSnapshot struct {
@@ -844,6 +853,7 @@ type cachedFeedSample struct {
 	Formula        string
 	FileType       string
 	Source         string
+	Feed           string
 	Ecosystem      string
 	Probability    float64
 	SuspiciousT    float64
@@ -1599,11 +1609,31 @@ func renderError(w http.ResponseWriter, r *http.Request, status int, data errorD
 
 const feedLimit = 100
 
-// feedCacheKey produces a deterministic cache key from the four feed-query
-// dimensions. Stable across reorderings (so swapping argument order can't
-// silently fragment the cache) and never empty.
-func feedCacheKey(ecosystem, domain, criticality, formula string) string {
-	return "feed-v2:eco=" + ecosystem + ":dom=" + domain + ":crit=" + criticality + ":formula=" + formula
+// feedQueryArgs bundles the filter knobs that flow through the feed
+// pipeline. Bundling avoids a long parameter pile and keeps the cache
+// key + handler in step when a new dimension is added.
+type feedQueryArgs struct {
+	ecosystem   string
+	domain      string
+	criticality string
+	formula     string
+	// feedsOnly toggles the "malware feeds" view: only label='bad'
+	// samples (curated threat-intel / open-source malware sources) are
+	// returned, and the table picks up a Feed column.
+	feedsOnly bool
+}
+
+// feedCacheKey produces a deterministic cache key from the feed-query
+// dimensions. Stable across reorderings (so swapping field order can't
+// silently fragment the cache) and never empty. Version-prefixed so the
+// next schema change can invalidate the whole on-disk set.
+func feedCacheKey(a feedQueryArgs) string {
+	feeds := "0"
+	if a.feedsOnly {
+		feeds = "1"
+	}
+	return "feed-v3:eco=" + a.ecosystem + ":dom=" + a.domain +
+		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds
 }
 
 // loadFeedRows fetches a feed page, caching every query for feedCacheTTL.
@@ -1611,13 +1641,13 @@ func feedCacheKey(ecosystem, domain, criticality, formula string) string {
 // trip via fido's built-in singleflight. Pre-cached variants (default +
 // criticality) stay hot via feedPrecacheLoop so high-traffic views never
 // hit a cold loader on the request path.
-func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+func loadFeedRows(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	if feedCache == nil {
-		return loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
+		return loadFeedRowsFromHopper(ctx, a, reqLogger)
 	}
-	key := feedCacheKey(ecosystem, domain, criticality, formula)
+	key := feedCacheKey(a)
 	snapshot, err := feedCache.FetchTTL(ctx, key, feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
-		return buildFeedSnapshot(lctx, ecosystem, domain, criticality, formula, reqLogger)
+		return buildFeedSnapshot(lctx, a, reqLogger)
 	})
 	if err != nil {
 		return nil, nil, nil, 0, err
@@ -1628,8 +1658,8 @@ func loadFeedRows(ctx context.Context, ecosystem, domain, criticality, formula s
 // buildFeedSnapshot runs the live hopper queries and packages the result
 // into a cache-friendly snapshot (stable raw fields, no rendered relative-
 // time strings — those re-derive at request time from CreatedAt).
-func buildFeedSnapshot(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
-	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, ecosystem, domain, criticality, formula, reqLogger)
+func buildFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
+	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, a, reqLogger)
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
@@ -1642,7 +1672,7 @@ func buildFeedSnapshot(ctx context.Context, ecosystem, domain, criticality, form
 	}, nil
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality, formula string, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+func loadFeedRowsFromHopper(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, nil, nil, 0, errors.New("hopper not connected")
@@ -1661,20 +1691,27 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 
 	q := hopper.FeedQuery{
 		OrderBy:      "created_at",
-		Formula:      formula,
+		Formula:      a.formula,
 		TopLevelOnly: true,
 		Limit:        feedLimit,
 	}
-	if ecosystem != "" {
-		q.Ecosystems = []string{ecosystem}
+	if a.ecosystem != "" {
+		q.Ecosystems = []string{a.ecosystem}
 	}
-	if domain != "" {
-		q.Domains = []string{domain}
+	if a.domain != "" {
+		q.Domains = []string{a.domain}
 	}
-	if classes, ok := criticalityClasses(criticality); ok {
+	if classes, ok := criticalityClasses(a.criticality); ok {
 		q.LitmusClasses = classes
 	} else {
 		q.RequireLitmus = true
+	}
+	if a.feedsOnly {
+		// Forager tags every sample it pulls from a threat-intel feed
+		// as `label='bad'` (see forager/db.go canonicalLabel). Filtering
+		// on label here gives us the union of all such feeds without
+		// having to enumerate the feed names by hand.
+		q.Label = "bad"
 	}
 
 	samples, err := db.FeedSamples(ctx, q)
@@ -1703,10 +1740,22 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 		if classification == "" {
 			continue
 		}
-		if criticality != "" && classification != criticality {
-			continue
+		// Belt-and-suspenders check that the row's class falls into the
+		// requested set even after hopper's SQL filter. The criticality
+		// argument may be a named band ("hostile") or a comparison
+		// expression (">=1") — both go through criticalityClasses so we
+		// compare against the same set the SQL filter used.
+		if a.criticality != "" {
+			classes, ok := criticalityClasses(a.criticality)
+			if !ok {
+				continue
+			}
+			rowClass, ok := classificationClass(classification)
+			if !ok || !containsInt(classes, rowClass) {
+				continue
+			}
 		}
-		if formula != "" && firstNonEmpty(res.Formula, sample.Formula) != formula {
+		if a.formula != "" && firstNonEmpty(res.Formula, sample.Formula) != a.formula {
 			continue
 		}
 
@@ -1723,6 +1772,7 @@ func loadFeedRowsFromHopper(ctx context.Context, ecosystem, domain, criticality,
 			Formula:        res.Formula,
 			FileType:       firstNonEmpty(res.FileType, sample.FileType),
 			Source:         sample.Source,
+			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			AnalyzedAt:     addedAt,
@@ -1750,6 +1800,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			Formula:        sample.Formula,
 			FileType:       sample.FileType,
 			Source:         sample.Source,
+			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			AnalyzedAt:     sample.CreatedAt,
@@ -1764,12 +1815,13 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 // the background refresher. The default (all empty) handles unfiltered
 // frontpage; the three criticality views handle the most common filter
 // pivots. Everything else is cached on demand by loadFeedRows.
-var feedPrecacheVariants = []struct{ ecosystem, domain, criticality, formula string }{
-	{"", "", "", ""},
-	{"", "", "hostile", ""},
-	{"", "", "suspicious", ""},
-	{"", "", "suspicious_plus", ""},
-	{"", "", "benign", ""},
+var feedPrecacheVariants = []feedQueryArgs{
+	{},
+	{criticality: "hostile"},
+	{criticality: "suspicious"},
+	{criticality: ">=1"},
+	{criticality: "benign"},
+	{feedsOnly: true},
 }
 
 // refreshFeedCacheLoop keeps the pre-cached variants warm. Each tick
@@ -1784,7 +1836,7 @@ func refreshFeedCacheLoop(ctx context.Context) {
 	}
 	refreshAll := func() {
 		for _, v := range feedPrecacheVariants {
-			if err := refreshFeedCacheEntry(ctx, v.ecosystem, v.domain, v.criticality, v.formula); err != nil {
+			if err := refreshFeedCacheEntry(ctx, v); err != nil {
 				logger.Warn("feed pre-cache refresh failed",
 					"criticality", v.criticality, "error", err)
 			}
@@ -1808,14 +1860,14 @@ func refreshFeedCacheLoop(ctx context.Context) {
 // writes a fresh snapshot. On-demand requests for the same key may race
 // this loader through their own fido.Fetch path; both calls produce
 // consistent snapshots, so the rare duplicate hopper query is benign.
-func refreshFeedCacheEntry(ctx context.Context, ecosystem, domain, criticality, formula string) error {
-	key := feedCacheKey(ecosystem, domain, criticality, formula)
+func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs) error {
+	key := feedCacheKey(a)
 	if snapshot, found, err := feedCache.Get(ctx, key); err == nil && found {
 		if time.Since(snapshot.GeneratedAt) <= feedPrecacheInterval {
 			return nil
 		}
 	}
-	snapshot, err := buildFeedSnapshot(ctx, ecosystem, domain, criticality, formula, logger)
+	snapshot, err := buildFeedSnapshot(ctx, a, logger)
 	if err != nil {
 		return err
 	}
@@ -1823,7 +1875,7 @@ func refreshFeedCacheEntry(ctx context.Context, ecosystem, domain, criticality, 
 		return err
 	}
 	logger.Debug("feed pre-cache refreshed",
-		"criticality", criticality, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
+		"criticality", a.criticality, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
 	return nil
 }
 
@@ -1841,6 +1893,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Formula:        row.Formula,
 			FileType:       row.FileType,
 			Source:         row.Source,
+			Feed:           row.Feed,
 			Ecosystem:      row.Ecosystem,
 			CreatedAt:      row.AnalyzedAt,
 		})
@@ -1979,10 +2032,18 @@ func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger
 }
 
 // criticalityClasses translates a UI/URL criticality token into the litmus
-// class integers the feed query filters on. Single-band tokens return a
-// one-element slice; "suspicious_plus" is the union of suspicious + hostile,
-// which is the filter operators ask for most often — "show me anything that
-// isn't benign". Unrecognized tokens return (nil, false).
+// class integers the feed query filters on. Accepts either named bands
+// ("benign"/"suspicious"/"hostile") or comparison expressions over the
+// raw class number (0=benign, 1=suspicious, 2=hostile), so a caller that
+// wants "suspicious or hostile" writes ">=1" instead of inventing a new
+// token. Unrecognized inputs return (nil, false).
+//
+// Supported grammar:
+//
+//	benign | suspicious | hostile      named single bands
+//	N | =N                              exact class number
+//	>=N | >N                            class >= / > N
+//	<=N | <N                            class <= / < N
 func criticalityClasses(criticality string) ([]int, bool) {
 	switch criticality {
 	case "benign":
@@ -1991,11 +2052,101 @@ func criticalityClasses(criticality string) ([]int, bool) {
 		return []int{1}, true
 	case "hostile":
 		return []int{2}, true
-	case "suspicious_plus":
-		return []int{1, 2}, true
-	default:
+	}
+	op, n, ok := parseCritExpr(criticality)
+	if !ok {
 		return nil, false
 	}
+	// Litmus emits only 0/1/2. We accept any N but clamp the resulting
+	// set to that universe so e.g. `>=0` doesn't become "ignore filter".
+	all := [...]int{0, 1, 2}
+	var keep []int
+	for _, c := range all {
+		hit := false
+		switch op {
+		case "=":
+			hit = c == n
+		case ">=":
+			hit = c >= n
+		case ">":
+			hit = c > n
+		case "<=":
+			hit = c <= n
+		case "<":
+			hit = c < n
+		}
+		if hit {
+			keep = append(keep, c)
+		}
+	}
+	if len(keep) == 0 {
+		return nil, false
+	}
+	return keep, true
+}
+
+// classificationClass is the inverse of classificationName: map the
+// display string back to the underlying litmus class integer.
+func classificationClass(name string) (int, bool) {
+	switch name {
+	case "benign":
+		return 0, true
+	case "suspicious":
+		return 1, true
+	case "hostile":
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func containsInt(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// parseBoolQuery treats common truthy strings ("1", "true", "yes", "on") as
+// true and everything else (including empty) as false. Used for opt-in URL
+// flags where we'd rather accept "/?feeds=1" and "/?feeds=true" alike than
+// be strict about a single form.
+func parseBoolQuery(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// parseCritExpr matches "[op]N" where op ∈ {=, >, >=, <, <=} (default =).
+// Returns the operator, integer, and whether the input parsed.
+func parseCritExpr(s string) (op string, n int, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", 0, false
+	}
+	op = "="
+	switch {
+	case strings.HasPrefix(s, ">="):
+		op, s = ">=", s[2:]
+	case strings.HasPrefix(s, "<="):
+		op, s = "<=", s[2:]
+	case strings.HasPrefix(s, ">"):
+		op, s = ">", s[1:]
+	case strings.HasPrefix(s, "<"):
+		op, s = "<", s[1:]
+	case strings.HasPrefix(s, "="):
+		s = s[1:]
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return "", 0, false
+	}
+	return op, v, true
 }
 
 func normalizeCriticality(criticality string) string {
@@ -2403,6 +2554,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
 		UploadEnabled:   uploadEnabled,
+		FeedsOnly:       parseBoolQuery(r.URL.Query().Get("feeds")),
 		Nonce:           nonceFor(r),
 		StyleNonce:      styleNonceFor(r),
 		BuildCommit:     buildCommit,
@@ -2427,7 +2579,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		var err error
 		data.Rows, data.Ecosystems, data.Domains, data.TotalCount, err = loadFeedRows(
 			r.Context(),
-			data.SelectedEco, data.SelectedDomain, data.SelectedCrit, data.SelectedFormula,
+			feedQueryArgs{
+				ecosystem:   data.SelectedEco,
+				domain:      data.SelectedDomain,
+				criticality: data.SelectedCrit,
+				formula:     data.SelectedFormula,
+				feedsOnly:   data.FeedsOnly,
+			},
 			logger,
 		)
 		if err != nil {
@@ -4859,7 +5017,7 @@ func aggregateArchiveCategories(files []cleaveFile) []CategoryGroup {
 		// matched in the same file collapses into one entry with a count.
 		// Entries with empty fileSHA are evidence-only rows (no file
 		// attribution available).
-		matches  map[string]*FindingMatch
+		matches map[string]*FindingMatch
 		// Insertion order so we can sort consistently when emitting.
 		order    []string
 		dirPath  string
@@ -5966,17 +6124,24 @@ type litmusFullResponse struct {
 	Raw json.RawMessage `json:"raw"`
 }
 
-// litmusMlResponse matches the ml section of the litmus response.
+// litmusMlResponse matches the ml section of the litmus response. Accepts
+// both v=4 (Thresholds pair) and v=5 (single Threshold + Level) envelopes;
+// the band-rendering helpers handle the version difference.
+//
+//nolint:govet // field order mirrors litmus's emitted JSON for readability
 type litmusMlResponse struct {
 	V          string `json:"v"`
 	Version    string `json:"version"`
 	AnalyzedAt string `json:"analyzed_at"`
 	Files      []struct {
-		ID    int     `json:"id"`
-		Class int     `json:"class"`
-		Prob  float64 `json:"prob"`
+		ID        int     `json:"id"`
+		Class     int     `json:"class"`
+		Prob      float64 `json:"prob"`
+		Threshold float64 `json:"threshold"` // v=5 only
 	} `json:"fs"`
-	Thresholds     [2]float64 `json:"thresholds"`
+	Thresholds     [2]float64 `json:"thresholds"` // v=4 only
+	Threshold      float64    `json:"threshold"`  // v=5 only
+	Level          *int       `json:"level"`      // v=5 only; nil for manual thresholds
 	Classification int        `json:"class"`
 	Probability    float64    `json:"prob"`
 }
@@ -5991,8 +6156,41 @@ func classificationName(c int) string {
 	return "unknown"
 }
 
-func (r *litmusMlResponse) suspiciousT() float64 { return r.Thresholds[0] }
-func (r *litmusMlResponse) hostileT() float64    { return r.Thresholds[1] }
+// suspiciousT returns the suspicious-band cutoff for rendering. For v=5
+// envelopes, only the deciding threshold is published; the other band edge is
+// estimated so the existing two-stop gradient still renders sensibly. Switch
+// templates to a class+threshold-aware band function if exact rendering matters.
+func (r *litmusMlResponse) suspiciousT() float64 {
+	if r.V == "5" {
+		s, _ := r.v5BandEdges()
+		return s
+	}
+	return r.Thresholds[0]
+}
+
+// hostileT returns the hostile-band cutoff for rendering. See suspiciousT.
+func (r *litmusMlResponse) hostileT() float64 {
+	if r.V == "5" {
+		_, h := r.v5BandEdges()
+		return h
+	}
+	return r.Thresholds[1]
+}
+
+// v5BandEdges derives (suspiciousT, hostileT) from a v=5 envelope's single
+// Threshold + Classification. Heuristics; precise rendering requires switching
+// the template to a class+threshold band function.
+func (r *litmusMlResponse) v5BandEdges() (suspiciousT, hostileT float64) {
+	t := r.Threshold
+	switch r.Classification {
+	case 2: // hostile: Threshold is the hostile cutoff
+		return t * 0.7, t
+	case 1: // suspicious: Threshold is the suspicious cutoff
+		return t, t + (1-t)*0.5
+	default: // benign: Threshold is the suspicious cutoff (line not crossed)
+		return t, t + (1-t)*0.5
+	}
+}
 
 // v4 cleave types are defined above: cleaveReport, cleaveFile, finding.
 
