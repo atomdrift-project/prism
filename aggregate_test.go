@@ -95,3 +95,39 @@ func TestAggregateDropsUnresolvableContainerSources(t *testing.T) {
 		}
 	}
 }
+
+// TestAggregateConfidenceFloor locks in the display rule: a finding whose
+// confidence is below minTraitConfidence is hidden, while one at or above the
+// floor is kept. The floor itself (0.65) is inclusive.
+func TestAggregateConfidenceFloor(t *testing.T) {
+	files := []cleaveFile{{
+		Path:   "sample.bin",
+		SHA256: strings.Repeat("a", 64),
+		Depth:  1,
+		Findings: []finding{
+			{ID: "objectives/keep-high/x", Desc: "high", Crit: 3, Conf: 0.9},
+			{ID: "objectives/drop-low/x", Desc: "low", Crit: 3, Conf: 0.5},
+			{ID: "objectives/keep-boundary/x", Desc: "boundary", Crit: 3, Conf: minTraitConfidence},
+		},
+	}}
+
+	groups, total, shown := aggregateArchiveCategories(files)
+	got := make(map[string]bool)
+	for _, g := range groups {
+		for _, f := range g.Findings {
+			got[f.ID] = true
+		}
+	}
+	if !got["keep-high"] {
+		t.Error("high-confidence trait should be shown")
+	}
+	if !got["keep-boundary"] {
+		t.Error("trait exactly at the confidence floor should be shown (floor is inclusive)")
+	}
+	if got["drop-low"] {
+		t.Error("trait with confidence below the floor should be hidden")
+	}
+	if total != 2 || shown != 2 {
+		t.Errorf("counts: got total=%d shown=%d, want 2 and 2", total, shown)
+	}
+}

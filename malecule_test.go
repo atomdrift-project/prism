@@ -827,7 +827,7 @@ func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 				"sha":  "aaaa",
 				"sz":   1024,
 				"ts": []map[string]any{
-					{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3},
+					{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3, "c": 0.9},
 				},
 				"ss": []any{[]any{0, "PK\x03\x04"}},
 			},
@@ -839,7 +839,7 @@ func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 				"sha":  "bbbb",
 				"sz":   2048,
 				"ts": []map[string]any{
-					{"i": "objectives/payload/execute", "d": "executes payload", "l": 4},
+					{"i": "objectives/payload/execute", "d": "executes payload", "l": 4, "c": 0.9},
 				},
 				"ss":       []any{[]any{0, "malicious string"}},
 				"is":       []string{"kernel32.dll!CreateProcessA"},
@@ -896,15 +896,15 @@ func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
 		"fs": []map[string]any{
 			{
 				"id": 1, "dp": 0, "path": "/tmp/bundle.zip", "type": "zip", "sha": "aaaa", "sz": 1024,
-				"ts": []map[string]any{{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3}},
+				"ts": []map[string]any{{"i": "metadata/format/zip", "d": "ZIP archive", "l": 3, "c": 0.9}},
 			},
 			{
 				"id": 2, "dp": 1, "path": "/tmp/bundle.zip!!a.exe", "type": "pe", "sha": "bbbb", "sz": 2048,
-				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}},
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4, "c": 0.9}},
 			},
 			{
 				"id": 3, "dp": 1, "path": "/tmp/bundle.zip!!b.exe", "type": "pe", "sha": "cccc", "sz": 2048,
-				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4}},
+				"ts": []map[string]any{{"i": "objectives/payload/execute", "d": "executes", "l": 4, "c": 0.9}},
 			},
 		},
 	}

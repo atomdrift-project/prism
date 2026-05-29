@@ -2029,8 +2029,8 @@
                                 <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
                                     {{if .Matches}}
                                     <button type="button" class="finding-card-toggle" aria-expanded="false">
-                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                         <span class="trait-body">
                                             <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                             <span class="trait-desc">{{.Desc}}</span>
@@ -2048,8 +2048,8 @@
                                         </ul>
                                     </div>
                                     {{else}}
-                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                     <div class="trait-body">
                                         <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                         <span class="trait-desc">{{.Desc}}</span>
@@ -2078,8 +2078,8 @@
                             <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
                                 {{if .Matches}}
                                 <button type="button" class="finding-card-toggle" aria-expanded="false">
-                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                     <span class="trait-body">
                                         <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                         <span class="trait-desc">{{.Desc}}</span>
@@ -2097,8 +2097,8 @@
                                     </ul>
                                 </div>
                                 {{else}}
-                                <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                 <div class="trait-body">
                                     <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                     <span class="trait-desc">{{.Desc}}</span>
@@ -2365,8 +2365,8 @@
                                     <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
                                         {{if .Matches}}
                                         <button type="button" class="finding-card-toggle" aria-expanded="false">
-                                            <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                            <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                            <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                            <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                             <span class="trait-body">
                                                 <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                                 <span class="trait-desc">{{.Desc}}</span>
@@ -2384,8 +2384,8 @@
                                             </ul>
                                         </div>
                                         {{else}}
-                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity. </span>
+                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
                                         <div class="trait-body">
                                             <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                             <span class="trait-desc">{{.Desc}}</span>

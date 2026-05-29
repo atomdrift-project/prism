@@ -429,9 +429,12 @@ func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[strin
 
 // FindingDisplay represents a single finding for table display.
 type FindingDisplay struct {
-	ID      string
-	Crit    string
-	Desc    string
+	ID   string
+	Crit string
+	Desc string
+	// ConfPct is the trait's confidence as a whole-number percentage (e.g.
+	// 40 for 0.40), used by the criticality badge's hover tooltip.
+	ConfPct int
 	Matches []FindingMatch
 }
 
@@ -5067,7 +5070,7 @@ func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
 	for i := range files {
 		f := &files[i]
 		for _, t := range f.Findings {
-			if t.Crit < 1 {
+			if t.Crit < 1 || t.Conf < minTraitConfidence {
 				continue
 			}
 			parts := strings.Split(t.ID, "/")
@@ -5113,6 +5116,19 @@ var canonicalCategoryOrder = []string{"well-known", "objectives", "micro-behavio
 // callers surface the dropped count as a "N of M traits shown" note.
 const maxSampleTraits = 20
 
+// minTraitConfidence is the floor below which a finding is hidden entirely:
+// low-confidence matches are too noisy to surface even as baseline traits.
+// Every cleave finding carries a confidence score (its `c` field), so the
+// comparison is a straight threshold.
+const minTraitConfidence = 0.65
+
+// confPct converts a 0..1 confidence score into a whole-number percentage,
+// rounded to nearest (conf is never negative, so the +0.5 truncation rounds
+// correctly without pulling in math.Round).
+func confPct(conf float64) int {
+	return int(conf*100 + 0.5)
+}
+
 // scoredTrait pairs a display-ready trait with the numeric criticality and
 // confidence used to rank it against the top-N cap.
 type scoredTrait struct {
@@ -5129,7 +5145,12 @@ type scoredTrait struct {
 // ordered by criticality (desc) then ID, matching the rest of the report.
 func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (groups []CategoryGroup, total, shown int) {
 	total = len(scored)
-	sort.SliceStable(scored, func(i, j int) bool {
+	// A total order keeps the top-N cut and display order deterministic
+	// across runs: the source bucket is a map (randomized iteration), so
+	// without the topLevel/ID tie-breakers an equal-score tie at the cap
+	// boundary could keep different traits on different runs and bust the
+	// page cache.
+	sort.Slice(scored, func(i, j int) bool {
 		si := float64(scored[i].crit) * scored[i].conf
 		sj := float64(scored[j].crit) * scored[j].conf
 		if si != sj {
@@ -5138,7 +5159,10 @@ func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (grou
 		if scored[i].crit != scored[j].crit {
 			return scored[i].crit > scored[j].crit
 		}
-		return scored[i].display.ID < scored[j].display.ID
+		if scored[i].display.ID != scored[j].display.ID {
+			return scored[i].display.ID < scored[j].display.ID
+		}
+		return scored[i].topLevel < scored[j].topLevel
 	})
 	if len(scored) > maxSampleTraits {
 		scored = scored[:maxSampleTraits]
@@ -5231,6 +5255,7 @@ func resolveMatchFile(location string, pathToFile map[string]*cleaveFile) *cleav
 	return pathToFile[strings.ReplaceAll(member, "!", "!!")]
 }
 
+//nolint:gocognit // inherently complex: trait bucketing plus per-evidence file back-attribution
 func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, total, shown int) {
 	categoryNames := map[string]string{
 		"objectives":      "Objectives",
@@ -5277,7 +5302,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 	for i := range files {
 		file := &files[i]
 		for _, f := range file.Findings {
-			if f.Crit < 1 {
+			if f.Crit < 1 || f.Conf < minTraitConfidence {
 				continue
 			}
 			parts := strings.Split(f.ID, "/")
@@ -5390,6 +5415,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				ID:      agg.dirPath,
 				Crit:    critIntToString(agg.crit),
 				Desc:    agg.desc,
+				ConfPct: confPct(agg.conf),
 				Matches: matches,
 			},
 		})
@@ -5429,9 +5455,9 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		aggregated := make(map[string]*aggregatedFinding)
 
 		for _, f := range file.Findings {
-			// Include everything down to component (1); the top-N cap
-			// below decides which traits actually render.
-			if f.Crit < 1 {
+			// Include everything down to component (1) above the confidence
+			// floor; the top-N cap below decides which traits actually render.
+			if f.Crit < 1 || f.Conf < minTraitConfidence {
 				continue
 			}
 
@@ -5511,6 +5537,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 					ID:      agg.dirPath, // Show directory path without top-level
 					Crit:    critIntToString(agg.crit),
 					Desc:    agg.desc,
+					ConfPct: confPct(agg.conf),
 					Matches: matches,
 				},
 			})
