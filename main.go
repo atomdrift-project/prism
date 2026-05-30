@@ -3104,15 +3104,29 @@ func fetchFileBytes(ctx context.Context, sha string) ([]byte, error) {
 // members on its side, so we don't need to know whether sha is a top-level
 // sample or an inner file.
 func downloadFromHopperAPI(ctx context.Context, sha string, maxBytes int64) ([]byte, error) {
+	if !apiBreaker.allow() {
+		return nil, fmt.Errorf("hopper-api download: %w", errBreakerOpen)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hopperFileURL(sha), http.NoBody)
 	if err != nil {
+		// Local request-build error: hopper was never contacted, so this is
+		// not a dependency failure and must not move the breaker.
 		return nil, fmt.Errorf("prepare request: %w", err)
 	}
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
 	if err != nil {
+		apiBreaker.failure()
 		return nil, fmt.Errorf("hopper-api request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort close on a response body we've already drained
+	if resp.StatusCode >= http.StatusInternalServerError {
+		// 5xx means hopper-api itself is unhealthy; count it against the breaker.
+		apiBreaker.failure()
+		return nil, fmt.Errorf("hopper-api status %d", resp.StatusCode)
+	}
+	// Any non-5xx response (incl. 404/413) proves hopper-api is reachable and
+	// responsive, so the breaker recovers; the remaining checks are business-level.
+	apiBreaker.success()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("sample bytes not found: status %d", resp.StatusCode)
 	}
@@ -3229,13 +3243,20 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	if db == nil {
 		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
 	}
+	if !dbBreaker.allow() {
+		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", errBreakerOpen)
+	}
 	sample, err := db.SampleBySHA256(ctx, sha)
 	if err != nil {
 		if errors.Is(err, hopper.ErrNotFound) {
+			// The DB answered; "not found" is a healthy response, not a fault.
+			dbBreaker.success()
 			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
 		}
+		dbBreaker.failure()
 		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
 	}
+	dbBreaker.success()
 
 	if len(sample.CleaveResult) == 0 {
 		return storedResult{}, &pendingAnalysisError{
@@ -3573,6 +3594,12 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		return
 	}
 
+	if !apiBreaker.allow() {
+		reqLogger.Warn("hopper download skipped: circuit breaker open")
+		w.Header().Set("Retry-After", "10")
+		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hopperFileURL(sha), http.NoBody)
 	if err != nil {
 		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
@@ -3580,6 +3607,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
 	if err != nil {
+		apiBreaker.failure()
 		reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
 		http.Error(w, "download unavailable", http.StatusBadGateway)
 		return
@@ -3589,6 +3617,11 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 			reqLogger.Debug("hopper download body close failed", "error", err)
 		}
 	}()
+	if resp.StatusCode >= http.StatusInternalServerError {
+		apiBreaker.failure()
+	} else {
+		apiBreaker.success()
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		switch resp.StatusCode {
@@ -4578,6 +4611,11 @@ func postUploadWithRetry(ctx context.Context, target string, buf []byte, token s
 		func() error {
 			r, err := postOnce(ctx, target, buf, token)
 			if err != nil {
+				// An open breaker means hopper-api is already known-down;
+				// retrying would only add to the load. Stop immediately.
+				if errors.Is(err, errBreakerOpen) {
+					return retry.Unrecoverable(err)
+				}
 				return err
 			}
 			if r.StatusCode >= 500 {
@@ -4607,15 +4645,25 @@ func postUploadWithRetry(ctx context.Context, target string, buf []byte, token s
 // postOnce performs a single POST /api/upload with the given Bearer token.
 // Body is read from buf so retries can replay it.
 func postOnce(ctx context.Context, target string, buf []byte, token string) (*http.Response, error) {
+	if !apiBreaker.allow() {
+		return nil, fmt.Errorf("hopper-api upload: %w", errBreakerOpen)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
 	if err != nil {
+		// Local build error: hopper was never contacted; don't move the breaker.
 		return nil, fmt.Errorf("build hopper request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
 	if err != nil {
+		apiBreaker.failure()
 		return nil, fmt.Errorf("hopper request: %w", err)
+	}
+	if resp.StatusCode >= http.StatusInternalServerError {
+		apiBreaker.failure()
+	} else {
+		apiBreaker.success()
 	}
 	return resp, nil
 }
