@@ -1,10 +1,64 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 )
+
+// TestPrepareResultDataV6Envelope wires a v6 envelope end-to-end through the
+// page-data builder. Threshold should stay zero (templates fall back to the
+// legacy gradient); Level should track the envelope's `l`.
+func TestPrepareResultDataV6Envelope(t *testing.T) {
+	sha := strings.Repeat("c", 64)
+	cases := []struct {
+		name      string
+		ml        string
+		wantLevel *int
+		wantClass string
+	}{
+		{
+			name:      "benign (l == -1)",
+			ml:        `{"v":"6","prob":0.10,"l":-1,"fs":[{"id":0,"prob":0.10}]}`,
+			wantLevel: intp(-1),
+			wantClass: "benign",
+		},
+		{
+			name:      "hostile at level 50",
+			ml:        `{"v":"6","prob":0.97,"l":50,"fs":[{"id":0,"prob":0.97}]}`,
+			wantLevel: intp(50),
+			wantClass: "hostile",
+		},
+		{
+			name:      "hostile via manual threshold (l == null)",
+			ml:        `{"v":"6","prob":0.92,"l":null,"fs":[{"id":0,"prob":0.92}]}`,
+			wantLevel: nil,
+			wantClass: "hostile",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"ml":` + tc.ml + `,"raw":{"fs":[{"id":0,"sha":"` + sha +
+				`","type":"pe","dp":0,"f":"K","sz":12}]}}`
+			data := prepareResultData(context.Background(), "sample.exe", sha, &storedResult{
+				RawLitmus:      raw,
+				Classification: tc.wantClass,
+			})
+			if data.Threshold != 0 {
+				t.Errorf("Threshold = %f, want 0 (v6 has none on the wire)", data.Threshold)
+			}
+			switch {
+			case tc.wantLevel == nil && data.Level != nil:
+				t.Errorf("Level = %v, want nil", *data.Level)
+			case tc.wantLevel != nil && data.Level == nil:
+				t.Errorf("Level = nil, want %v", *tc.wantLevel)
+			case tc.wantLevel != nil && data.Level != nil && *data.Level != *tc.wantLevel:
+				t.Errorf("Level = %d, want %d", *data.Level, *tc.wantLevel)
+			}
+		})
+	}
+}
 
 // TestLitmusMlResponseV4 confirms the existing v=4 parse path still works
 // (regression guard for the back-compat fallback that templates rely on).
@@ -96,6 +150,92 @@ func TestLitmusMlResponseV5(t *testing.T) {
 				t.Errorf("v5BandEdges returned suspT (%f) >= hostT (%f)", suspT, hostT)
 			}
 		})
+	}
+}
+
+// TestLitmusMlResponseV6 covers the new v=6 envelope shape: `l` only, no
+// `class`/`threshold` on the wire. Classification is derived consumer-side
+// via envelopeClass(l).
+func TestLitmusMlResponseV6(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		wantClass int
+		wantLevel *int
+	}{
+		{
+			name:      "benign (l == -1)",
+			raw:       `{"v":"6","prob":0.10,"l":-1,"version":"vtest","fs":[{"id":0,"prob":0.10}]}`,
+			wantClass: 0,
+			wantLevel: intp(-1),
+		},
+		{
+			name:      "hostile at level 50",
+			raw:       `{"v":"6","prob":0.998,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
+			wantClass: 2,
+			wantLevel: intp(50),
+		},
+		{
+			name:      "hostile at level 0 (strictest)",
+			raw:       `{"v":"6","prob":0.999,"l":0,"version":"vtest","fs":[{"id":0,"prob":0.999}]}`,
+			wantClass: 2,
+			wantLevel: intp(0),
+		},
+		{
+			name:      "hostile via manual threshold (l == null)",
+			raw:       `{"v":"6","prob":0.92,"l":null,"version":"vtest","fs":[{"id":0,"prob":0.92}]}`,
+			wantClass: 2,
+			wantLevel: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var ml litmusMlResponse
+			if err := json.Unmarshal([]byte(tc.raw), &ml); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if ml.V != "6" {
+				t.Errorf("V = %q, want 6", ml.V)
+			}
+			if ml.Classification != tc.wantClass {
+				t.Errorf("Classification = %d, want %d", ml.Classification, tc.wantClass)
+			}
+			if ml.Threshold != 0 {
+				t.Errorf("Threshold = %f, want 0 (v=6 has no envelope threshold)", ml.Threshold)
+			}
+			switch {
+			case tc.wantLevel == nil && ml.L != nil:
+				t.Errorf("L = %v, want nil", *ml.L)
+			case tc.wantLevel != nil && ml.L == nil:
+				t.Errorf("L = nil, want %v", *tc.wantLevel)
+			case tc.wantLevel != nil && ml.L != nil && *ml.L != *tc.wantLevel:
+				t.Errorf("L = %d, want %d", *ml.L, *tc.wantLevel)
+			}
+			// Per-file class is mirrored from the envelope-level derivation
+			// because v6 fs[] entries carry only id+prob.
+			if len(ml.Files) > 0 && ml.Files[0].Class != tc.wantClass {
+				t.Errorf("Files[0].Class = %d, want %d (derived from envelope l)", ml.Files[0].Class, tc.wantClass)
+			}
+		})
+	}
+}
+
+// TestEnvelopeClass covers the v6 l → 0/1/2 mapping directly.
+func TestEnvelopeClass(t *testing.T) {
+	if got := envelopeClass(nil); got != 2 {
+		t.Errorf("envelopeClass(nil) = %d, want 2 (hostile/manual)", got)
+	}
+	if got := envelopeClass(intp(-1)); got != 0 {
+		t.Errorf("envelopeClass(-1) = %d, want 0 (benign)", got)
+	}
+	if got := envelopeClass(intp(0)); got != 2 {
+		t.Errorf("envelopeClass(0) = %d, want 2 (hostile@strictest)", got)
+	}
+	if got := envelopeClass(intp(50)); got != 2 {
+		t.Errorf("envelopeClass(50) = %d, want 2 (hostile@default)", got)
+	}
+	if got := envelopeClass(intp(100)); got != 2 {
+		t.Errorf("envelopeClass(100) = %d, want 2 (hostile@loosest)", got)
 	}
 }
 

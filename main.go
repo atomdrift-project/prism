@@ -4756,10 +4756,18 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	// v=5 exact-rendering path: Threshold > 0 makes templates branch to
 	// bandGradient2; Level surfaces the FPR severity that selected the
 	// threshold (nil when manual thresholds were used).
-	if mlResp.V == "5" {
+	//
+	// v=6 has no envelope-level threshold or class on the wire — `l` carries
+	// both the verdict (-1 = benign) and the FPR level (0..100 when known).
+	// Templates fall back to the legacy two-edge gradient when Threshold is
+	// zero, so we only populate Threshold/Class for v=5.
+	switch mlResp.V {
+	case "5":
 		data.Threshold = mlResp.Threshold
 		data.Class = mlResp.Classification
 		data.Level = mlResp.Level
+	case "6":
+		data.Level = mlResp.L
 	}
 
 	report := &cleaveReport{}
@@ -6418,25 +6426,142 @@ type litmusFullResponse struct {
 }
 
 // litmusMlResponse matches the ml section of the litmus response. Accepts
-// both v=4 (Thresholds pair) and v=5 (single Threshold + Level) envelopes;
-// the band-rendering helpers handle the version difference.
+// v=4 (Thresholds pair), v=5 (single Threshold + Level), and v=6 (L only —
+// `class` and `threshold` removed; benign signaled by L == -1). Parsing goes
+// through a custom UnmarshalJSON that tries the v6 shape first and falls
+// back to v5 fields when `l` is absent.
+//
+// Field semantics after parse:
+//   - L (v=6): nullable i32. -1 = benign; 0..100 = per-100M-benigns level
+//     that selected the firing hostile threshold; nil = hostile via manual
+//     --threshold-hostile (no level applies).
+//   - Classification (back-compat): integer 0/1/2 derived consumer-side via
+//     envelopeClass(L) for v=6 inputs; carried from JSON for v=4/v=5.
+//   - Threshold (back-compat): only populated by v=4/v=5 envelopes. Zero
+//     for v=6 — templates fall back to the legacy two-edge gradient.
 //
 //nolint:govet // field order mirrors litmus's emitted JSON for readability
 type litmusMlResponse struct {
-	V          string `json:"v"`
-	Version    string `json:"version"`
-	AnalyzedAt string `json:"analyzed_at"`
+	V          string `json:"-"`
+	Version    string `json:"-"`
+	AnalyzedAt string `json:"-"`
 	Files      []struct {
 		ID        int     `json:"id"`
 		Class     int     `json:"class"`
 		Prob      float64 `json:"prob"`
 		Threshold float64 `json:"threshold"` // v=5 only
-	} `json:"fs"`
-	Thresholds     [2]float64 `json:"thresholds"` // v=4 only
-	Threshold      float64    `json:"threshold"`  // v=5 only
-	Level          *int       `json:"level"`      // v=5 only; nil for manual thresholds
-	Classification int        `json:"class"`
-	Probability    float64    `json:"prob"`
+	} `json:"-"`
+	Thresholds     [2]float64 `json:"-"` // v=4 only
+	Threshold      float64    `json:"-"` // v=5 only
+	L              *int       `json:"-"` // v=6: -1 benign / 0..100 hostile@level / nil hostile@manual
+	Level          *int       `json:"-"` // v=5 only; kept for back-compat parsing
+	Classification int        `json:"-"`
+	Probability    float64    `json:"-"`
+}
+
+// UnmarshalJSON parses a litmus ml-section envelope. It accepts v=6 (the
+// current wire format — `l` only, no `class`/`threshold`) and falls back to
+// v=4/v=5 (`class`, `threshold`, `level`) for cached results produced before
+// the v6 rename. The fallback path is the reason the type holds both `L` and
+// `Level` / `Threshold` / `Classification` simultaneously.
+func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
+	// v6 wire shape. `l` is nullable i32: -1 (benign), 0..100 (hostile at
+	// that FPR level), or null (hostile via manual threshold).
+	var v6 struct {
+		V          string `json:"v"`
+		Version    string `json:"version"`
+		AnalyzedAt string `json:"analyzed_at"`
+		Files      []struct {
+			ID   int     `json:"id"`
+			Prob float64 `json:"prob"`
+			L    *int    `json:"l"` // per-member: -1 benign / 0..100 hostile@level / null hostile@manual; benign member inside hostile archive can differ from parent
+		} `json:"fs"`
+		L    *int    `json:"l"`
+		Prob float64 `json:"prob"`
+	}
+	if err := json.Unmarshal(data, &v6); err != nil {
+		return err
+	}
+	// v5/v4 back-compat shape. Read independently so cached envelopes that
+	// still carry `class`/`threshold`/`level` continue to parse.
+	var legacy struct {
+		Files []struct {
+			ID        int     `json:"id"`
+			Class     int     `json:"class"`
+			Prob      float64 `json:"prob"`
+			Threshold float64 `json:"threshold"`
+		} `json:"fs"`
+		Thresholds     [2]float64 `json:"thresholds"`
+		Threshold      float64    `json:"threshold"`
+		Level          *int       `json:"level"`
+		Classification int        `json:"class"`
+	}
+	_ = json.Unmarshal(data, &legacy) // best-effort; ignore type mismatches
+
+	r.V = v6.V
+	r.Version = v6.Version
+	r.AnalyzedAt = v6.AnalyzedAt
+	r.Probability = v6.Prob
+	r.L = v6.L
+	r.Level = legacy.Level
+	r.Thresholds = legacy.Thresholds
+	r.Threshold = legacy.Threshold
+
+	// Derive Classification from v6 `l` when available; fall back to the
+	// legacy `class` JSON field for older envelopes.
+	switch {
+	case v6.V == "6" || v6.L != nil:
+		r.Classification = envelopeClass(v6.L)
+	default:
+		r.Classification = legacy.Classification
+	}
+
+	// Merge per-file entries. v6 fs[] entries carry id+prob+l; per-member
+	// `l` is fully resolved by litmus — a benign member inside a hostile
+	// archive emits `l: -1`, a hostile member without its own level
+	// inherits the envelope's level (or `null` for manual). Derive Class
+	// per-member from each member's `l`, falling back to the envelope-level
+	// classification if a member omitted `l` entirely (defensive — current
+	// litmus always emits it). v5/v4 fs[] entries carry id+class+prob
+	// (+threshold for v5); keep those values when this is a legacy envelope.
+	isV6 := v6.V == "6" || v6.L != nil
+	r.Files = r.Files[:0]
+	if isV6 {
+		for _, f := range v6.Files {
+			memberClass := r.Classification
+			if f.L != nil {
+				memberClass = envelopeClass(f.L)
+			}
+			r.Files = append(r.Files, struct {
+				ID        int     `json:"id"`
+				Class     int     `json:"class"`
+				Prob      float64 `json:"prob"`
+				Threshold float64 `json:"threshold"`
+			}{ID: f.ID, Class: memberClass, Prob: f.Prob})
+		}
+		return nil
+	}
+	for _, lf := range legacy.Files {
+		r.Files = append(r.Files, struct {
+			ID        int     `json:"id"`
+			Class     int     `json:"class"`
+			Prob      float64 `json:"prob"`
+			Threshold float64 `json:"threshold"`
+		}{ID: lf.ID, Class: lf.Class, Prob: lf.Prob, Threshold: lf.Threshold})
+	}
+	return nil
+}
+
+// envelopeClass derives the legacy 0/1/2 classification from a v=6 envelope's
+// `l` field. l == -1 → benign (0); anything else, including nil/null, →
+// hostile (2). Suspicious (1) is consumer-derived in litmus and not directly
+// represented in `l`; if prism ever needs to surface "suspicious" specifically
+// it must check `prob` against a derived band.
+func envelopeClass(l *int) int {
+	if l != nil && *l == -1 {
+		return 0
+	}
+	return 2
 }
 
 // classificationNames maps integer classification to display string.
