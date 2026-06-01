@@ -485,6 +485,7 @@ type FileStringsDisplay struct {
 	FileType       string
 	Strings        []StringDisplay
 	Sections       []StringSectionGroup
+	Gradient       template.CSS
 	Probability    float64
 	HasSections    bool
 }
@@ -511,6 +512,7 @@ type FileSymbolsDisplay struct {
 	FileType       string
 	Imports        []SymbolDisplay
 	Exports        []SymbolDisplay
+	Gradient       template.CSS
 	Probability    float64
 }
 
@@ -528,6 +530,7 @@ type FileSectionsDisplay struct {
 	Formula        string
 	FileType       string
 	Sections       []SectionDisplay
+	Gradient       template.CSS
 	Probability    float64
 }
 
@@ -560,6 +563,7 @@ type FileMetricsDisplay struct {
 	Formula        string
 	FileType       string
 	Groups         []metricGroup
+	Gradient       template.CSS
 	Probability    float64
 }
 
@@ -726,16 +730,22 @@ type resultData struct {
 	// Threshold/Class/Level populated from v=5 envelopes. Threshold > 0 is
 	// the sentinel for "use the v=5 exact-band path"; v=4 inputs leave it 0
 	// and the template falls back to the legacy two-edge gradient.
-	Threshold     float64
-	Class         int
-	Level         *int
-	TotalFiles    int
-	ShownFiles    int
-	Probability   float64
-	IsArchive     bool
-	IsText        bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
-	LimitedInfo   bool
-	RescanAllowed bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
+	Threshold float64
+	Class     int
+	Level     *int
+	// StampGradient is the verdict-stamp CSS gradient for the top-level file,
+	// precomputed per envelope version (v6 colors by level; v4/v5 by threshold).
+	StampGradient template.CSS
+	// LevelConfidence is the level-derived "how confident this is hostile"
+	// percentage shown on the litmus badge hover (see levelConfidence).
+	LevelConfidence int
+	TotalFiles      int
+	ShownFiles      int
+	Probability     float64
+	IsArchive       bool
+	IsText          bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
+	LimitedInfo     bool
+	RescanAllowed   bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 	// Contents holds the rendered text body of a text file, broken into
 	// annotated lines. Empty for non-text files and archives.
 	Contents []ContentLine
@@ -939,6 +949,7 @@ type cleaveFile struct {
 	Sections       []sectionInfo              `json:"sections,omitempty"`
 	Probability    float64                    `json:"-"` // populated from ml.fs after parsing
 	Threshold      float64                    `json:"-"` // v=5: per-file deciding cutoff (populated from ml.fs[i].threshold)
+	Gradient       template.CSS               `json:"-"` // verdict-stamp CSS gradient, precomputed per envelope version
 	Class          int                        `json:"-"` // v=5: per-file integer class (mirrors Classification for template branching)
 	Size           int64                      `json:"sz"`
 	ID             int                        `json:"id"`
@@ -1222,20 +1233,6 @@ func main() {
 		},
 		"ecoColor":  ecosystemColor,
 		"chromaCSS": func() template.CSS { return chromaStylesheet },
-		// bandGradient returns a CSS linear-gradient for v=4 envelopes that
-		// publish both band edges. Each classification band has its own
-		// color ramp; the two gradient stops are left/right block colors at
-		// the current within-band progress.
-		"bandGradient": func(p, suspT, hostT float64) template.CSS {
-			return renderBandGradient(p, bandProgressV4(p, suspT, hostT), classifyByThresholds(p, suspT, hostT))
-		},
-		// bandGradient2 is the v=5 path: only the deciding threshold is
-		// known, so within-band progress is measured against (threshold, 1.0)
-		// for non-benign and (0, threshold) for benign. Class drives the
-		// color ramp directly so the rendering is exact for the verdict.
-		"bandGradient2": func(p, threshold float64, class int) template.CSS {
-			return renderBandGradient(p, bandProgressV5(p, threshold, class), class)
-		},
 	}
 	var tmplErr error
 	uploadTemplate, tmplErr = template.New("upload.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
@@ -4799,6 +4796,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs. v=6 entries
 	// carry `l` instead of class/threshold, so the class is derived from it.
 	mlByID := make(map[int]struct {
+		L         *int
 		Class     int
 		Prob      float64
 		Threshold float64
@@ -4809,10 +4807,11 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 			class = classFromLevel(f.L)
 		}
 		mlByID[f.ID] = struct {
+			L         *int
 			Class     int
 			Prob      float64
 			Threshold float64
-		}{class, f.Prob, f.Threshold}
+		}{f.L, class, f.Prob, f.Threshold}
 	}
 	for i := range report.Files {
 		if ml, ok := mlByID[report.Files[i].ID]; ok {
@@ -4820,6 +4819,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 			report.Files[i].Probability = ml.Prob
 			report.Files[i].Threshold = ml.Threshold
 			report.Files[i].Class = ml.Class
+			// Envelope-level threshold/class/band edges with this file's own
+			// probability and level, matching the prior per-file template logic.
+			report.Files[i].Gradient = stampGradient(mlResp.V, ml.L, ml.Prob, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
 		}
 	}
 
@@ -4902,6 +4904,11 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 			break
 		}
 	}
+
+	// Verdict-stamp gradient for the top-level file. v6 colors by level; older
+	// envelopes fall back to the threshold-based band.
+	data.StampGradient = stampGradient(mlResp.V, data.Level, data.Probability, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
+	data.LevelConfidence = levelConfidence(data.Level)
 
 	// Flag when we have limited analysis info (unknown file type AND no findings)
 	if (data.FileType == "UNKNOWN" || data.FileType == "") && totalFindings == 0 {
@@ -5755,6 +5762,7 @@ func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
 			FileType:       strings.ToUpper(file.FileType),
 			Strings:        strs,
 			Sections:       sections,
+			Gradient:       file.Gradient,
 			HasSections:    hasSections,
 		})
 	}
@@ -5802,6 +5810,7 @@ func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
 			FileType:       strings.ToUpper(file.FileType),
 			Imports:        imports,
 			Exports:        exports,
+			Gradient:       file.Gradient,
 		})
 	}
 
@@ -5844,6 +5853,7 @@ func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
 			Formula:        file.Formula,
 			FileType:       strings.ToUpper(file.FileType),
 			Sections:       sections,
+			Gradient:       file.Gradient,
 		})
 	}
 
@@ -5934,6 +5944,7 @@ func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
 			Formula:        file.Formula,
 			FileType:       strings.ToUpper(file.FileType),
 			Groups:         groups,
+			Gradient:       file.Gradient,
 		})
 	}
 
@@ -6708,6 +6719,106 @@ func renderBandGradient(_ float64, t float64, class int) template.CSS {
 	return template.CSS(fmt.Sprintf( //nolint:gosec // rgb derived from in-package floats, no user content
 		"linear-gradient(90deg, %s, %s)", cssRGB(left), cssRGB(right),
 	))
+}
+
+// levelStops anchor the v6 verdict-stamp spectrum to the per-100M-benigns level
+// (../litmus JSON.md). The level reads like a normalized confidence scale:
+// lower levels fired at stricter false-positive cutoffs (higher-confidence
+// hostile), so they sit at the hot end and cool toward green as the level
+// loosens. Anchors are spaced to match the level table's own non-linear feel.
+var levelStops = []struct {
+	at int
+	c  bandRGB
+}{
+	{0, bandRGB{150, 50, 225}},    // violet — strictest cutoff, off-the-charts confident
+	{1, bandRGB{235, 55, 55}},     // red
+	{50, bandRGB{250, 140, 35}},   // orange — litmus's default operating level
+	{150, bandRGB{240, 205, 60}},  // yellow
+	{500, bandRGB{150, 200, 80}},  // greenish
+	{1000, bandRGB{85, 195, 115}}, // green — loosest cutoff
+}
+
+// levelColor interpolates the spectrum at a clamped level.
+func levelColor(level int) bandRGB {
+	if level <= levelStops[0].at {
+		return levelStops[0].c
+	}
+	last := levelStops[len(levelStops)-1]
+	if level >= last.at {
+		return last.c
+	}
+	for i := 0; i < len(levelStops)-1; i++ {
+		lo, hi := levelStops[i], levelStops[i+1]
+		if level <= hi.at {
+			t := float64(level-lo.at) / float64(hi.at-lo.at)
+			return mixRGB(lo.c, hi.c, t)
+		}
+	}
+	return last.c
+}
+
+// levelGradient renders the verdict stamp directly from a v6 level marker,
+// independent of the discrete verdict class. The benign sentinel (-1) is a
+// solid green; a level 0..1000 walks the violet→red→orange→yellow→green
+// spectrum; a nil marker (hostile via manual thresholds, no level table)
+// renders red. The two stops add a light→dark sheen matching the band style.
+func levelGradient(level *int) template.CSS {
+	switch {
+	case level == nil:
+		return levelGradientCSS(bandRGB{235, 55, 55}, false) // manual-threshold hostile
+	case *level < 0:
+		return levelGradientCSS(bandRGB{45, 175, 100}, true) // benign sentinel: solid green
+	default:
+		return levelGradientCSS(levelColor(*level), false)
+	}
+}
+
+// levelGradientCSS turns a base color into the two-stop gradient. solid emits
+// the same color for both stops (a flat fill) for the benign verdict.
+func levelGradientCSS(base bandRGB, solid bool) template.CSS {
+	left, right := base, base
+	if !solid {
+		left = mixRGB(base, bandRGB{255, 255, 255}, 0.14)
+		right = mixRGB(base, bandRGB{0, 0, 0}, 0.10)
+	}
+	return template.CSS(fmt.Sprintf( //nolint:gosec // rgb derived from in-package ints, no user content
+		"linear-gradient(90deg, %s, %s)", cssRGB(left), cssRGB(right),
+	))
+}
+
+// levelConfidence maps a v6 level marker to a rough "how confident this is
+// hostile" percentage for the litmus badge hover. The benign sentinel (-1)
+// reads as 1%; level 0 (strictest cutoff) as 100%; level 1000 (loosest) as 10%,
+// sliding linearly in between. A nil marker (manual-threshold hostile) has no
+// level table and reads as fully confident.
+func levelConfidence(level *int) int {
+	switch {
+	case level == nil:
+		return 100
+	case *level < 0:
+		return 1
+	default:
+		l := *level
+		if l > 1000 {
+			l = 1000
+		}
+		return 100 - l*90/1000 // 100% at level 0 → 10% at level 1000
+	}
+}
+
+// stampGradient picks the verdict-stamp gradient for one file, dispatching on
+// the envelope version so the choice lives in one place rather than the
+// template. v=6 colors by level; v=5 uses the single deciding threshold; v=4
+// uses both band edges. prob/level are per-file; the threshold/class/band edges
+// are the envelope-level values, mirroring the prior template behavior.
+func stampGradient(version string, level *int, prob, threshold, suspT, hostT float64, class int) template.CSS {
+	if version == "6" {
+		return levelGradient(level)
+	}
+	if threshold > 0 {
+		return renderBandGradient(prob, bandProgressV5(prob, threshold, class), class)
+	}
+	return renderBandGradient(prob, bandProgressV4(prob, suspT, hostT), classifyByThresholds(prob, suspT, hostT))
 }
 
 // classifyByThresholds maps (prob, suspT, hostT) to the v=4 integer class.
