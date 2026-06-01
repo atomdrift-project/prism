@@ -5310,14 +5310,22 @@ func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[s
 
 // resolveMatchFile maps cleave's compact `el` location string to the
 // inner file it refers to. Returns nil when the location is empty, isn't
-// an archive-prefixed entry (semantic labels like "import"), or doesn't
-// resolve to any known inner file (nested archives we didn't extract).
+// a file reference (semantic labels like "import", plain byte offsets), or
+// doesn't resolve to any known inner file (nested archives we didn't extract).
 // Callers use the result to set Path/SHA256 on a FindingMatch; when nil
 // the match falls back to either the current file (when not the
 // archive container) or a path-less evidence row.
-func resolveMatchFile(location string, pathToFile map[string]*cleaveFile) *cleaveFile {
+//
+// Two `el` shapes are accepted for backward compatibility:
+//   - v6 (current): "<fs-id>[:<offset>]" — a digit-led token; the member path
+//     is resolved once via the file's id instead of being embedded per entry.
+//   - v5 (legacy/cached): "archive:<member-path>[:<offset>]".
+func resolveMatchFile(location string, pathToFile map[string]*cleaveFile, idToFile map[int]*cleaveFile) *cleaveFile {
 	if location == "" {
 		return nil
+	}
+	if id, ok := parseLocationID(location); ok {
+		return idToFile[id]
 	}
 	const prefix = "archive:"
 	member := strings.TrimPrefix(location, prefix)
@@ -5330,6 +5338,26 @@ func resolveMatchFile(location string, pathToFile map[string]*cleaveFile) *cleav
 	// Archives-in-archives: cleave uses "outer.tgz!inner.go" with a
 	// single `!`; our flat file list stores those as "outer.tgz!!inner.go".
 	return pathToFile[strings.ReplaceAll(member, "!", "!!")]
+}
+
+// parseLocationID parses the v6 `el` form "<fs-id>[:<offset>]" and returns the
+// file id. Reports false for the legacy "archive:…" / "offset:…" strings and
+// anything whose leading token isn't a plain non-negative integer — the
+// "archive:" prefix keeps a member literally named with digits from being
+// misread as an id.
+func parseLocationID(location string) (int, bool) {
+	tok := location
+	if i := strings.IndexByte(tok, ':'); i >= 0 {
+		tok = tok[:i]
+	}
+	if tok == "" {
+		return 0, false
+	}
+	id, err := strconv.Atoi(tok)
+	if err != nil || id < 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 //nolint:gocognit // inherently complex: trait bucketing plus per-evidence file back-attribution
@@ -5362,18 +5390,20 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 	// entry is just a rollup of inner-file findings — link to the actual
 	// file the trait was inherited from, not the wrapping archive.
 	containerSHAs := make(map[string]bool)
-	// Path → file map used to back-attribute container-level findings to
-	// the inner file that actually produced the match. Cleave's compact
-	// `el` carries an "archive:<member-path>" string per evidence item;
-	// we resolve that member-path against the same `displayPath` form
-	// we already use elsewhere so existing inner files line up directly.
+	// Maps used to back-attribute container-level findings to the inner file
+	// that actually produced the match. Cleave's compact `el` carries one
+	// reference per evidence item: v6 reports use a numeric "<fs-id>" we look
+	// up in idToFile; legacy v5 reports use an "archive:<member-path>" string
+	// we resolve against the same `displayPath` form used elsewhere.
 	pathToFile := make(map[string]*cleaveFile)
+	idToFile := make(map[int]*cleaveFile)
 	for i := range files {
 		if files[i].Depth == 0 {
 			containerSHAs[files[i].SHA256] = true
 			continue
 		}
 		pathToFile[displayPath(files[i].Path)] = &files[i]
+		idToFile[files[i].ID] = &files[i]
 	}
 
 	for i := range files {
@@ -5423,7 +5453,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 					sha  string
 				)
 				if ei < len(f.Locations) {
-					if target := resolveMatchFile(f.Locations[ei], pathToFile); target != nil {
+					if target := resolveMatchFile(f.Locations[ei], pathToFile, idToFile); target != nil {
 						path = displayPath(target.Path)
 						sha = target.SHA256
 					}

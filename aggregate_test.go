@@ -63,6 +63,82 @@ func TestAggregateBackAttributesViaLocations(t *testing.T) {
 	}
 }
 
+// TestAggregateBackAttributesViaFileIndex covers the v6 compact `el` form,
+// where the member path is replaced by the inner file's fs id ("1") with the
+// byte offset preserved ("1:0x3718c0"). resolveMatchFile must resolve the id to
+// the same inner file the legacy path-based form pointed at.
+func TestAggregateBackAttributesViaFileIndex(t *testing.T) {
+	innerSHA := strings.Repeat("b", 64)
+	containerSHA := strings.Repeat("a", 64)
+	files := []cleaveFile{
+		{
+			Path:   "archive.zip",
+			SHA256: containerSHA,
+			Depth:  0,
+			ID:     0,
+			Findings: []finding{{
+				ID:        "well-known/malware/rootkit/ebpfkit::ebpfkit-assets-package",
+				Crit:      4,
+				Conf:      0.9,
+				Evidence:  []string{"package assets"},
+				Locations: []string{"1:0x3718c0"},
+			}},
+		},
+		{
+			Path:   "archive.zip!!pkg/assets/builder.go",
+			SHA256: innerSHA,
+			Depth:  1,
+			ID:     1,
+		},
+	}
+
+	groups, _, _ := aggregateArchiveCategories(files)
+	var got *FindingDisplay
+	for i := range groups {
+		for j := range groups[i].Findings {
+			if groups[i].Findings[j].ID == "malware/rootkit" {
+				got = &groups[i].Findings[j]
+			}
+		}
+	}
+	if got == nil {
+		t.Fatalf("rootkit finding missing from aggregated output: %+v", groups)
+	}
+	if len(got.Matches) != 1 {
+		t.Fatalf("expected exactly one match, got %d: %+v", len(got.Matches), got.Matches)
+	}
+	m := got.Matches[0]
+	if m.SHA256 != innerSHA {
+		t.Errorf("match SHA256 = %q, want inner file SHA %q", m.SHA256, innerSHA)
+	}
+	if m.Path != "pkg/assets/builder.go" {
+		t.Errorf("match Path = %q, want %q", m.Path, "pkg/assets/builder.go")
+	}
+}
+
+// TestParseLocationID locks in the v6-vs-legacy `el` discrimination.
+func TestParseLocationID(t *testing.T) {
+	cases := []struct {
+		in     string
+		wantID int
+		wantOK bool
+	}{
+		{"1:0x3718c0", 1, true},
+		{"42", 42, true},
+		{"archive:pkg/assets/builder.go", 0, false},
+		{"archive:0a8ab3.macho:0x10", 0, false}, // digit-led member stays legacy via prefix
+		{"offset:0x1234", 0, false},
+		{"0x1234", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		id, ok := parseLocationID(c.in)
+		if ok != c.wantOK || (ok && id != c.wantID) {
+			t.Errorf("parseLocationID(%q) = (%d, %t), want (%d, %t)", c.in, id, ok, c.wantID, c.wantOK)
+		}
+	}
+}
+
 // TestAggregateDropsUnresolvableContainerSources locks in the existing
 // safety net: when a finding only fires on the container and we can't
 // back-attribute via Locations (no `el` from older cleave builds, or a
