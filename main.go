@@ -6569,16 +6569,31 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// CriticalLevel is prism's consumer-side cutoff between hostile and suspicious
+// on the per-100M-benigns scale. A v6 envelope's `l` is the strictest grid
+// level at which the file fires — `l <= CriticalLevel` means it fires at or
+// below our critical line (hostile), `l > CriticalLevel` means it only fires
+// in the noisier tail (suspicious), and `-1` means it never fires (benign).
+// Mirrors DefaultSeverityLevel in collimator/litmus/autocollie/promoter; see
+// collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
+const CriticalLevel = 4
+
 // envelopeClass derives the legacy 0/1/2 classification from a v=6 envelope's
-// `l` field. l == -1 → benign (0); anything else, including nil/null, →
-// hostile (2). Suspicious (1) is consumer-derived in litmus and not directly
-// represented in `l`; if prism ever needs to surface "suspicious" specifically
-// it must check `prob` against a derived band.
+// `l` field. -1 → benign (0); 0..=CriticalLevel → hostile (2); above
+// CriticalLevel → suspicious (1); nil/null (manual mode, no level info) →
+// hostile (2), fail-safe.
 func envelopeClass(l *int) int {
-	if l != nil && *l == -1 {
-		return 0
+	if l == nil {
+		return 2
 	}
-	return 2
+	switch {
+	case *l < 0:
+		return 0
+	case *l <= CriticalLevel:
+		return 2
+	default:
+		return 1
+	}
 }
 
 // classificationNames maps integer classification to display string.

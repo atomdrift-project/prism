@@ -170,9 +170,9 @@ func TestLitmusMlResponseV6(t *testing.T) {
 			wantLevel: intp(-1),
 		},
 		{
-			name:      "hostile at level 50",
+			name:      "suspicious at level 50 (above critical line)",
 			raw:       `{"v":"6","prob":0.998,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
-			wantClass: 2,
+			wantClass: 1,
 			wantLevel: intp(50),
 		},
 		{
@@ -220,7 +220,9 @@ func TestLitmusMlResponseV6(t *testing.T) {
 	}
 }
 
-// TestEnvelopeClass covers the v6 l → 0/1/2 mapping directly.
+// TestEnvelopeClass covers the v6 l → 0/1/2 mapping. CriticalLevel splits
+// hostile (l <= CriticalLevel) from suspicious (l > CriticalLevel); -1 is the
+// benign sentinel; nil/null (manual mode) is hostile fail-safe.
 func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(nil); got != 2 {
 		t.Errorf("envelopeClass(nil) = %d, want 2 (hostile/manual)", got)
@@ -231,11 +233,14 @@ func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(intp(0)); got != 2 {
 		t.Errorf("envelopeClass(0) = %d, want 2 (hostile@strictest)", got)
 	}
-	if got := envelopeClass(intp(50)); got != 2 {
-		t.Errorf("envelopeClass(50) = %d, want 2 (hostile@default)", got)
+	if got := envelopeClass(intp(CriticalLevel)); got != 2 {
+		t.Errorf("envelopeClass(CriticalLevel) = %d, want 2 (hostile at critical line)", got)
 	}
-	if got := envelopeClass(intp(100)); got != 2 {
-		t.Errorf("envelopeClass(100) = %d, want 2 (hostile@loosest)", got)
+	if got := envelopeClass(intp(CriticalLevel + 1)); got != 1 {
+		t.Errorf("envelopeClass(CriticalLevel+1) = %d, want 1 (suspicious just above critical)", got)
+	}
+	if got := envelopeClass(intp(1000)); got != 1 {
+		t.Errorf("envelopeClass(1000) = %d, want 1 (suspicious in loose tail)", got)
 	}
 }
 
