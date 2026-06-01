@@ -2290,7 +2290,7 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 	if len(sample.LitmusResult) > 0 {
 		var mlResp litmusMlResponse
 		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
-			classification = classificationName(mlResp.Classification)
+			classification = classificationName(mlResp.verdictClass())
 		}
 	}
 
@@ -3046,7 +3046,7 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 		if len(parent.LitmusResult) > 0 {
 			var ml litmusMlResponse
 			if json.Unmarshal(parent.LitmusResult, &ml) == nil {
-				entry.Classification = classificationName(ml.Classification)
+				entry.Classification = classificationName(ml.verdictClass())
 			}
 		}
 		if parent.AnalyzedAt != nil {
@@ -4787,18 +4787,23 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	}
 
 	// Merge ML classifications from ml.fs into cleave report files (matched by id).
-	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs.
+	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs. v=6 entries
+	// carry `l` instead of class/threshold, so the class is derived from it.
 	mlByID := make(map[int]struct {
 		Class     int
 		Prob      float64
 		Threshold float64
 	}, len(mlResp.Files))
 	for _, f := range mlResp.Files {
+		class := f.Class
+		if mlResp.V == "6" {
+			class = classFromLevel(f.L)
+		}
 		mlByID[f.ID] = struct {
 			Class     int
 			Prob      float64
 			Threshold float64
-		}{f.Class, f.Prob, f.Threshold}
+		}{class, f.Prob, f.Threshold}
 	}
 	for i := range report.Files {
 		if ml, ok := mlByID[report.Files[i].ID]; ok {
@@ -6447,9 +6452,10 @@ type litmusMlResponse struct {
 	AnalyzedAt string `json:"-"`
 	Files      []struct {
 		ID        int     `json:"id"`
-		Class     int     `json:"class"`
+		Class     int     `json:"class"` // v=4/v=5 only
 		Prob      float64 `json:"prob"`
 		Threshold float64 `json:"threshold"` // v=5 only
+		L         *int    `json:"l"`         // v=6 only; per-member verdict-and-level marker
 	} `json:"-"`
 	Thresholds     [2]float64 `json:"-"` // v=4 only
 	Threshold      float64    `json:"-"` // v=5 only
@@ -6537,7 +6543,8 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 				Class     int     `json:"class"`
 				Prob      float64 `json:"prob"`
 				Threshold float64 `json:"threshold"`
-			}{ID: f.ID, Class: memberClass, Prob: f.Prob})
+				L         *int    `json:"l"`
+			}{ID: f.ID, Class: memberClass, Prob: f.Prob, L: f.L})
 		}
 		return nil
 	}
@@ -6547,6 +6554,7 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 			Class     int     `json:"class"`
 			Prob      float64 `json:"prob"`
 			Threshold float64 `json:"threshold"`
+			L         *int    `json:"l"`
 		}{ID: lf.ID, Class: lf.Class, Prob: lf.Prob, Threshold: lf.Threshold})
 	}
 	return nil
@@ -6572,6 +6580,37 @@ func classificationName(c int) string {
 		return classificationNames[c]
 	}
 	return "unknown"
+}
+
+// verdictClass returns prism's integer verdict class (0=benign, 1=suspicious,
+// 2=hostile) for the envelope, bridging the wire-format versions. v=4/v=5
+// carry `class` directly. v=6 collapses verdict-and-level into `l` and no
+// longer wire-encodes a suspicious band, so the suspicious cutoff is
+// consumer-side; see classFromLevel.
+func (r *litmusMlResponse) verdictClass() int {
+	if r.V == "6" {
+		return classFromLevel(r.L)
+	}
+	return r.Classification
+}
+
+// classFromLevel applies prism's consumer-side level policy to a v=6 `l`
+// marker (../litmus/docs/JSON.md). The sentinel -1 is benign; a nil marker is
+// hostile produced under manual thresholds (no level table applies); levels
+// 0..=50 are hostile; 51 and above are suspicious. Lower levels fire at
+// stricter false-positive cutoffs, so they carry higher confidence.
+func classFromLevel(l *int) int {
+	if l == nil {
+		return 2 // hostile under manual thresholds
+	}
+	switch v := *l; {
+	case v == -1:
+		return 0 // benign sentinel
+	case v <= 50:
+		return 2 // hostile
+	default:
+		return 1 // suspicious
+	}
 }
 
 // suspiciousT returns the suspicious-band cutoff for rendering. For v=5
