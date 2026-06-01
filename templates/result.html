@@ -1906,7 +1906,7 @@
                     <span class="hero-toggle-icon" aria-hidden="true">▴</span>
                 </button>
             </div>
-            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{with .Level}}{{if ne . -1}}<span class="verdict-level" title="False-positive severity level on the per-100M-benigns scale (0=strictest, 100=loosest, default 50 ≈ 0.5 FP per million benigns) that selected the deciding threshold">&nbsp;·&nbsp;L{{.}}</span>{{end}}{{end}}</div>
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="False-positive severity level on the per-100M-benigns scale (0=strictest, 100=loosest, default 50 ≈ 0.5 FP per million benigns) that selected the deciding threshold">&nbsp;·&nbsp;L{{deref .Level}}</span>{{end}}{{end}}</div>
             <div class="hero-body" id="hero-details">
             <div class="molecule-viz">
                 <div class="molecule-container">

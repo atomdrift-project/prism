@@ -1211,8 +1211,17 @@ func main() {
 		"buildCommitShort": shortBuildCommit,
 		"mul":              func(a, b float64) float64 { return a * b },
 		"formulaQuery":     desubscriptFormula,
-		"ecoColor":         ecosystemColor,
-		"chromaCSS":        func() template.CSS { return chromaStylesheet },
+		// deref unwraps an optional int so templates can compare it: html/template's
+		// eq/ne operate on basic kinds only and error on a raw *int, which aborts
+		// rendering mid-page. A nil pointer reads as 0 (no caller relies on that case).
+		"deref": func(p *int) int {
+			if p == nil {
+				return 0
+			}
+			return *p
+		},
+		"ecoColor":  ecosystemColor,
+		"chromaCSS": func() template.CSS { return chromaStylesheet },
 		// bandGradient returns a CSS linear-gradient for v=4 envelopes that
 		// publish both band edges. Each classification band has its own
 		// color ramp; the two gradient stops are left/right block colors at
