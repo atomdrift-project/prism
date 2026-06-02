@@ -34,12 +34,10 @@ func TestResultTemplateParses(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		data resultData
-		// want/dontWant guard the FPR level badge, whose pointer comparison
-		// once errored mid-render and silently truncated the whole page.
+		name     string
 		want     string
 		dontWant string
+		data     resultData
 	}{
 		{name: "single_file", data: singleFileData(), dontWant: "verdict-level"}, // benign: badge hidden
 		{name: "archive_with_children", data: archiveData(), want: "L72"},        // real level: badge shown
@@ -80,7 +78,7 @@ func singleFileData() resultData {
 		SuspiciousT:  0.65,
 		HostileT:     0.887,
 		Nonce:        "n",
-		Level:        intp(-1), // benign sentinel: badge must be hidden, not crash
+		Level:        new(-1), // benign sentinel: badge must be hidden, not crash
 	}
 }
 
@@ -107,7 +105,7 @@ func archiveData() resultData {
 		IsArchive:    true,
 		TotalFiles:   3,
 		ShownFiles:   3,
-		Level:        intp(72), // real FPR level: badge must render "L72"
+		Level:        new(72), // real FPR level: badge must render "L72"
 		Files: []FileTreeEntry{
 			{Path: "archive.tgz", Display: "archive.tgz", Basename: "archive.tgz", SHA256: mkSHA('a'), SHA256Short: "aaaaaaaa", Classification: "hostile", Risk: "hostile", Formula: "Os", FileType: "TAR.GZ", SizeStr: "1.6 KB", Probability: 0.95, Depth: 0, IsContainer: true},
 			{Path: "archive.tgz!!package/index.js", Display: "package/index.js", Basename: "index.js", SHA256: mkSHA('b'), SHA256Short: "bbbbbbbb", Classification: "hostile", Risk: "hostile", Formula: "H", FileType: "JS", SizeStr: "2.0 KB", Probability: 0.91, Depth: 1},

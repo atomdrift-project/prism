@@ -145,6 +145,16 @@ func TestReassembleEnvelope(t *testing.T) {
 	}
 
 	var got struct {
+		Raw struct {
+			Truncated    *bool `json:"truncated,omitempty"`
+			OmittedFiles *int  `json:"omitted_files,omitempty"`
+			Files        []struct {
+				SHA   string `json:"sha"`
+				Path  string `json:"path"`
+				ID    int    `json:"id"`
+				Depth int    `json:"dp"`
+			} `json:"fs"`
+		} `json:"raw"`
 		ML struct {
 			Files []struct {
 				ID    int     `json:"id"`
@@ -152,16 +162,6 @@ func TestReassembleEnvelope(t *testing.T) {
 				Prob  float64 `json:"prob"`
 			} `json:"fs"`
 		} `json:"ml"`
-		Raw struct {
-			Files []struct {
-				ID    int    `json:"id"`
-				SHA   string `json:"sha"`
-				Path  string `json:"path"`
-				Depth int    `json:"dp"`
-			} `json:"fs"`
-			Truncated    *bool `json:"truncated,omitempty"`
-			OmittedFiles *int  `json:"omitted_files,omitempty"`
-		} `json:"raw"`
 	}
 	if err := json.Unmarshal(enriched, &got); err != nil {
 		t.Fatalf("parse enriched: %v", err)

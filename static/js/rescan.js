@@ -24,8 +24,8 @@ function announce(msg) {
 // so a stale "already analyzed once" state can't trigger an instant
 // reload. Falls back to polling /status if EventSource isn't usable.
 function watchForCompletion(sha, after, btn) {
-  const qs = after ? "?after=" + encodeURIComponent(after) : "";
-  const url = "/file/" + encodeURIComponent(sha) + "/wait" + qs;
+  const qs = after ? `?after=${encodeURIComponent(after)}` : "";
+  const url = `/file/${encodeURIComponent(sha)}/wait${qs}`;
   const onReady = () => {
     btn.textContent = "↻ reloading…";
     announce("Rescan complete. Reloading.");
@@ -62,7 +62,7 @@ function watchForCompletion(sha, after, btn) {
         done = true;
         es.close();
       },
-      10 * 60 * 1000,
+      10 * 60 * 1000
     );
     return;
   }
@@ -73,12 +73,11 @@ function watchForCompletion(sha, after, btn) {
   const tick = async () => {
     if (Date.now() - start > 10 * 60 * 1000) return;
     try {
-      const statusURL =
-        "/file/" + encodeURIComponent(sha) + "/status" + qs;
+      const statusURL = `/file/${encodeURIComponent(sha)}/status${qs}`;
       const r = await fetch(statusURL, { cache: "no-store" });
       if (r.ok) {
         const j = await r.json();
-        if (j && j.ready) {
+        if (j?.ready) {
           onReady();
           return;
         }
@@ -109,20 +108,20 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
 
     try {
       const body = new URLSearchParams({ csrf_token: csrf });
-      const resp = await fetch("/file/" + encodeURIComponent(sha) + "/rescan", {
+      const resp = await fetch(`/file/${encodeURIComponent(sha)}/rescan`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
       });
       if (!resp.ok) {
-        let msg = "rescan failed (" + resp.status + ")";
+        let msg = `rescan failed (${resp.status})`;
         try {
           const j = await resp.json();
-          if (j && j.error) msg = j.error;
+          if (j?.error) msg = j.error;
         } catch (_) {
           /* non-JSON body */
         }
-        btn.textContent = "✕ " + msg;
+        btn.textContent = `✕ ${msg}`;
         btn.classList.add("is-error");
         btn.title = msg;
         announce(msg);

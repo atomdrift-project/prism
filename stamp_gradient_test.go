@@ -36,7 +36,7 @@ func TestLevelColorAnchors(t *testing.T) {
 // benign sentinel stays a solid green.
 func TestLevelGradientVerdicts(t *testing.T) {
 	// Benign sentinel: solid green (both stops identical, green dominant).
-	benign := string(levelGradient(intp(-1)))
+	benign := string(levelGradient(new(-1)))
 	left, right := gradientStops(t, benign)
 	if left != right {
 		t.Errorf("benign gradient should be solid, got two stops: %q", benign)
@@ -47,7 +47,7 @@ func TestLevelGradientVerdicts(t *testing.T) {
 
 	// Hostile at L50: warm/orange — red channel high, green mid, blue low. The
 	// old probability-vs-threshold path rendered this green; that was the bug.
-	hostile := levelGradient(intp(50))
+	hostile := levelGradient(new(50))
 	l, _ := gradientStops(t, string(hostile))
 	if !(l.r > 200 && l.b < 90 && l.r > l.g) {
 		t.Errorf("L50 hostile stamp should be warm/orange, got %v (%q)", l, hostile)
@@ -64,7 +64,7 @@ func TestLevelGradientVerdicts(t *testing.T) {
 // envelopes keep the threshold-based band, so cached v4/v5 results are unchanged.
 func TestStampGradientVersionDispatch(t *testing.T) {
 	// v6 ignores prob/threshold and delegates to the level spectrum.
-	if got := stampGradient("6", intp(50), 0.99, 0, 0.65, 0.887, 2); got != levelGradient(intp(50)) {
+	if got := stampGradient("6", new(50), 0.99, 0, 0.65, 0.887, 2); got != levelGradient(new(50)) {
 		t.Errorf("v6 stampGradient should equal levelGradient(50), got %q", got)
 	}
 	// v5 (threshold > 0) and v4 (threshold 0) still produce a band gradient and
@@ -89,14 +89,14 @@ func TestLevelConfidence(t *testing.T) {
 		level *int
 		want  int
 	}{
-		{nil, 100},       // manual-threshold hostile
-		{intp(-1), 1},    // benign sentinel
-		{intp(0), 100},   // strictest cutoff
-		{intp(50), 96},   // default operating level
-		{intp(150), 87},  //
-		{intp(500), 55},  //
-		{intp(1000), 10}, // loosest cutoff
-		{intp(5000), 10}, // clamps
+		{nil, 100},      // manual-threshold hostile
+		{new(-1), 1},    // benign sentinel
+		{new(0), 100},   // strictest cutoff
+		{new(50), 96},   // default operating level
+		{new(150), 87},  //
+		{new(500), 55},  //
+		{new(1000), 10}, // loosest cutoff
+		{new(5000), 10}, // clamps
 	}
 	for _, c := range cases {
 		if got := levelConfidence(c.level); got != c.want {
@@ -107,17 +107,17 @@ func TestLevelConfidence(t *testing.T) {
 
 // gradientStops parses "linear-gradient(90deg, rgb(a,b,c), rgb(d,e,f))" into its
 // two color stops.
-func gradientStops(t *testing.T, css string) (bandRGB, bandRGB) {
+func gradientStops(t *testing.T, css string) (first, second bandRGB) {
 	t.Helper()
 	rgbs := make([]bandRGB, 0, 2)
 	for _, part := range strings.Split(css, "rgb(")[1:] {
-		end := strings.IndexByte(part, ')')
-		if end < 0 {
+		body, _, ok := strings.Cut(part, ")")
+		if !ok {
 			t.Fatalf("malformed gradient: %q", css)
 		}
 		var r, g, b int
-		if _, err := fmt.Sscanf(part[:end], "%d,%d,%d", &r, &g, &b); err != nil {
-			t.Fatalf("parse rgb %q: %v", part[:end], err)
+		if _, err := fmt.Sscanf(body, "%d,%d,%d", &r, &g, &b); err != nil {
+			t.Fatalf("parse rgb %q: %v", body, err)
 		}
 		rgbs = append(rgbs, bandRGB{float64(r), float64(g), float64(b)})
 	}

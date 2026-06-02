@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -429,13 +430,11 @@ func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[strin
 
 // FindingDisplay represents a single finding for table display.
 type FindingDisplay struct {
-	ID   string
-	Crit string
-	Desc string
-	// ConfPct is the trait's confidence as a whole-number percentage (e.g.
-	// 40 for 0.40), used by the criticality badge's hover tooltip.
-	ConfPct int
+	ID      string
+	Crit    string
+	Desc    string
 	Matches []FindingMatch
+	ConfPct int
 }
 
 // FindingMatch is one row in an expandable trait card. It carries the
@@ -483,9 +482,9 @@ type FileStringsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
+	Gradient       template.CSS
 	Strings        []StringDisplay
 	Sections       []StringSectionGroup
-	Gradient       template.CSS
 	Probability    float64
 	HasSections    bool
 }
@@ -510,9 +509,9 @@ type FileSymbolsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
+	Gradient       template.CSS
 	Imports        []SymbolDisplay
 	Exports        []SymbolDisplay
-	Gradient       template.CSS
 	Probability    float64
 }
 
@@ -529,8 +528,8 @@ type FileSectionsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Sections       []SectionDisplay
 	Gradient       template.CSS
+	Sections       []SectionDisplay
 	Probability    float64
 }
 
@@ -562,8 +561,8 @@ type FileMetricsDisplay struct {
 	SHA256         string
 	Formula        string
 	FileType       string
-	Groups         []metricGroup
 	Gradient       template.CSS
+	Groups         []metricGroup
 	Probability    float64
 }
 
@@ -934,23 +933,23 @@ type cleaveReport struct {
 // cleaveFile represents a file entry in cleave compact output.
 // Litmus injects "class" and "prob" into each fs[] entry.
 type cleaveFile struct {
-	Metrics        json.RawMessage            `json:"ms,omitempty"`
-	KV             map[string]json.RawMessage `json:"k,omitempty"`  // flat kv: "a.b[0].c" → leaf value (cleave's structural output)
-	Facts          cleaveFacts                `json:"ff,omitempty"` //nolint:modernize // omitzero would change marshal output (empty Facts becomes omitted instead of "ff":{}); kept for downstream-consumer compatibility
+	KV             map[string]json.RawMessage `json:"k,omitempty"`
+	Gradient       template.CSS               `json:"-"`
 	Path           string                     `json:"path"`
 	FileType       string                     `json:"type"`
 	SHA256         string                     `json:"sha"`
-	Classification string                     `json:"-"` // populated from ml.fs after parsing
+	Classification string                     `json:"-"`
 	Formula        string                     `json:"f,omitempty"`
-	Findings       []finding                  `json:"ts,omitempty"`
-	Strings        []json.RawMessage          `json:"ss,omitempty"` // v4 tuples: [offset, value] or [offset, enc, value]
-	Imports        []string                   `json:"is,omitempty"` // v4: bare symbol strings
+	Facts          cleaveFacts                `json:"ff,omitzero"`
 	Exports        []symbolInfo               `json:"exports,omitempty"`
+	Findings       []finding                  `json:"ts,omitempty"`
+	Strings        []json.RawMessage          `json:"ss,omitempty"`
+	Imports        []string                   `json:"is,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
-	Probability    float64                    `json:"-"` // populated from ml.fs after parsing
-	Threshold      float64                    `json:"-"` // v=5: per-file deciding cutoff (populated from ml.fs[i].threshold)
-	Gradient       template.CSS               `json:"-"` // verdict-stamp CSS gradient, precomputed per envelope version
-	Class          int                        `json:"-"` // v=5: per-file integer class (mirrors Classification for template branching)
+	Metrics        json.RawMessage            `json:"ms,omitempty"`
+	Probability    float64                    `json:"-"`
+	Threshold      float64                    `json:"-"`
+	Class          int                        `json:"-"`
 	Size           int64                      `json:"sz"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
@@ -1767,7 +1766,7 @@ func buildFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Log
 	return snap, nil
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, nil, nil, 0, errors.New("hopper not connected")
@@ -1785,23 +1784,24 @@ func loadFeedRowsFromHopper(ctx context.Context, a feedQueryArgs, reqLogger *slo
 	}
 
 	q := hopper.FeedQuery{
-		OrderBy:      "created_at",
-		Formula:      a.formula,
-		TopLevelOnly: true,
-		Limit:        feedLimit,
+		OrderBy:       "created_at",
+		Formula:       args.formula,
+		TopLevelOnly:  true,
+		Limit:         feedLimit,
+		CriticalLevel: CriticalLevel,
 	}
-	if a.ecosystem != "" {
-		q.Ecosystems = []string{a.ecosystem}
+	if args.ecosystem != "" {
+		q.Ecosystems = []string{args.ecosystem}
 	}
-	if a.domain != "" {
-		q.Domains = []string{a.domain}
+	if args.domain != "" {
+		q.Domains = []string{args.domain}
 	}
-	if classes, ok := criticalityClasses(a.criticality); ok {
+	if classes, ok := criticalityClasses(args.criticality); ok {
 		q.LitmusClasses = classes
 	} else {
 		q.RequireLitmus = true
 	}
-	if a.feedsOnly {
+	if args.feedsOnly {
 		// Forager tags every sample it pulls from a threat-intel feed
 		// as `label='bad'` (see forager/db.go canonicalLabel). Filtering
 		// on label here gives us the union of all such feeds without
@@ -1840,17 +1840,17 @@ func loadFeedRowsFromHopper(ctx context.Context, a feedQueryArgs, reqLogger *slo
 		// argument may be a named band ("hostile") or a comparison
 		// expression (">=1") — both go through criticalityClasses so we
 		// compare against the same set the SQL filter used.
-		if a.criticality != "" {
-			classes, ok := criticalityClasses(a.criticality)
+		if args.criticality != "" {
+			classes, ok := criticalityClasses(args.criticality)
 			if !ok {
 				continue
 			}
 			rowClass, ok := classificationClass(classification)
-			if !ok || !containsInt(classes, rowClass) {
+			if !ok || !slices.Contains(classes, rowClass) {
 				continue
 			}
 		}
-		if a.formula != "" && firstNonEmpty(res.Formula, sample.Formula) != a.formula {
+		if args.formula != "" && firstNonEmpty(res.Formula, sample.Formula) != args.formula {
 			continue
 		}
 
@@ -2195,15 +2195,6 @@ func classificationClass(name string) (int, bool) {
 	}
 }
 
-func containsInt(xs []int, v int) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
 // parseBoolQuery treats common truthy strings ("1", "true", "yes", "on") as
 // true and everything else (including empty) as false. Used for opt-in URL
 // flags where we'd rather accept "/?feeds=1" and "/?feeds=true" alike than
@@ -2521,10 +2512,10 @@ func filterRowsBySearch(rows []feedRow, q string) []feedRow {
 		return rows
 	}
 	out := rows[:0]
-	for _, row := range rows {
-		if strings.Contains(strings.ToLower(row.Filename), q) ||
-			strings.HasPrefix(row.SHA256, q) {
-			out = append(out, row)
+	for i := range rows {
+		if strings.Contains(strings.ToLower(rows[i].Filename), q) ||
+			strings.HasPrefix(rows[i].SHA256, q) {
+			out = append(out, rows[i])
 		}
 	}
 	return out
@@ -4109,12 +4100,11 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), waitMaxDuration)
 	defer cancel()
 
-	emit := func(event, data string) bool {
+	emit := func(event, data string) {
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
-			return false
+			return
 		}
 		flusher.Flush()
-		return true
 	}
 	heartbeat := func() bool {
 		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
@@ -4814,15 +4804,17 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		}{f.L, class, f.Prob, f.Threshold}
 	}
 	for i := range report.Files {
-		if ml, ok := mlByID[report.Files[i].ID]; ok {
-			report.Files[i].Classification = classificationName(ml.Class)
-			report.Files[i].Probability = ml.Prob
-			report.Files[i].Threshold = ml.Threshold
-			report.Files[i].Class = ml.Class
-			// Envelope-level threshold/class/band edges with this file's own
-			// probability and level, matching the prior per-file template logic.
-			report.Files[i].Gradient = stampGradient(mlResp.V, ml.L, ml.Prob, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
+		ml, ok := mlByID[report.Files[i].ID]
+		if !ok {
+			continue
 		}
+		report.Files[i].Classification = classificationName(ml.Class)
+		report.Files[i].Probability = ml.Prob
+		report.Files[i].Threshold = ml.Threshold
+		report.Files[i].Class = ml.Class
+		// Envelope-level threshold/class/band edges with this file's own
+		// probability and level, matching the prior per-file template logic.
+		report.Files[i].Gradient = stampGradient(mlResp.V, ml.L, ml.Prob, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
 	}
 
 	if len(report.Files) == 0 {
@@ -5371,16 +5363,11 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 	}
 
 	type aggregated struct {
-		// matches keyed by (evidence, fileSHA) so the same evidence value
-		// matched in the same file collapses into one entry with a count.
-		// Entries with empty fileSHA are evidence-only rows (no file
-		// attribution available).
-		matches map[string]*FindingMatch
-		// Insertion order so we can sort consistently when emitting.
-		order    []string
+		matches  map[string]*FindingMatch
 		dirPath  string
 		topLevel string
 		desc     string
+		order    []string
 		crit     int
 		conf     float64
 	}
@@ -6501,11 +6488,11 @@ type litmusMlResponse struct {
 	Version    string `json:"-"`
 	AnalyzedAt string `json:"-"`
 	Files      []struct {
+		L         *int    `json:"l"` // v=6 only; per-member verdict-and-level marker
 		ID        int     `json:"id"`
 		Class     int     `json:"class"` // v=4/v=5 only
 		Prob      float64 `json:"prob"`
 		Threshold float64 `json:"threshold"` // v=5 only
-		L         *int    `json:"l"`         // v=6 only; per-member verdict-and-level marker
 	} `json:"-"`
 	Thresholds     [2]float64 `json:"-"` // v=4 only
 	Threshold      float64    `json:"-"` // v=5 only
@@ -6524,16 +6511,16 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	// v6 wire shape. `l` is nullable i32: -1 (benign), 0..100 (hostile at
 	// that FPR level), or null (hostile via manual threshold).
 	var v6 struct {
+		L          *int   `json:"l"`
 		V          string `json:"v"`
 		Version    string `json:"version"`
 		AnalyzedAt string `json:"analyzed_at"`
 		Files      []struct {
+			L    *int    `json:"l"`
 			ID   int     `json:"id"`
 			Prob float64 `json:"prob"`
-			L    *int    `json:"l"` // per-member: -1 benign / 0..100 hostile@level / null hostile@manual; benign member inside hostile archive can differ from parent
 		} `json:"fs"`
-		L    *int    `json:"l"`
-		Prob float64 `json:"prob"`
+		Prob float64 `json:"prob"` // per-member: -1 benign / 0..100 hostile@level / null hostile@manual; benign member inside hostile archive can differ from parent
 	}
 	if err := json.Unmarshal(data, &v6); err != nil {
 		return err
@@ -6541,6 +6528,7 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	// v5/v4 back-compat shape. Read independently so cached envelopes that
 	// still carry `class`/`threshold`/`level` continue to parse.
 	var legacy struct {
+		Level *int `json:"level"`
 		Files []struct {
 			ID        int     `json:"id"`
 			Class     int     `json:"class"`
@@ -6549,10 +6537,9 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 		} `json:"fs"`
 		Thresholds     [2]float64 `json:"thresholds"`
 		Threshold      float64    `json:"threshold"`
-		Level          *int       `json:"level"`
 		Classification int        `json:"class"`
 	}
-	_ = json.Unmarshal(data, &legacy) // best-effort; ignore type mismatches
+	_ = json.Unmarshal(data, &legacy) //nolint:errcheck // best-effort; ignore type mismatches
 
 	r.V = v6.V
 	r.Version = v6.Version
@@ -6589,22 +6576,22 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 				memberClass = envelopeClass(f.L)
 			}
 			r.Files = append(r.Files, struct {
+				L         *int    `json:"l"`
 				ID        int     `json:"id"`
 				Class     int     `json:"class"`
 				Prob      float64 `json:"prob"`
 				Threshold float64 `json:"threshold"`
-				L         *int    `json:"l"`
 			}{ID: f.ID, Class: memberClass, Prob: f.Prob, L: f.L})
 		}
 		return nil
 	}
 	for _, lf := range legacy.Files {
 		r.Files = append(r.Files, struct {
+			L         *int    `json:"l"`
 			ID        int     `json:"id"`
 			Class     int     `json:"class"`
 			Prob      float64 `json:"prob"`
 			Threshold float64 `json:"threshold"`
-			L         *int    `json:"l"`
 		}{ID: lf.ID, Class: lf.Class, Prob: lf.Prob, Threshold: lf.Threshold})
 	}
 	return nil
@@ -6777,7 +6764,7 @@ func levelColor(level int) bandRGB {
 	if level >= last.at {
 		return last.c
 	}
-	for i := 0; i < len(levelStops)-1; i++ {
+	for i := range len(levelStops) - 1 {
 		lo, hi := levelStops[i], levelStops[i+1]
 		if level <= hi.at {
 			t := float64(level-lo.at) / float64(hi.at-lo.at)
@@ -6828,10 +6815,7 @@ func levelConfidence(level *int) int {
 	case *level < 0:
 		return 1
 	default:
-		l := *level
-		if l > 1000 {
-			l = 1000
-		}
+		l := min(*level, 1000)
 		return 100 - l*90/1000 // 100% at level 0 → 10% at level 1000
 	}
 }

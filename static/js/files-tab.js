@@ -14,7 +14,7 @@ if (millerEl && treeDataEl && detail) {
   let tree = null;
   try {
     tree = JSON.parse(treeDataEl.textContent || "null");
-  } catch (err) {
+  } catch {
     tree = null;
   }
 
@@ -106,7 +106,7 @@ if (millerEl && treeDataEl && detail) {
       if (child.sha) li.dataset.fileSha = child.sha;
 
       const dot = document.createElement("span");
-      dot.className = "dot " + classForRisk(child);
+      dot.className = `dot ${classForRisk(child)}`;
       dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);
       // The colored dot is the only visual signal for risk on a row;
@@ -115,7 +115,7 @@ if (millerEl && treeDataEl && detail) {
       if (riskWord && riskWord !== "clean") {
         const sr = document.createElement("span");
         sr.className = "sr-only";
-        sr.textContent = riskWord + " severity, ";
+        sr.textContent = `${riskWord} severity, `;
         li.appendChild(sr);
       }
 
@@ -251,9 +251,9 @@ if (millerEl && treeDataEl && detail) {
     const frag = document.createDocumentFragment();
     for (const ln of lines) {
       const div = document.createElement("div");
-      div.className = "fs-line" + (ln.Risk ? " crit-" + ln.Risk : "");
-      div.id = "fs-line-" + ln.Number;
-      if (ln.Traits && ln.Traits.length) {
+      div.className = `fs-line${ln.Risk ? ` crit-${ln.Risk}` : ""}`;
+      div.id = `fs-line-${ln.Number}`;
+      if (ln.Traits?.length) {
         div.title = ln.Traits.join(", ");
         div.dataset.traits = ln.Traits.join("|");
       }
@@ -270,7 +270,7 @@ if (millerEl && treeDataEl && detail) {
       // when a lexer matched; otherwise we render the raw text. We
       // always use textContent / className so attacker-controlled
       // source bytes can never produce HTML or event handlers.
-      if (ln.Tokens && ln.Tokens.length) {
+      if (ln.Tokens?.length) {
         for (const tok of ln.Tokens) {
           if (tok.c) {
             const span = document.createElement("span");
@@ -310,7 +310,7 @@ if (millerEl && treeDataEl && detail) {
 
   function renderTopTraits(sha, idx) {
     // Top 3 chips by crit (suspicious+ only) then by line count, then alpha.
-    const slot = detail.querySelector('.files-detail-toptraits[data-toptraits-for="' + sha + '"]');
+    const slot = detail.querySelector(`.files-detail-toptraits[data-toptraits-for="${sha}"]`);
     if (!slot) return;
     slot.innerHTML = "";
     const entries = Array.from(idx.entries())
@@ -328,7 +328,7 @@ if (millerEl && treeDataEl && detail) {
       chip.type = "button";
       chip.className = "fs-chip";
       const lineWord = info.lines.length === 1 ? "line" : "lines";
-      chip.title = traitID + " · " + info.lines.length + " " + lineWord;
+      chip.title = `${traitID} · ${info.lines.length} ${lineWord}`;
       // aria-label conveys severity (color-coded by dot) and line count
       // as words, so SR users get the same info sighted users do.
       chip.setAttribute(
@@ -342,7 +342,7 @@ if (millerEl && treeDataEl && detail) {
           lineWord
       );
       const dot = document.createElement("span");
-      dot.className = "fs-chip-dot " + info.crit;
+      dot.className = `fs-chip-dot ${info.crit}`;
       dot.setAttribute("aria-hidden", "true");
       chip.appendChild(dot);
       const id = document.createElement("span");
@@ -351,7 +351,7 @@ if (millerEl && treeDataEl && detail) {
       chip.appendChild(id);
       const n = document.createElement("span");
       n.className = "fs-chip-n";
-      n.textContent = "×" + info.lines.length;
+      n.textContent = `×${info.lines.length}`;
       chip.appendChild(n);
       chip.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -380,13 +380,15 @@ if (millerEl && treeDataEl && detail) {
 
   function scrollToLine(target, flashLines) {
     if (!sourceEl || !target) return;
-    sourceEl.querySelectorAll(".fs-line.flash").forEach((l) => l.classList.remove("flash"));
-    const flashSet = flashLines && flashLines.length ? flashLines : [target];
+    sourceEl.querySelectorAll(".fs-line.flash").forEach((l) => {
+      l.classList.remove("flash");
+    });
+    const flashSet = flashLines?.length ? flashLines : [target];
     for (const n of flashSet) {
-      const el = sourceEl.querySelector("#fs-line-" + n);
+      const el = sourceEl.querySelector(`#fs-line-${n}`);
       if (el) el.classList.add("flash");
     }
-    const anchor = sourceEl.querySelector("#fs-line-" + target);
+    const anchor = sourceEl.querySelector(`#fs-line-${target}`);
     if (anchor)
       anchor.scrollIntoView({
         block: "center",
@@ -423,10 +425,10 @@ if (millerEl && treeDataEl && detail) {
       if (activeFetch === signal._ctl) activeFetch.abort("timeout");
     }, FETCH_TIMEOUT_MS);
     try {
-      const r = await fetch("/file/" + sha + "/contents", { credentials: "same-origin", signal });
+      const r = await fetch(`/file/${sha}/contents`, { credentials: "same-origin", signal });
       const data = await r.json().catch(() => null);
       if (!r.ok) {
-        const msg = (data && data.error) || "HTTP " + r.status;
+        const msg = data?.error || `HTTP ${r.status}`;
         throw new Error(msg);
       }
       cachePut(sha, data);
@@ -438,12 +440,11 @@ if (millerEl && treeDataEl && detail) {
 
   function renderSourceError(msg) {
     if (sourceEl)
-      sourceEl.innerHTML =
-        '<div class="fs-source-placeholder">Couldn’t load source: ' + msg + "</div>";
+      sourceEl.innerHTML = `<div class="fs-source-placeholder">Couldn’t load source: ${msg}</div>`;
   }
 
   function clearTopTraits(sha) {
-    const slot = detail.querySelector('.files-detail-toptraits[data-toptraits-for="' + sha + '"]');
+    const slot = detail.querySelector(`.files-detail-toptraits[data-toptraits-for="${sha}"]`);
     if (slot) slot.innerHTML = "";
   }
 
@@ -498,7 +499,7 @@ if (millerEl && treeDataEl && detail) {
       );
       // Auto-show the source sub-tab when first available; user can switch away.
       const header = headers.find((h) => h.dataset.fileSha === sha);
-      const sub = header && header.querySelector(".files-subtab.active");
+      const sub = header?.querySelector(".files-subtab.active");
       if (sub && sub.dataset.sub === "findings") {
         showSection(sha, "source");
       }
@@ -513,7 +514,7 @@ if (millerEl && treeDataEl && detail) {
         state.pendingLine = null;
       } else if (state.pendingTrait) {
         const info = currentTraitIndex.get(state.pendingTrait);
-        if (info && info.lines.length) {
+        if (info?.lines.length) {
           target = info.lines[0];
           flash = info.lines;
         }
@@ -624,7 +625,9 @@ if (millerEl && treeDataEl && detail) {
         announce("SHA256 copied to clipboard");
         setTimeout(() => el.classList.remove("copied"), 1200);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* clipboard unavailable; nothing to do */
+      });
   });
 
   // Miller-column keyboard nav. Standard tree pattern:
@@ -673,7 +676,7 @@ if (millerEl && treeDataEl && detail) {
         requestAnimationFrame(() => {
           const cols = millerEl.querySelectorAll(".files-miller-col");
           const last = cols[cols.length - 1];
-          const first = last && last.querySelector(".files-miller-row");
+          const first = last?.querySelector(".files-miller-row");
           if (first) focusRow(first);
         });
         break;
@@ -768,14 +771,14 @@ if (millerEl && treeDataEl && detail) {
         li.dataset.fileSha = m.sha;
         li.dataset.display = m.p || m.n;
         const dot = document.createElement("span");
-        dot.className = "dot " + classForRisk(m);
+        dot.className = `dot ${classForRisk(m)}`;
         dot.setAttribute("aria-hidden", "true");
         li.appendChild(dot);
         const riskWord = classForRisk(m);
         if (riskWord && riskWord !== "clean") {
           const sr = document.createElement("span");
           sr.className = "sr-only";
-          sr.textContent = riskWord + " severity, ";
+          sr.textContent = `${riskWord} severity, `;
           li.appendChild(sr);
         }
         const nm = document.createElement("span");
@@ -802,7 +805,7 @@ if (millerEl && treeDataEl && detail) {
       col.appendChild(list);
       millerEl.appendChild(col);
       setRovingFocus();
-      announce(matches.length + " file" + (matches.length === 1 ? "" : "s") + " match.");
+      announce(`${matches.length} file${matches.length === 1 ? "" : "s"} match.`);
     });
   }
 

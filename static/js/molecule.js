@@ -1,5 +1,5 @@
-import * as THREE from "/static/js/three.module.js";
 import { OrbitControls } from "/static/js/OrbitControls.js";
+import * as THREE from "/static/js/three.module.js";
 
 // Apply dynamic styles from data attributes (CSP-safe, no inline styles)
 document.querySelectorAll("[data-gradient]").forEach((el) => {
@@ -84,23 +84,13 @@ function cleanBonds(bonds) {
     const a = Math.min(b[0], b[1]),
       c = Math.max(b[0], b[1]);
     if (a === c) continue;
-    const key = a + "," + c;
+    const key = `${a},${c}`;
     if (!seen.has(key)) {
       seen.add(key);
       result.push([a, c]);
     }
   }
   return result;
-}
-
-// Build adjacency list from atoms and clean bonds.
-function buildAdj(atoms, bonds) {
-  const adj = atoms.map(() => []);
-  bonds.forEach(([a, b]) => {
-    adj[a].push(b);
-    adj[b].push(a);
-  });
-  return adj;
 }
 
 // ============================================================
@@ -248,7 +238,7 @@ function forcePolish(atoms, ringIds, iters = 60, threshold = 2.0) {
 // ============================================================
 // Layout: Helix (original favorite)
 // ============================================================
-function layoutHelix(atoms, adj, ringArr, ringIds) {
+function layoutHelix(atoms, adj, ringArr, _ringIds) {
   const HR = 1.8,
     HP = 3.0,
     TURNS = 0.28,
@@ -330,7 +320,7 @@ function layoutHelix4(atoms, adj, ringArr, ringIds) {
 // ============================================================
 // Layout: Helix5 — tight helix, steep outward branches, dramatic 3D
 // ============================================================
-function layoutHelix5(atoms, adj, ringArr, ringIds) {
+function layoutHelix5(atoms, adj, ringArr, _ringIds) {
   const HR = 1.5,
     HEIGHT_PER = 3.5,
     FULL_TURNS = 1.0,
@@ -372,7 +362,7 @@ function layoutHelix5(atoms, adj, ringArr, ringIds) {
 // ============================================================
 // Layout: Organic2 (original favorite)
 // ============================================================
-function layoutOrganic2(atoms, adj, ringArr, ringIds) {
+function layoutOrganic2(atoms, adj, ringArr, _ringIds) {
   const BOND = 2.4;
   ringArr.forEach((id, i) => {
     const angle = (2 * Math.PI * i) / ringArr.length - Math.PI / 2;
@@ -602,27 +592,6 @@ const infoFormula = document.getElementById("galaxy-info-formula");
 const infoFindings = document.getElementById("galaxy-info-findings");
 const infoClose = document.getElementById("galaxy-info-close");
 
-function showMoleculeInfo(mol) {
-  infoTitle.textContent = basename(mol.path);
-  infoFormula.textContent = mol.formula;
-
-  const severity = mol.risk || "notable";
-  infoFindings.replaceChildren();
-  if (mol.findings && mol.findings.length > 0) {
-    mol.findings.forEach((f) => {
-      const div = document.createElement("div");
-      div.className = severity;
-      div.textContent = f;
-      infoFindings.appendChild(div);
-    });
-  } else {
-    const div = document.createElement("div");
-    div.textContent = "No findings";
-    infoFindings.appendChild(div);
-  }
-  infoPanel.classList.add("visible");
-}
-
 // Traits lookup from molecule data (trait ID → {desc, crit, evidence[]})
 const traitsLookup = moleculeData.traits || {};
 
@@ -630,7 +599,7 @@ function showAtomInfo(atom, mol) {
   if (atom.category === "file") {
     const filename = moleculeData.filename || (mol ? basename(mol.path) : "file");
     const fileType = moleculeData.fileType || (mol ? mol.formula : "");
-    infoTitle.textContent = "C \u00b7 " + filename;
+    infoTitle.textContent = `C \u00b7 ${filename}`;
     infoFormula.textContent = fileType;
     infoFindings.replaceChildren();
     const div = document.createElement("div");
@@ -644,7 +613,7 @@ function showAtomInfo(atom, mol) {
   const symbol = atom.symbol;
   const category = atom.category || "unknown";
   const bl = isBaseline(atom);
-  infoTitle.textContent = symbol + " \u00b7 " + category + (bl ? " (baseline)" : "");
+  infoTitle.textContent = `${symbol} \u00b7 ${category}${bl ? " (baseline)" : ""}`;
   infoFormula.textContent = "";
 
   infoFindings.replaceChildren();
@@ -683,7 +652,7 @@ function showAtomInfo(atom, mol) {
             const evLine = document.createElement("div");
             evLine.style.fontSize = "10px";
             evLine.style.color = "#6b7280";
-            evLine.textContent = "\u2192 " + ev;
+            evLine.textContent = `\u2192 ${ev}`;
             wrapper.appendChild(evLine);
           });
         }
@@ -750,12 +719,7 @@ canvas.addEventListener("mousemove", (event) => {
 // ============================================================
 // Build scene
 // ============================================================
-if (
-  moleculeData &&
-  moleculeData.isGalaxy &&
-  moleculeData.molecules &&
-  moleculeData.molecules.length > 0
-) {
+if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.length > 0) {
   // Galaxy mode - multiple molecules for archives
   moleculeData.molecules.forEach((mol, molIndex) => {
     if (mol.atoms && mol.atoms.length > 0) {
@@ -807,7 +771,7 @@ if (
 
   // Center + auto-fit galaxy
   autoFitCamera(moleculeGroup, camera, controls);
-} else if (moleculeData && moleculeData.atoms && moleculeData.atoms.length > 0) {
+} else if (moleculeData?.atoms && moleculeData.atoms.length > 0) {
   // Single molecule mode — apply layout then render
   const cleanedBonds = cleanBonds(moleculeData.bonds);
   applyLayout(moleculeData.atoms, cleanedBonds, layout);
@@ -855,8 +819,8 @@ const tabNames = new Set(tabButtons.map((t) => t.dataset.tab));
 //   - `tabindex` so only the selected tab is in the natural Tab order;
 //     arrow keys move focus between the others (roving tabindex).
 function activateTab(name, focus) {
-  const tabEl = document.querySelector('.tabs [role="tab"][data-tab="' + name + '"]');
-  const contentEl = document.getElementById("tab-" + name);
+  const tabEl = document.querySelector(`.tabs [role="tab"][data-tab="${name}"]`);
+  const contentEl = document.getElementById(`tab-${name}`);
   if (!tabEl || !contentEl) return false;
   for (const t of tabButtons) {
     const selected = t === tabEl;
@@ -864,7 +828,9 @@ function activateTab(name, focus) {
     t.setAttribute("aria-selected", selected ? "true" : "false");
     t.setAttribute("tabindex", selected ? "0" : "-1");
   }
-  document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+  document.querySelectorAll(".tab-content").forEach((c) => {
+    c.classList.remove("active");
+  });
   contentEl.classList.add("active");
   if (focus) tabEl.focus();
   // Files tab needs the screen real estate; collapse the molecule hero
@@ -914,7 +880,7 @@ for (const tab of tabButtons) {
   tab.addEventListener("click", () => {
     const name = tab.dataset.tab;
     activateTab(name);
-    history.replaceState(null, "", "#" + name);
+    history.replaceState(null, "", `#${name}`);
   });
   // Standard ARIA Tab Pattern keyboard support: Left/Right roves focus,
   // Home/End jumps to first/last, Enter/Space activates. We activate on
@@ -943,7 +909,7 @@ for (const tab of tabButtons) {
     ev.preventDefault();
     const target = tabButtons[next];
     activateTab(target.dataset.tab, true);
-    history.replaceState(null, "", "#" + target.dataset.tab);
+    history.replaceState(null, "", `#${target.dataset.tab}`);
   });
 }
 

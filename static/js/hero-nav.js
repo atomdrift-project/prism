@@ -39,8 +39,7 @@ if (hero) {
   const samples = nav && Array.isArray(nav.samples) ? nav.samples : null;
   const m = location.pathname.match(/\/file\/([0-9a-f]{8,64})/i);
   const sha = m ? m[1].toLowerCase() : null;
-  const i =
-    samples && sha ? samples.findIndex((s) => s.sha.toLowerCase() === sha) : -1;
+  const i = samples && sha ? samples.findIndex((s) => s.sha.toLowerCase() === sha) : -1;
 
   if (i >= 0) {
     hero.classList.add("hero-has-nav");
@@ -76,32 +75,28 @@ function wireDownloadClipboard() {
         if (live) {
           live.textContent = "";
           requestAnimationFrame(() => {
-            live.textContent = "Filename " + name + " copied to clipboard.";
+            live.textContent = `Filename ${name} copied to clipboard.`;
           });
         }
       },
       () => {
         /* clipboard write blocked (e.g. insecure origin) — let the
            download proceed silently */
-      },
+      }
     );
   });
 }
 
 function makeArrow(target, dir) {
   const a = document.createElement("a");
-  a.className = "hero-nav hero-nav-" + dir;
-  a.href = "/file/" + target.sha;
+  a.className = `hero-nav hero-nav-${dir}`;
+  a.href = `/file/${target.sha}`;
   const glyph = dir === "prev" ? "‹" : "›";
   const word = dir === "prev" ? "Previous" : "Next";
   const key = dir === "prev" ? "k" : "j";
-  a.setAttribute(
-    "aria-label",
-    word + " sample: " + target.label + " (press " + key + ")",
-  );
-  a.title =
-    (dir === "prev" ? "← " : "") + target.label + (dir === "next" ? " →" : "");
-  a.innerHTML = '<span aria-hidden="true">' + glyph + "</span>";
+  a.setAttribute("aria-label", `${word} sample: ${target.label} (press ${key})`);
+  a.title = (dir === "prev" ? "← " : "") + target.label + (dir === "next" ? " →" : "");
+  a.innerHTML = `<span aria-hidden="true">${glyph}</span>`;
   return a;
 }
 
@@ -109,24 +104,18 @@ function wireKeys() {
   document.addEventListener("keydown", (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const t = ev.target;
-    if (
-      t &&
-      (t.tagName === "INPUT" ||
-        t.tagName === "TEXTAREA" ||
-        t.isContentEditable)
-    )
-      return;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
     switch (ev.key) {
       case "j":
         if (next) {
           ev.preventDefault();
-          location.href = "/file/" + next.sha;
+          location.href = `/file/${next.sha}`;
         }
         break;
       case "k":
         if (prev) {
           ev.preventDefault();
-          location.href = "/file/" + prev.sha;
+          location.href = `/file/${prev.sha}`;
         }
         break;
       case "r": {
@@ -203,10 +192,8 @@ function refreshHelpRows(dialog) {
   const rows = [];
   if (next) rows.push(["j", "Next sample"]);
   if (prev) rows.push(["k", "Previous sample"]);
-  if (document.querySelector(".rescan-btn:not([disabled])"))
-    rows.push(["r", "Re-queue analysis"]);
-  if (document.querySelector(".download-btn"))
-    rows.push(["d", "Download original bytes"]);
+  if (document.querySelector(".rescan-btn:not([disabled])")) rows.push(["r", "Re-queue analysis"]);
+  if (document.querySelector(".download-btn")) rows.push(["d", "Download original bytes"]);
   rows.push(["x", "Back to the feed"]);
   rows.push(["?", "This help"]);
   rows.push(["Esc", "Close help"]);

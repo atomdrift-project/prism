@@ -15,18 +15,18 @@ document.addEventListener("click", (ev) => {
     // Carry the originating trait into the hash so files-tab.js can
     // highlight the matching trait card and scroll to its first line.
     const card = link.closest(".finding-card");
-    const tid = card && card.dataset.traitId;
+    const tid = card?.dataset.traitId;
     if (tid) {
       ev.preventDefault();
       const sha = link.dataset.sha || "";
-      location.hash = "file=" + sha + "&trait=" + encodeURIComponent(tid);
+      location.hash = `file=${sha}&trait=${encodeURIComponent(tid)}`;
     }
     return;
   }
   const toggle = ev.target.closest(".finding-card-toggle");
   if (!toggle) return;
   const card = toggle.closest(".finding-card");
-  const detail = card && card.querySelector(":scope > .finding-detail");
+  const detail = card?.querySelector(":scope > .finding-detail");
   const open = toggle.getAttribute("aria-expanded") !== "true";
   toggle.setAttribute("aria-expanded", open ? "true" : "false");
   if (card) card.classList.toggle("open", open);

@@ -14,5 +14,7 @@ import (
 )
 
 func setReusePort(fd uintptr) error {
-	return syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+	// fd comes from syscall.RawConn.Control, i.e. a kernel file descriptor:
+	// always a small non-negative int, never large enough to truncate.
+	return syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, unix.SO_REUSEPORT, 1) //nolint:gosec // kernel fd, always within int range
 }

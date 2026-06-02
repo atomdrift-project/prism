@@ -21,13 +21,13 @@ func TestPrepareResultDataV6Envelope(t *testing.T) {
 		{
 			name:      "benign (l == -1)",
 			ml:        `{"v":"6","prob":0.10,"l":-1,"fs":[{"id":0,"prob":0.10}]}`,
-			wantLevel: intp(-1),
+			wantLevel: new(-1),
 			wantClass: "benign",
 		},
 		{
 			name:      "hostile at level 50",
 			ml:        `{"v":"6","prob":0.97,"l":50,"fs":[{"id":0,"prob":0.97}]}`,
-			wantLevel: intp(50),
+			wantLevel: new(50),
 			wantClass: "hostile",
 		},
 		{
@@ -88,25 +88,25 @@ func TestLitmusMlResponseV4(t *testing.T) {
 // TestLitmusMlResponseV5 covers the new envelope shape end-to-end.
 func TestLitmusMlResponseV5(t *testing.T) {
 	cases := []struct {
+		wantLevel *int
 		name      string
 		raw       string
 		class     int
 		threshold float64
-		wantLevel *int
 	}{
 		{
 			name:      "hostile, level 3",
 			raw:       `{"v":"5","class":2,"prob":0.998,"threshold":0.95,"level":3,"version":"vtest","fs":[{"id":0,"class":2,"prob":0.998,"threshold":0.95}]}`,
 			class:     2,
 			threshold: 0.95,
-			wantLevel: intp(3), //nolint:modernize // new(int) doesn't accept a value
+			wantLevel: new(3),
 		},
 		{
 			name:      "suspicious, level 5",
 			raw:       `{"v":"5","class":1,"prob":0.75,"threshold":0.70,"level":5,"version":"vtest","fs":[{"id":0,"class":1,"prob":0.75,"threshold":0.70}]}`,
 			class:     1,
 			threshold: 0.70,
-			wantLevel: intp(5), //nolint:modernize // new(int) doesn't accept a value
+			wantLevel: new(5),
 		},
 		{
 			name:      "benign, null level (manual thresholds)",
@@ -158,28 +158,28 @@ func TestLitmusMlResponseV5(t *testing.T) {
 // via envelopeClass(l).
 func TestLitmusMlResponseV6(t *testing.T) {
 	cases := []struct {
+		wantLevel *int
 		name      string
 		raw       string
 		wantClass int
-		wantLevel *int
 	}{
 		{
 			name:      "benign (l == -1)",
 			raw:       `{"v":"6","prob":0.10,"l":-1,"version":"vtest","fs":[{"id":0,"prob":0.10}]}`,
 			wantClass: 0,
-			wantLevel: intp(-1),
+			wantLevel: new(-1),
 		},
 		{
 			name:      "suspicious at level 50 (above critical line)",
 			raw:       `{"v":"6","prob":0.998,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
 			wantClass: 1,
-			wantLevel: intp(50),
+			wantLevel: new(50),
 		},
 		{
 			name:      "hostile at level 0 (strictest)",
 			raw:       `{"v":"6","prob":0.999,"l":0,"version":"vtest","fs":[{"id":0,"prob":0.999}]}`,
 			wantClass: 2,
-			wantLevel: intp(0),
+			wantLevel: new(0),
 		},
 		{
 			name:      "hostile via manual threshold (l == null)",
@@ -227,19 +227,19 @@ func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(nil); got != 2 {
 		t.Errorf("envelopeClass(nil) = %d, want 2 (hostile/manual)", got)
 	}
-	if got := envelopeClass(intp(-1)); got != 0 {
+	if got := envelopeClass(new(-1)); got != 0 {
 		t.Errorf("envelopeClass(-1) = %d, want 0 (benign)", got)
 	}
-	if got := envelopeClass(intp(0)); got != 2 {
+	if got := envelopeClass(new(0)); got != 2 {
 		t.Errorf("envelopeClass(0) = %d, want 2 (hostile@strictest)", got)
 	}
-	if got := envelopeClass(intp(CriticalLevel)); got != 2 {
+	if got := envelopeClass(new(CriticalLevel)); got != 2 {
 		t.Errorf("envelopeClass(CriticalLevel) = %d, want 2 (hostile at critical line)", got)
 	}
-	if got := envelopeClass(intp(CriticalLevel + 1)); got != 1 {
+	if got := envelopeClass(new(CriticalLevel + 1)); got != 1 {
 		t.Errorf("envelopeClass(CriticalLevel+1) = %d, want 1 (suspicious just above critical)", got)
 	}
-	if got := envelopeClass(intp(1000)); got != 1 {
+	if got := envelopeClass(new(1000)); got != 1 {
 		t.Errorf("envelopeClass(1000) = %d, want 1 (suspicious in loose tail)", got)
 	}
 }
@@ -308,10 +308,3 @@ func TestRenderBandGradientShape(t *testing.T) {
 		}
 	}
 }
-
-// intp returns a pointer to the int literal. modernize wants this expressed
-// as `new(...)`, but new can't take a value — keeping the helper as the
-// readable Go idiom.
-//
-//nolint:modernize // new() doesn't accept a value; helper is the clearest form
-func intp(v int) *int { return &v }
