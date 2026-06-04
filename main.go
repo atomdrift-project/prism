@@ -1650,6 +1650,12 @@ const (
 	feedLimit    = feedPageSize * feedPages
 )
 
+// feedEcosystemWindow bounds the ecosystem dropdown to ecosystems seen
+// recently. Hopper emits the occasional non-canonical ecosystem (file
+// extensions, OS version strings); gating on recency keeps the dropdown to
+// what's actively flowing through the feed without a hardcoded allowlist.
+const feedEcosystemWindow = 72 * time.Hour
+
 // feedQueryArgs bundles the filter knobs that flow through the feed
 // pipeline. Bundling avoids a long parameter pile and keeps the cache
 // key + handler in step when a new dimension is added.
@@ -1774,7 +1780,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 	// Source="" spans every Source value (legacy "harvest" rows from
 	// before the rename, new "forager" rows, manual "upload"s) so the
 	// dropdowns and the result set both work across the transition.
-	ecosystems, err = db.FeedEcosystems(ctx, "", "")
+	ecosystems, err = db.FeedEcosystems(ctx, "", "", time.Now().Add(-feedEcosystemWindow))
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
