@@ -2444,26 +2444,6 @@ func ecosystemColor(eco string) string {
 	}
 }
 
-// knownEcosystems is the allowlist for the Fallout ecosystem dropdown.
-// Hopper normalizes registry/classifier names to canonical runtimes
-// (npm → javascript, homebrew → macos, etc.), so this list holds those
-// runtime names. Anything else hopper emits (file extensions, malware-
-// corpus repo names, OS version strings) is filtered out of the dropdown.
-var knownEcosystems = map[string]bool{
-	// Languages.
-	"javascript": true, "python": true, "ruby": true, "rust": true,
-	"go": true, "java": true, "dotnet": true, "powershell": true,
-	"php": true, "erlang": true, "perl": true, "r": true,
-	"haskell": true, "dart": true, "lua": true, "wordpress": true,
-	// OS targets.
-	"linux": true, "bsd": true, "macos": true, "windows": true,
-	"android": true,
-	// Application hosts.
-	"vscode": true, "chrome": true, "edge": true, "firefox": true,
-	// Containers, agent skills, source hosts.
-	"container": true, "agent": true, "openclaw": true, "github": true,
-}
-
 // composeSearchQuery rebuilds the canonical search-box string from the
 // individual URL filters so the box reflects the page's current state on
 // load (and after non-JS form submissions). Mirror of parseQuery() in
@@ -2736,12 +2716,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		data.Rows = feedRowsFromSnapshot(snapshot)
 		data.TotalCount = snapshot.TotalCount
 		data.Domains = snapshot.Domains
-		data.Ecosystems = snapshot.Ecosystems[:0:0]
-		for _, e := range snapshot.Ecosystems {
-			if knownEcosystems[strings.ToLower(e)] {
-				data.Ecosystems = append(data.Ecosystems, e)
-			}
-		}
+		data.Ecosystems = snapshot.Ecosystems
 		if data.SelectedQ != "" {
 			data.Rows = filterRowsBySearch(data.Rows, data.SelectedQ)
 		}
