@@ -1,5 +1,5 @@
-codeberg.org/atomdrift/hopper v0.0.0-20260604153156-40dc5808fa50 h1:qjPN+lMaSVVpXO025XyXPzwQeFgHpR4od/rJibftwFc=
-codeberg.org/atomdrift/hopper v0.0.0-20260604153156-40dc5808fa50/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
+codeberg.org/atomdrift/hopper v0.0.0-20260605104240-15c05c4416f2 h1:mTUAyN/7FEHdtmN2Bdabdu3YJudRDCyzWo7HGVNl85U=
+codeberg.org/atomdrift/hopper v0.0.0-20260605104240-15c05c4416f2/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594 h1:AXMuGXL69gliKDSudWK7Yn6dvCKvlJUv8dhI+WUeXNU=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594/go.mod h1:N3CvSuq9LM9bAt7dwB6s6sQxnEJZdliK5+2eRCcwHCA=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
@@ -27,8 +27,8 @@ github.com/codeGROOVE-dev/retry v1.3.1/go.mod h1:+b3huqYGY1+ZJyuCmR8nBVLjd3WJ7qA
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/dlclark/regexp2/v2 v2.1.1 h1:LCUGyd9Wf+r+VVOl8Ny38JTpWJcAsdVnCIuhhtthmKw=
-github.com/dlclark/regexp2/v2 v2.1.1/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
+github.com/dlclark/regexp2/v2 v2.1.2 h1:RJjAeD/h91npDhTG4rMD4+gzGVnLT32qQy/q/ECbyUs=
+github.com/dlclark/regexp2/v2 v2.1.2/go.mod h1:avUrQvPaLz2DrFNHJF0taWAFFX2C1GMSSoeiqFjcBmU=
 github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
 github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=

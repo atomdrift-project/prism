@@ -3,7 +3,7 @@ module codeberg.org/atomdrift/prism
 go 1.26
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260604153156-40dc5808fa50
+	codeberg.org/atomdrift/hopper v0.0.0-20260605104240-15c05c4416f2
 	codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594
 	github.com/alecthomas/chroma/v2 v2.26.1
 	github.com/codeGROOVE-dev/fido v1.11.0
@@ -18,7 +18,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.1.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.1.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
