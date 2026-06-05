@@ -98,19 +98,23 @@ const (
 	defaultHopperAPIAddr = "hopper-api:8081"
 	// feedCacheTTL is the absolute lifetime of any cached feed query
 	// (frontpage default, criticality variants, ecosystem/domain/formula
-	// filtered). Every feed query goes through the cache — even untyped
-	// filter combinations — to avoid thundering-herd hopper hits when
-	// many users request the same view at once.
-	feedCacheTTL = 3 * time.Minute
+	// filtered, and free-text ?q= searches). Every feed query goes through
+	// the cache — even untyped filter combinations and one-off searches — to
+	// avoid thundering-herd hopper hits when many users request the same
+	// view at once. The 5-minute envelope keeps the long tail of distinct
+	// search terms cheap; the high-traffic default and criticality views are
+	// kept fresher than this by feedPrecacheLoop.
+	feedCacheTTL = 5 * time.Minute
 	// feedPrecacheInterval is how often the background goroutine
 	// re-warms the pre-cached variants (frontpage default + three
 	// criticality views). Shorter than feedCacheTTL so high-traffic
 	// keys never serve a fully cold loader to a real request.
 	feedPrecacheInterval = 90 * time.Second
 	// auxCacheTTL is the TTL for ancillary per-SHA caches (report, parent
-	// archives, etc.) — same 3-minute envelope as feedCacheTTL so all
-	// derived views age together.
-	auxCacheTTL = 3 * time.Minute
+	// archives, etc.). These key off an immutable SHA-256, so the TTL is just a
+	// freshness bound on derived fields; it's aligned with feedCacheTTL so the
+	// whole request-path cache layer ages on one 5-minute envelope.
+	auxCacheTTL = 5 * time.Minute
 	// rescanCooldown is the minimum age of the most recent analysis
 	// before another rescan request is accepted. Enforced both
 	// client-side (button hidden) and server-side (atomic check in the
@@ -1664,6 +1668,11 @@ type feedQueryArgs struct {
 	domain      string
 	criticality string
 	formula     string
+	// search is the free-text filter behind ?q=: case-insensitive filename
+	// substring OR sha256 hex prefix, applied as a hopper SQL predicate (not
+	// an in-memory pass) so it spans the whole index rather than the cached
+	// page.
+	search string
 	// feedsOnly toggles the "malware feeds" view: only label='bad'
 	// samples (curated threat-intel / open-source malware sources) are
 	// returned, and the table picks up a Feed column.
@@ -1679,8 +1688,9 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v4:eco=" + a.ecosystem + ":dom=" + a.domain +
-		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds
+	return "feed-v5:eco=" + a.ecosystem + ":dom=" + a.domain +
+		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
+		":q=" + a.search
 }
 
 // loadFeedSnapshot fetches a feed page, caching every query for feedCacheTTL.
@@ -1792,6 +1802,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 	q := hopper.FeedQuery{
 		OrderBy:       "created_at",
 		Formula:       args.formula,
+		Search:        args.search,
 		TopLevelOnly:  true,
 		Limit:         feedLimit,
 		CriticalLevel: CriticalLevel,
@@ -2489,29 +2500,78 @@ func shaFromSearchQuery(q string) (string, bool) {
 	return "", false
 }
 
-// filterRowsBySearch is the in-memory text filter behind ?q=. Matches
-// filename substring (case-insensitive) or SHA-256 prefix. The structured
-// filters (crit/eco/domain/m) are already applied at the hopper layer.
-func filterRowsBySearch(rows []feedRow, q string) []feedRow {
-	q = strings.ToLower(strings.TrimSpace(q))
-	if q == "" {
-		return rows
-	}
-	out := rows[:0]
-	for i := range rows {
-		if strings.Contains(strings.ToLower(rows[i].Filename), q) ||
-			strings.HasPrefix(rows[i].SHA256, q) {
-			out = append(out, rows[i])
+// maxFilterLen bounds the free-text feed filters (search, domain, formula).
+// It is longer than any real filename, registrable domain, or chemical
+// formula, yet short enough that a hostile value can't drive a giant LIKE
+// scan, bloat the logs, or balloon a snapshot. The cache key is hashed, so
+// this is an abuse bound, not a correctness one.
+const maxFilterLen = 256
+
+// sanitizeFilter makes a raw query-string filter value safe to put in a SQL
+// bind parameter and a cache key, regardless of which input channel (filter
+// dropdown, search box, or hand-typed URL) it arrived through. Ranging over
+// the string folds invalid UTF-8 to U+FFFD, so the result is always valid
+// UTF-8 — Postgres rejects text parameters that aren't. Control bytes,
+// including the NUL that Postgres also rejects, fold to spaces; the value is
+// then trimmed and rune-capped. Returns "" for empty or whitespace-only input.
+func sanitizeFilter(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			r = ' '
 		}
+		b.WriteRune(r)
 	}
-	return out
+	s = strings.TrimSpace(b.String())
+	if r := []rune(s); len(r) > maxFilterLen {
+		s = strings.TrimSpace(string(r[:maxFilterLen]))
+	}
+	return s
 }
 
-func formulaFromQuery(values url.Values) string {
-	if formula := strings.TrimSpace(values.Get("m")); formula != "" {
-		return resubscriptFormula(formula)
+// normalizeSearch canonicalizes the free-text ?q= filter so "Requests",
+// "requests ", and "  requests" all collapse to one cache key and one query:
+// sanitize, lowercase (the hopper Search predicate is case-insensitive), and
+// collapse internal whitespace runs to a single space.
+func normalizeSearch(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(sanitizeFilter(s)), " "))
+}
+
+// normalizeDomain canonicalizes the ?domain= filter to the lowercase eTLD+1
+// form hopper stores (so the same domain via dropdown, search box, or URL is
+// one cache key). A value carrying any byte outside the registrable-domain
+// charset can never match a stored value, so it is dropped to "" rather than
+// fragmenting the cache with a filter that returns nothing.
+func normalizeDomain(s string) string {
+	s = strings.ToLower(sanitizeFilter(s))
+	if s == "" {
+		return ""
 	}
-	return strings.TrimSpace(values.Get("formula"))
+	for i := range len(s) {
+		if c := s[i]; c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-' {
+			continue
+		}
+		return ""
+	}
+	return s
+}
+
+// formulaFromQuery reads the cleave formula filter from either ?m= (the form
+// the search box emits) or the legacy ?formula= alias, and routes both through
+// the same subscripting so "CHO2" and "CHO₂" resolve to one stored value and
+// one cache key — formula is matched exactly. Chemical formulas carry no
+// whitespace, so internal spaces are stripped.
+func formulaFromQuery(values url.Values) string {
+	raw := values.Get("m")
+	if strings.TrimSpace(raw) == "" {
+		raw = values.Get("formula")
+	}
+	raw = sanitizeFilter(raw)
+	if raw == "" {
+		return ""
+	}
+	return resubscriptFormula(strings.ReplaceAll(raw, " ", ""))
 }
 
 func desubscriptFormula(formula string) string {
@@ -2571,7 +2631,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleEcosystem(w http.ResponseWriter, r *http.Request) {
-	eco := strings.Trim(r.PathValue("ecosystem"), "/")
+	// Ecosystems are stored lowercase (forager NormalizeEcosystem), so fold
+	// case here: /NPM/ and /npm/ then share one cache key and one query
+	// instead of fragmenting into a hit and a guaranteed miss.
+	eco := strings.ToLower(strings.Trim(r.PathValue("ecosystem"), "/"))
 	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -2580,7 +2643,7 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
-	eco := strings.Trim(r.PathValue("ecosystem"), "/")
+	eco := strings.ToLower(strings.Trim(r.PathValue("ecosystem"), "/"))
 	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -2663,11 +2726,11 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 }
 
 func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
-	rawQ := strings.TrimSpace(r.URL.Query().Get("q"))
 	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
 	// JS already short-circuits these before sending, but a pasted URL or
-	// a no-JS client still gets the redirect.
-	if sha, ok := shaFromSearchQuery(rawQ); ok {
+	// a no-JS client still gets the redirect. Run it on the raw value;
+	// shaFromSearchQuery trims and lowercases internally.
+	if sha, ok := shaFromSearchQuery(r.URL.Query().Get("q")); ok {
 		http.Redirect(w, r, "/file/"+sha, http.StatusFound)
 		return
 	}
@@ -2681,10 +2744,10 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		BuildCommit:     buildCommit,
 		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
-		SelectedDomain:  strings.TrimSpace(r.URL.Query().Get("domain")),
+		SelectedDomain:  normalizeDomain(r.URL.Query().Get("domain")),
 		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
-		SelectedQ:       rawQ,
+		SelectedQ:       normalizeSearch(r.URL.Query().Get("q")),
 		Title:           "Fallout",
 		HasHopper:       hopperDB.Load() != nil,
 	}
@@ -2705,6 +2768,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 				domain:      data.SelectedDomain,
 				criticality: data.SelectedCrit,
 				formula:     data.SelectedFormula,
+				search:      data.SelectedQ,
 				feedsOnly:   data.FeedsOnly,
 			},
 			logger,
@@ -2723,9 +2787,6 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		data.TotalCount = snapshot.TotalCount
 		data.Domains = snapshot.Domains
 		data.Ecosystems = snapshot.Ecosystems
-		if data.SelectedQ != "" {
-			data.Rows = filterRowsBySearch(data.Rows, data.SelectedQ)
-		}
 		paginateFeed(&data, r)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
