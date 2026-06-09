@@ -153,14 +153,14 @@ func TestReassembleEnvelope(t *testing.T) {
 				Path  string `json:"path"`
 				ID    int    `json:"id"`
 				Depth int    `json:"dp"`
-			} `json:"fs"`
+			} `json:"files"`
 		} `json:"raw"`
 		ML struct {
 			Files []struct {
 				ID    int     `json:"id"`
 				Class int     `json:"class"`
 				Prob  float64 `json:"prob"`
-			} `json:"fs"`
+			} `json:"files"`
 		} `json:"ml"`
 	}
 	if err := json.Unmarshal(enriched, &got); err != nil {
@@ -168,7 +168,7 @@ func TestReassembleEnvelope(t *testing.T) {
 	}
 
 	if len(got.Raw.Files) != 3 {
-		t.Errorf("raw.fs len = %d, want 3", len(got.Raw.Files))
+		t.Errorf("raw.files len = %d, want 3", len(got.Raw.Files))
 	}
 	if got.Raw.Truncated != nil {
 		t.Errorf("expected truncated marker dropped, got %v", *got.Raw.Truncated)
@@ -180,7 +180,7 @@ func TestReassembleEnvelope(t *testing.T) {
 	ids := make(map[int]bool)
 	for _, f := range got.Raw.Files {
 		if ids[f.ID] {
-			t.Errorf("duplicate id %d in merged fs", f.ID)
+			t.Errorf("duplicate id %d in merged files", f.ID)
 		}
 		ids[f.ID] = true
 	}
@@ -197,7 +197,7 @@ func TestReassembleEnvelope(t *testing.T) {
 	}
 
 	if len(got.ML.Files) != 3 {
-		t.Errorf("ml.fs len = %d, want 3", len(got.ML.Files))
+		t.Errorf("ml.files len = %d, want 3", len(got.ML.Files))
 	}
 }
 
@@ -224,7 +224,7 @@ func TestReassembleEnvelopeSkipsBrokenChildren(t *testing.T) {
 		Raw struct {
 			Files []struct {
 				SHA string `json:"sha"`
-			} `json:"fs"`
+			} `json:"files"`
 		} `json:"raw"`
 	}
 	if err := json.Unmarshal(enriched, &got); err != nil {

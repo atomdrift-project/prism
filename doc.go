@@ -11,7 +11,10 @@
 // declared at the top of main.go:
 //
 //   - cache              storedResult (per-SHA analysis envelope)
-//   - feedCache          cachedFeedSnapshot (any feed query, keyed by filters)
+//   - feedCache          cachedFeedSnapshot (any feed query, keyed by filters;
+//     MEMORY-ONLY even with localfs on — its key includes
+//     caller-controlled free-text filters, so persisting it
+//     would let arbitrary ?q= values fill the disk tier)
 //   - contentCache       cachedContent (per-SHA file body for inline source view)
 //   - reportCache        cachedReport (per-SHA AI report)
 //   - parentArchiveCache cachedParents (per-SHA "found in N archives" list)
@@ -40,9 +43,9 @@
 //
 // TTLs live in the const block near the top of main.go:
 //
-//   - feedCacheTTL        3 minutes (every feed query)
+//   - feedCacheTTL        5 minutes (every feed query)
 //   - feedPrecacheInterval 90 seconds (how often the pre-warm loop ticks)
-//   - auxCacheTTL         3 minutes (report, parent archives)
+//   - auxCacheTTL         5 minutes (report, parent archives)
 //
 // The pre-warm goroutine (refreshFeedCacheLoop) only covers the high-
 // traffic feed variants (default + 3 criticalities). Everything else

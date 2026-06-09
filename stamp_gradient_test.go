@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func testInt(v int) *int {
+	return &v
+}
+
 // TestLevelColorAnchors pins the violet→red→orange→yellow→green spectrum to the
 // level scale. These are the exact anchors a stamp is colored from, so a drift
 // here is a visible verdict-stamp change.
@@ -36,7 +40,7 @@ func TestLevelColorAnchors(t *testing.T) {
 // benign sentinel stays a solid green.
 func TestLevelGradientVerdicts(t *testing.T) {
 	// Benign sentinel: solid green (both stops identical, green dominant).
-	benign := string(levelGradient(new(-1)))
+	benign := string(levelGradient(testInt(-1)))
 	left, right := gradientStops(t, benign)
 	if left != right {
 		t.Errorf("benign gradient should be solid, got two stops: %q", benign)
@@ -47,7 +51,7 @@ func TestLevelGradientVerdicts(t *testing.T) {
 
 	// Hostile at L50: warm/orange — red channel high, green mid, blue low. The
 	// old probability-vs-threshold path rendered this green; that was the bug.
-	hostile := levelGradient(new(50))
+	hostile := levelGradient(testInt(50))
 	l, _ := gradientStops(t, string(hostile))
 	if !(l.r > 200 && l.b < 90 && l.r > l.g) {
 		t.Errorf("L50 hostile stamp should be warm/orange, got %v (%q)", l, hostile)
@@ -60,12 +64,15 @@ func TestLevelGradientVerdicts(t *testing.T) {
 	}
 }
 
-// TestStampGradientVersionDispatch verifies v6 colors by level while older
+// TestStampGradientVersionDispatch verifies v6/v7 color by level while older
 // envelopes keep the threshold-based band, so cached v4/v5 results are unchanged.
 func TestStampGradientVersionDispatch(t *testing.T) {
 	// v6 ignores prob/threshold and delegates to the level spectrum.
-	if got := stampGradient("6", new(50), 0.99, 0, 0.65, 0.887, 2); got != levelGradient(new(50)) {
+	if got := stampGradient("6", testInt(50), 0.99, 0, 0.65, 0.887, 2); got != levelGradient(testInt(50)) {
 		t.Errorf("v6 stampGradient should equal levelGradient(50), got %q", got)
+	}
+	if got := stampGradient("7", testInt(50), 0.99, 0, 0.65, 0.887, 2); got != levelGradient(testInt(50)) {
+		t.Errorf("v7 stampGradient should equal levelGradient(50), got %q", got)
 	}
 	// v5 (threshold > 0) and v4 (threshold 0) still produce a band gradient and
 	// must not equal the level path for the same inputs.
@@ -82,21 +89,31 @@ func TestStampGradientVersionDispatch(t *testing.T) {
 }
 
 // TestLevelConfidence pins the level→confidence percentage shown on the litmus
-// badge hover: benign (-1) reads 1%, strictest (0) 100%, loosest (1000) 10%,
-// sliding linearly between.
+// badge. This mirrors litmus::scan::level_confidence for cached envelopes that
+// predate ml.conf.
 func TestLevelConfidence(t *testing.T) {
 	cases := []struct {
 		level *int
 		want  int
 	}{
-		{nil, 100},      // manual-threshold hostile
-		{new(-1), 1},    // benign sentinel
-		{new(0), 100},   // strictest cutoff
-		{new(50), 96},   // default operating level
-		{new(150), 87},  //
-		{new(500), 55},  //
-		{new(1000), 10}, // loosest cutoff
-		{new(5000), 10}, // clamps
+		{nil, 100},        // manual-threshold hostile
+		{testInt(-1), 0},  // benign sentinel
+		{testInt(0), 100}, // strictest cutoff
+		{testInt(1), 99},
+		{testInt(2), 98},
+		{testInt(5), 95},
+		{testInt(50), 90}, // default operating level
+		{testInt(100), 85},
+		{testInt(500), 78},
+		{testInt(1000), 75},
+		{testInt(5000), 54},
+		{testInt(25000), 29},
+		{testInt(25001), 28},
+		{testInt(25002), 27},
+		{testInt(30000), 26},
+		{testInt(50000), 17},
+		{testInt(50001), 16},
+		{testInt(50002), 15},
 	}
 	for _, c := range cases {
 		if got := levelConfidence(c.level); got != c.want {

@@ -135,6 +135,21 @@ else
     set -x
 fi
 
+# --- CSRF signing key ---
+# A stable HMAC key for prism's CSRF tokens, persisted in the run jail via
+# sysrc (like cloudflared_token) and injected into prism's environment below.
+# One key shared by the old and new process keeps CSRF tokens valid through the
+# SO_REUSEPORT_LB hot-swap and across deploys. Generated once; never logged.
+if ! doas bastille cmd "$RUN" sh -c '[ -n "$(sysrc -n prism_csrf_key 2>/dev/null)" ]' >/dev/null 2>&1; then
+    log "Generating prism CSRF key"
+    set +x
+    CSRF_KEY=$(doas bastille cmd "$RUN" openssl rand -hex 32)
+    [ -z "$CSRF_KEY" ] && die "failed to generate prism CSRF key"
+    doas bastille sysrc "$RUN" prism_csrf_key="$CSRF_KEY" >/dev/null 2>&1
+    unset CSRF_KEY
+    set -x
+fi
+
 # rc.d/prism — written via stage-and-cmp so we only update (and trigger a
 # restart) when the script content actually changes.
 log "Staging rc.d/prism"
@@ -156,12 +171,13 @@ load_rc_config $name
 : ${prism_enable:="NO"}
 : ${prism_litmus_addr:="litmus:49999"}
 : ${prism_hopper_api_addr:="hopper-api:8081"}
+: ${prism_csrf_key:=""}
 
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
-prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp"
+prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --uploads"
 
 run_rc_command "$1"
@@ -294,7 +310,11 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
         # daemon flags mirror rc.d/prism's command_args; only pidfile and
         # logfile differ so the two instances don't fight. -R 5 keeps the
         # restart-on-exit guarantee in case the new process crashes mid-
-        # bootstrap.
+        # bootstrap. The CSRF key is read from sysrc and passed so the
+        # replacement signs tokens with the same key as the outgoing process;
+        # -x is off around it so the key never reaches the deploy log.
+        set +x
+        PRISM_CSRF_KEY=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_csrf_key 2>/dev/null' || true)
         doas bastille cmd "$RUN" /usr/sbin/daemon \
             -c -f -P /var/run/prism.next.pid -S -R 5 -o /var/log/prism.next.log \
             -u prism /usr/bin/env \
@@ -303,8 +323,10 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
                 LITMUS_ADDR="$PRISM_LITMUS_ADDR" \
                 HOPPER_API_ADDR="$PRISM_HOPPER_API_ADDR" \
                 HOPPER_DSN=postgres://hopper@hopper-db/hopper \
+                PRISM_CSRF_KEY="$PRISM_CSRF_KEY" \
                 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp \
                 /usr/local/bin/prism --public --uploads
+        set -x
 
         log "Waiting for replacement to become healthy"
         # Poll the in-jail healthcheck. We can't tell which prism answers

@@ -71,7 +71,7 @@ function setAnalyzingStatus(fileName) {
 //   domain:<v>     → ?domain=<v>
 //   m:<formula>    → ?m=<formula>       (alias malecule:, formula:)
 //   <64-hex>       → sha256:<hex> (paste a hash without prefix)
-//   <bare token>   → ?q=<term> (filename substring or SHA prefix)
+//   <bare token>   → ?q=<term> (filename substring or exact SHA-256)
 //
 // Mirror of composeSearchQuery() in main.go — keep the prefixes in sync.
 

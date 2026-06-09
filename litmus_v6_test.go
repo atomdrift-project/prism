@@ -17,42 +17,49 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 		raw       string
 		wantClass int  // prism's derived verdict class
 		wantL     int  // expected top-level l (when present)
+		wantConf  int  // expected top-level confidence
 		wantNoL   bool // true when l is JSON null (manual thresholds)
 	}{
 		{
 			name:      "hostile, level 3",
-			raw:       `{"v":"6","prob":0.998,"l":3,"version":"vtest","fs":[{"id":0,"prob":0.998,"l":3}]}`,
+			raw:       `{"v":"6","prob":0.998,"l":3,"conf":97,"version":"vtest","fs":[{"id":0,"prob":0.998,"l":3,"conf":97}]}`,
 			wantClass: 2,
 			wantL:     3,
+			wantConf:  97,
 		},
 		{
 			name:      "hostile at the band edge, level 50",
-			raw:       `{"v":"6","prob":0.91,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.91,"l":50}]}`,
+			raw:       `{"v":"6","prob":0.91,"l":50,"conf":90,"version":"vtest","fs":[{"id":0,"prob":0.91,"l":50,"conf":90}]}`,
 			wantClass: 2,
 			wantL:     50,
+			wantConf:  90,
 		},
 		{
 			name:      "suspicious just past the edge, level 51",
-			raw:       `{"v":"6","prob":0.78,"l":51,"version":"vtest","fs":[{"id":0,"prob":0.78,"l":51}]}`,
+			raw:       `{"v":"6","prob":0.78,"l":51,"conf":89,"version":"vtest","fs":[{"id":0,"prob":0.78,"l":51,"conf":89}]}`,
 			wantClass: 1,
 			wantL:     51,
+			wantConf:  89,
 		},
 		{
 			name:      "suspicious, level 100 (range ceiling)",
-			raw:       `{"v":"6","prob":0.66,"l":100,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":100}]}`,
+			raw:       `{"v":"6","prob":0.66,"l":100,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":100,"conf":85}]}`,
 			wantClass: 1,
 			wantL:     100,
+			wantConf:  85,
 		},
 		{
 			name:      "benign sentinel, level -1",
-			raw:       `{"v":"6","prob":0.04,"l":-1,"version":"vtest","fs":[{"id":0,"prob":0.04,"l":-1}]}`,
+			raw:       `{"v":"6","prob":0.04,"l":-1,"conf":0,"version":"vtest","fs":[{"id":0,"prob":0.04,"l":-1,"conf":0}]}`,
 			wantClass: 0,
 			wantL:     -1,
+			wantConf:  0,
 		},
 		{
 			name:      "hostile under manual thresholds, null level",
 			raw:       `{"v":"6","prob":0.99,"l":null,"version":"vtest","fs":[{"id":0,"prob":0.99,"l":null}]}`,
 			wantClass: 2,
+			wantConf:  100,
 			wantNoL:   true,
 		},
 	}
@@ -69,6 +76,9 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 				t.Errorf("verdictClass() = %d (%s), want %d (%s)",
 					got, classificationName(got), tc.wantClass, classificationName(tc.wantClass))
 			}
+			if ml.Confidence != tc.wantConf {
+				t.Errorf("Confidence = %d, want %d", ml.Confidence, tc.wantConf)
+			}
 			switch {
 			case tc.wantNoL && ml.L != nil:
 				t.Errorf("L = %v, want nil", *ml.L)
@@ -83,8 +93,42 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 				if got := classFromLevel(ml.Files[0].L); got != tc.wantClass {
 					t.Errorf("classFromLevel(fs[0].l) = %d, want %d", got, tc.wantClass)
 				}
+				if ml.Files[0].Conf != nil && *ml.Files[0].Conf != tc.wantConf {
+					t.Errorf("fs[0].conf = %d, want %d", *ml.Files[0].Conf, tc.wantConf)
+				}
 			}
 		})
+	}
+}
+
+// TestLitmusMlResponseV7Verdict covers the current litmus wire names:
+// lvl/files at the envelope and per-file levels.
+func TestLitmusMlResponseV7Verdict(t *testing.T) {
+	raw := `{"v":"7","prob":0.998,"lvl":3,"conf":97,"version":"vtest","files":[{"id":0,"prob":0.998,"lvl":3,"conf":97}]}`
+	var ml litmusMlResponse
+	if err := json.Unmarshal([]byte(raw), &ml); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ml.V != "7" {
+		t.Errorf("V = %q, want 7", ml.V)
+	}
+	if got := ml.verdictClass(); got != 2 {
+		t.Errorf("verdictClass() = %d (%s), want hostile", got, classificationName(got))
+	}
+	if ml.L == nil || *ml.L != 3 {
+		t.Fatalf("L = %v, want 3", ml.L)
+	}
+	if ml.Confidence != 97 {
+		t.Errorf("Confidence = %d, want 97", ml.Confidence)
+	}
+	if len(ml.Files) != 1 {
+		t.Fatalf("len(Files) = %d, want 1", len(ml.Files))
+	}
+	if ml.Files[0].L == nil || *ml.Files[0].L != 3 {
+		t.Errorf("Files[0].L = %v, want 3", ml.Files[0].L)
+	}
+	if ml.Files[0].Conf == nil || *ml.Files[0].Conf != 97 {
+		t.Errorf("Files[0].Conf = %v, want 97", ml.Files[0].Conf)
 	}
 }
 

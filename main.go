@@ -122,22 +122,47 @@ const (
 	rescanCooldown = 15 * time.Minute
 )
 
-// csrfKey is a random 32-byte key generated at startup for HMAC-signing CSRF tokens.
-// Tokens are stateless: HMAC(cookie || action || ts) verified on POST. Key rotates
-// on restart, which is fine — an in-flight form simply needs resubmission after a
-// deploy.
-var csrfKey = func() [32]byte {
+// csrfKey is the 32-byte key for HMAC-signing CSRF tokens. Tokens are
+// stateless: HMAC(cookie || action || ts) verified on POST. loadCSRFKey
+// (called from loadConfig) replaces this per-process random default with a
+// stable key derived from PRISM_CSRF_KEY when set, so tokens stay valid when
+// Cloud Run routes a visitor's POST to a different instance than the GET that
+// minted the token, and across deploys. The random default keeps single-
+// instance and test runs working with no configuration.
+var csrfKey = randomCSRFKey()
+
+func randomCSRFKey() [32]byte {
 	var k [32]byte
 	if _, err := rand.Read(k[:]); err != nil {
 		panic("csrf: failed to generate key: " + err.Error())
 	}
 	return k
-}()
+}
+
+// loadCSRFKey resolves the CSRF HMAC key from PRISM_CSRF_KEY. The secret is run
+// through SHA-256 so any encoding (hex, base64, raw) yields a full-width
+// 256-bit key; a >=32-character minimum is a coarse entropy floor. Absent or
+// too-short, it keeps the per-process random key and warns — fine for a single
+// instance or local dev, but a multi-instance deployment will otherwise see
+// intermittent "session expired" failures on upload/rescan/download.
+func loadCSRFKey() [32]byte {
+	secret := strings.TrimSpace(os.Getenv("PRISM_CSRF_KEY"))
+	if len(secret) < 32 {
+		if secret != "" {
+			logger.Warn("PRISM_CSRF_KEY too short (need >=32 chars); using per-process CSRF key")
+		} else {
+			logger.Warn("PRISM_CSRF_KEY unset; using per-process CSRF key — tokens will not validate across instances or restarts")
+		}
+		return csrfKey
+	}
+	return sha256.Sum256([]byte(secret))
+}
 
 const (
 	// csrfCookieName is the per-browser session marker used to bind a CSRF
 	// token to the visitor who received it. Cookies set by ensureCSRFCookie
-	// carry HttpOnly, SameSite=Strict, and (in --public) Secure.
+	// carry HttpOnly, SameSite=Strict, and Secure whenever the request is
+	// HTTPS (directly, via X-Forwarded-Proto, or --public).
 	csrfCookieName = "prism_csrf"
 	// csrfMaxAge bounds a token's validity. Short enough that a leaked
 	// token (e.g. via page-scrape) has a small window.
@@ -174,11 +199,23 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) *http.Request {
 		Value:    val,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   publicMode, // --public implies TLS termination upstream
+		Secure:   publicMode || requestIsHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(24 * time.Hour / time.Second),
 	})
 	return r.WithContext(context.WithValue(r.Context(), csrfSessionKey, val))
+}
+
+// requestIsHTTPS reports whether the request reached prism over TLS, either
+// directly or through a TLS-terminating proxy (Cloud Run forwards over
+// plaintext but sets X-Forwarded-Proto=https). It only ever ENABLES the Secure
+// cookie flag, so a spoofed header can make the cookie more restrictive
+// (fail-closed) but never strip Secure.
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func csrfSession(r *http.Request) string {
@@ -737,10 +774,11 @@ type resultData struct {
 	Class     int
 	Level     *int
 	// StampGradient is the verdict-stamp CSS gradient for the top-level file,
-	// precomputed per envelope version (v6 colors by level; v4/v5 by threshold).
+	// precomputed per envelope version (v6/v7 colors by level; v4/v5 by threshold).
 	StampGradient template.CSS
 	// LevelConfidence is the level-derived "how confident this is hostile"
-	// percentage shown on the litmus badge hover (see levelConfidence).
+	// percentage shown on the litmus badge (from ml.conf, falling back to
+	// levelConfidence for cached envelopes).
 	LevelConfidence int
 	TotalFiles      int
 	ShownFiles      int
@@ -931,11 +969,11 @@ type cachedFeedSample struct {
 
 // cleaveReport is constructed from JSONL output (multiple lines).
 type cleaveReport struct {
-	Files []cleaveFile `json:"fs"`
+	Files []cleaveFile `json:"files"`
 }
 
 // cleaveFile represents a file entry in cleave compact output.
-// Litmus injects "class" and "prob" into each fs[] entry.
+// Litmus injects "class" and "prob" into each files[] entry.
 type cleaveFile struct {
 	KV             map[string]json.RawMessage `json:"k,omitempty"`
 	Gradient       template.CSS               `json:"-"`
@@ -943,10 +981,10 @@ type cleaveFile struct {
 	FileType       string                     `json:"type"`
 	SHA256         string                     `json:"sha"`
 	Classification string                     `json:"-"`
-	Formula        string                     `json:"f,omitempty"`
-	Facts          cleaveFacts                `json:"ff,omitzero"`
+	Formula        string                     `json:"mol,omitempty"`
+	Facts          cleaveFacts                `json:"fact,omitzero"`
 	Exports        []symbolInfo               `json:"exports,omitempty"`
-	Findings       []finding                  `json:"ts,omitempty"`
+	Findings       []finding                  `json:"find,omitempty"`
 	Strings        []json.RawMessage          `json:"ss,omitempty"`
 	Imports        []string                   `json:"is,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
@@ -954,28 +992,137 @@ type cleaveFile struct {
 	Probability    float64                    `json:"-"`
 	Threshold      float64                    `json:"-"`
 	Class          int                        `json:"-"`
-	Size           int64                      `json:"sz"`
+	Size           int64                      `json:"size"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
 }
 
 type cleaveFacts struct {
-	Metrics   json.RawMessage            `json:"m,omitempty"`
-	KV        map[string]json.RawMessage `json:"v,omitempty"`
-	Strings   []json.RawMessage          `json:"s,omitempty"`
-	Imports   []json.RawMessage          `json:"i,omitempty"`
-	Exports   []json.RawMessage          `json:"x,omitempty"`
+	Metrics   json.RawMessage            `json:"met,omitempty"`
+	KV        map[string]json.RawMessage `json:"val,omitempty"`
+	Strings   []json.RawMessage          `json:"str,omitempty"`
+	Imports   []json.RawMessage          `json:"imp,omitempty"`
+	Exports   []json.RawMessage          `json:"exp,omitempty"`
 	Functions []json.RawMessage          `json:"fn,omitempty"`
-	Sections  []json.RawMessage          `json:"sc,omitempty"`
+	Sections  []json.RawMessage          `json:"sec,omitempty"`
+}
+
+func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Metrics     json.RawMessage            `json:"met,omitempty"`
+		OldMetrics  json.RawMessage            `json:"m,omitempty"`
+		KV          map[string]json.RawMessage `json:"val,omitempty"`
+		OldKV       map[string]json.RawMessage `json:"v,omitempty"`
+		Strings     []json.RawMessage          `json:"str,omitempty"`
+		OldStrings  []json.RawMessage          `json:"s,omitempty"`
+		Imports     []json.RawMessage          `json:"imp,omitempty"`
+		OldImports  []json.RawMessage          `json:"i,omitempty"`
+		Exports     []json.RawMessage          `json:"exp,omitempty"`
+		OldExports  []json.RawMessage          `json:"x,omitempty"`
+		Functions   []json.RawMessage          `json:"fn,omitempty"`
+		Sections    []json.RawMessage          `json:"sec,omitempty"`
+		OldSections []json.RawMessage          `json:"sc,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	f.Metrics = raw.Metrics
+	if len(f.Metrics) == 0 {
+		f.Metrics = raw.OldMetrics
+	}
+	f.KV = raw.KV
+	if len(f.KV) == 0 {
+		f.KV = raw.OldKV
+	}
+	f.Strings = raw.Strings
+	if len(f.Strings) == 0 {
+		f.Strings = raw.OldStrings
+	}
+	f.Imports = raw.Imports
+	if len(f.Imports) == 0 {
+		f.Imports = raw.OldImports
+	}
+	f.Exports = raw.Exports
+	if len(f.Exports) == 0 {
+		f.Exports = raw.OldExports
+	}
+	f.Functions = raw.Functions
+	f.Sections = raw.Sections
+	if len(f.Sections) == 0 {
+		f.Sections = raw.OldSections
+	}
+	return nil
+}
+
+func (r *cleaveReport) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Files    []cleaveFile `json:"files"`
+		OldFiles []cleaveFile `json:"fs"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.Files = raw.Files
+	if len(r.Files) == 0 {
+		r.Files = raw.OldFiles
+	}
+	return nil
 }
 
 func (f *cleaveFile) UnmarshalJSON(data []byte) error {
-	type alias cleaveFile
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
+	var raw struct {
+		KV          map[string]json.RawMessage `json:"k,omitempty"`
+		Path        string                     `json:"path"`
+		FileType    string                     `json:"type"`
+		SHA256      string                     `json:"sha"`
+		Formula     string                     `json:"mol,omitempty"`
+		OldFormula  string                     `json:"f,omitempty"`
+		Facts       cleaveFacts                `json:"fact,omitzero"`
+		OldFacts    cleaveFacts                `json:"ff,omitzero"`
+		Exports     []symbolInfo               `json:"exports,omitempty"`
+		Findings    []finding                  `json:"find,omitempty"`
+		OldFindings []finding                  `json:"ts,omitempty"`
+		Strings     []json.RawMessage          `json:"ss,omitempty"`
+		Imports     []string                   `json:"is,omitempty"`
+		Sections    []sectionInfo              `json:"sections,omitempty"`
+		Metrics     json.RawMessage            `json:"ms,omitempty"`
+		Size        int64                      `json:"size"`
+		OldSize     int64                      `json:"sz"`
+		ID          int                        `json:"id"`
+		Depth       int                        `json:"dp"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*f = cleaveFile(a)
+	*f = cleaveFile{
+		KV:       raw.KV,
+		Path:     raw.Path,
+		FileType: raw.FileType,
+		SHA256:   raw.SHA256,
+		Formula:  raw.Formula,
+		Facts:    raw.Facts,
+		Exports:  raw.Exports,
+		Findings: raw.Findings,
+		Strings:  raw.Strings,
+		Imports:  raw.Imports,
+		Sections: raw.Sections,
+		Metrics:  raw.Metrics,
+		Size:     raw.Size,
+		ID:       raw.ID,
+		Depth:    raw.Depth,
+	}
+	if f.Formula == "" {
+		f.Formula = raw.OldFormula
+	}
+	if len(f.Facts.Metrics) == 0 && f.Facts.KV == nil && len(f.Facts.Strings) == 0 && len(f.Facts.Imports) == 0 && len(f.Facts.Exports) == 0 && len(f.Facts.Functions) == 0 && len(f.Facts.Sections) == 0 {
+		f.Facts = raw.OldFacts
+	}
+	if len(f.Findings) == 0 {
+		f.Findings = raw.OldFindings
+	}
+	if f.Size == 0 {
+		f.Size = raw.OldSize
+	}
 	f.applyFacts()
 	return nil
 }
@@ -1094,20 +1241,65 @@ type sectionInfo struct {
 }
 
 type finding struct {
-	ID   string `json:"i"`
-	Desc string `json:"d,omitempty"`
-	// Evidence values (cleave's compact `e`). Parallel to Locations when
+	ID   string `json:"id"`
+	Desc string `json:"desc,omitempty"`
+	// Evidence values (cleave's compact `ev`). Parallel to Locations when
 	// the latter is non-empty; same index = same match.
-	Evidence []string `json:"e,omitempty"`
-	// Locations is cleave's compact `el` — one entry per Evidence item,
+	Evidence []string `json:"ev,omitempty"`
+	// Locations is cleave's compact `loc` — one entry per Evidence item,
 	// or empty when the finding was never rolled up through an archive
 	// member. Archive-attributed entries look like
 	// "archive:<member-path>", with optional "!" nesting for archives
 	// inside archives. Used by aggregateArchiveCategories to point the
 	// user at the inner file a container-level trait actually matched.
-	Locations []string `json:"el,omitempty"`
-	Crit      int      `json:"l"`
-	Conf      float64  `json:"c,omitempty"`
+	Locations []string `json:"loc,omitempty"`
+	Crit      int      `json:"crit"`
+	Conf      float64  `json:"conf,omitempty"`
+}
+
+func (f *finding) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID           string   `json:"id"`
+		OldID        string   `json:"i"`
+		Desc         string   `json:"desc,omitempty"`
+		OldDesc      string   `json:"d,omitempty"`
+		Evidence     []string `json:"ev,omitempty"`
+		OldEvidence  []string `json:"e,omitempty"`
+		Locations    []string `json:"loc,omitempty"`
+		OldLocations []string `json:"el,omitempty"`
+		Crit         int      `json:"crit"`
+		OldCrit      int      `json:"l"`
+		Conf         float64  `json:"conf,omitempty"`
+		OldConf      float64  `json:"c,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	f.ID = raw.ID
+	if f.ID == "" {
+		f.ID = raw.OldID
+	}
+	f.Desc = raw.Desc
+	if f.Desc == "" {
+		f.Desc = raw.OldDesc
+	}
+	f.Evidence = raw.Evidence
+	if len(f.Evidence) == 0 {
+		f.Evidence = raw.OldEvidence
+	}
+	f.Locations = raw.Locations
+	if len(f.Locations) == 0 {
+		f.Locations = raw.OldLocations
+	}
+	f.Crit = raw.Crit
+	if f.Crit == 0 {
+		f.Crit = raw.OldCrit
+	}
+	f.Conf = raw.Conf
+	if f.Conf == 0 {
+		f.Conf = raw.OldConf
+	}
+	return nil
 }
 
 //nolint:maintidx,gocognit // main is inherently complex: flag parsing, config, template init, server setup
@@ -1211,7 +1403,17 @@ func main() {
 		}
 		logger.Info("initializing localfs caches", "dir", cacheDir)
 		cache = openLocalFSCache[storedResult]("prism", cacheDir, "result cache")
-		feedCache = openLocalFSCache[cachedFeedSnapshot]("prism-feed", cacheDir, "feed cache")
+		// feedCache is intentionally memory-only even when localfs is enabled.
+		// Its key includes the free-text ?q= and formula filters, so a caller
+		// can mint unlimited distinct keys; the localfs tier has no size cap
+		// and no active eviction (only lazy per-read expiry), so persisting
+		// those would let GET /?q=<random> fill the cache dir — tmpfs/RAM on
+		// Cloud Run — and OOM the instance. The bounded, scan-resistant
+		// in-memory tier caps growth instead; singleflight still protects
+		// hopper, the precache loop keeps hot variants warm, and a feed
+		// snapshot is cheap to rebuild after a restart. The per-SHA caches
+		// below stay on disk: their keys are bounded by real data.
+		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
 		contentCache = openLocalFSCache[cachedContent]("prism-content", cacheDir, "content cache")
 		reportCache = openLocalFSCache[cachedReport]("prism-report", cacheDir, "report cache")
 		parentArchiveCache = openLocalFSCache[cachedParents]("prism-parents", cacheDir, "parent-archive cache")
@@ -1454,6 +1656,8 @@ func loadConfig() {
 		Timeout: 5 * time.Minute,
 	}
 
+	csrfKey = loadCSRFKey()
+
 	logger.Debug("configuration loaded",
 		"HOPPER_API_ADDR", hopperAPIAddr,
 		"PORT", os.Getenv("PORT"),
@@ -1669,9 +1873,10 @@ type feedQueryArgs struct {
 	criticality string
 	formula     string
 	// search is the free-text filter behind ?q=: case-insensitive filename
-	// substring OR sha256 hex prefix, applied as a hopper SQL predicate (not
-	// an in-memory pass) so it spans the whole index rather than the cached
-	// page.
+	// substring OR exact sha256, applied as a hopper SQL predicate (not an
+	// in-memory pass) so it spans the whole index rather than the cached page.
+	// (A full sha pasted into the box is caught earlier and redirected to the
+	// file page; this equality is the no-JS / belt-and-suspenders path.)
 	search string
 	// feedsOnly toggles the "malware feeds" view: only label='bad'
 	// samples (curated threat-intel / open-source malware sources) are
@@ -3343,15 +3548,15 @@ func hopperWasCompacted(cleaveResult []byte) bool {
 
 // reassembleEnvelope takes a parent's litmus envelope (containing ml + raw)
 // and a list of child hopper samples, and produces a new envelope where the
-// child entries are spliced back into raw.fs[] and ml.fs[]. The returned
+// child entries are spliced back into raw.files[] and ml.files[]. The returned
 // envelope drops the truncated/omitted_files markers because they are no
 // longer accurate after reassembly.
 //
-// Each child contributes its own top-level fs entry (depth 0 in the child's
-// own report) which is appended to the parent's fs[] with depth bumped to 1
+// Each child contributes its own top-level files entry (depth 0 in the child's
+// own report) which is appended to the parent's files[] with depth bumped to 1
 // and Path prefixed by parentPath + "!!". Child IDs are renumbered so they
 // stay unique across the merged report; the same renumbering is mirrored
-// into the merged ml.fs entries so per-file ML stays correctly attributed.
+// into the merged ml.files entries so per-file ML stays correctly attributed.
 //
 // The function is best-effort: a child whose CleaveResult or LitmusResult
 // fails to parse is logged and skipped so a single bad child does not break
@@ -3380,13 +3585,15 @@ func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath s
 	delete(parentRaw, "truncated")
 	delete(parentRaw, "omitted_files")
 	if b, err := json.Marshal(parentFS); err == nil {
-		parentRaw["fs"] = b
+		delete(parentRaw, "fs")
+		parentRaw["files"] = b
 	}
 	if b, err := json.Marshal(parentRaw); err == nil {
 		env["raw"] = b
 	}
 	if b, err := json.Marshal(parentMLFS); err == nil {
-		parentML["fs"] = b
+		delete(parentML, "fs")
+		parentML["files"] = b
 	}
 	if b, err := json.Marshal(parentML); err == nil {
 		env["ml"] = b
@@ -3394,7 +3601,7 @@ func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath s
 	return json.Marshal(env)
 }
 
-// extractFS pulls env[key] (a JSON object) and the "fs" array within it.
+// extractFS pulls env[key] (a JSON object) and the "files" array within it.
 // Missing values yield empty results so callers can append unconditionally.
 func extractFS(env map[string]json.RawMessage, key string) (map[string]json.RawMessage, []json.RawMessage, error) {
 	inner := map[string]json.RawMessage{}
@@ -3404,15 +3611,19 @@ func extractFS(env map[string]json.RawMessage, key string) (map[string]json.RawM
 		}
 	}
 	var entries []json.RawMessage
-	if blob, ok := inner["fs"]; ok && len(blob) > 0 {
+	blob, ok := inner["files"]
+	if !ok || len(blob) == 0 {
+		blob = inner["fs"]
+	}
+	if len(blob) > 0 {
 		if err := json.Unmarshal(blob, &entries); err != nil {
-			return nil, nil, fmt.Errorf("parse %s.fs: %w", key, err)
+			return nil, nil, fmt.Errorf("parse %s.files: %w", key, err)
 		}
 	}
 	return inner, entries, nil
 }
 
-// mergeChildren splices each child's top-level fs entry (and its mirrored
+// mergeChildren splices each child's top-level files entry (and its mirrored
 // ml entry) into the parent's lists, renumbering ids so they stay unique.
 // Errors on individual children are logged and skipped.
 func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sample, parentPath string) (mergedFS, mergedMLFS []json.RawMessage) {
@@ -3449,7 +3660,7 @@ func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sa
 }
 
 // childTopEntry parses the child sample's cleave envelope and returns its
-// representative fs entry — preferring sha-match, then depth-0, then the
+// representative files entry — preferring sha-match, then depth-0, then the
 // first entry — along with the entry's original id.
 func childTopEntry(child *hopper.Sample) (entry json.RawMessage, id int, ok bool) {
 	var raw map[string]json.RawMessage
@@ -3458,9 +3669,13 @@ func childTopEntry(child *hopper.Sample) (entry json.RawMessage, id int, ok bool
 		return nil, 0, false
 	}
 	var entries []json.RawMessage
-	if blob, ok := raw["fs"]; ok && len(blob) > 0 {
+	blob, ok := raw["files"]
+	if !ok || len(blob) == 0 {
+		blob = raw["fs"]
+	}
+	if len(blob) > 0 {
 		if err := json.Unmarshal(blob, &entries); err != nil {
-			logger.Debug("reassemble: parse child fs failed", "sha", child.SHA256, "error", err)
+			logger.Debug("reassemble: parse child files failed", "sha", child.SHA256, "error", err)
 			return nil, 0, false
 		}
 	}
@@ -3499,7 +3714,7 @@ func childTopEntry(child *hopper.Sample) (entry json.RawMessage, id int, ok bool
 	return entries[0], s.ID, true
 }
 
-// renumberedMLEntry locates the child's own ml.fs[] row for oldID and
+// renumberedMLEntry locates the child's own ml.files[] row for oldID and
 // rewrites its id to newID. The boolean reports whether the row was
 // found and successfully re-marshalled.
 func renumberedMLEntry(litmus []byte, oldID, newID int) (json.RawMessage, bool) {
@@ -3507,10 +3722,14 @@ func renumberedMLEntry(litmus []byte, oldID, newID int) (json.RawMessage, bool) 
 		return nil, false
 	}
 	var ml struct {
-		Files []json.RawMessage `json:"fs"`
+		Files    []json.RawMessage `json:"files"`
+		OldFiles []json.RawMessage `json:"fs"`
 	}
 	if json.Unmarshal(litmus, &ml) != nil || len(ml.Files) == 0 {
-		return nil, false
+		if len(ml.OldFiles) == 0 {
+			return nil, false
+		}
+		ml.Files = ml.OldFiles
 	}
 	entry := ml.Files[0]
 	for _, raw := range ml.Files {
@@ -4795,8 +5014,8 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	// bandGradient2; Level surfaces the FPR severity that selected the
 	// threshold (nil when manual thresholds were used).
 	//
-	// v=6 has no envelope-level threshold or class on the wire — `l` carries
-	// both the verdict (-1 = benign) and the FPR level (0..100 when known).
+	// v=6/v7 have no envelope-level threshold or class on the wire; the level
+	// marker carries both the verdict (-1 = benign) and the FPR level when known.
 	// Templates fall back to the legacy two-edge gradient when Threshold is
 	// zero, so we only populate Threshold/Class for v=5.
 	switch mlResp.V {
@@ -4804,8 +5023,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		data.Threshold = mlResp.Threshold
 		data.Class = mlResp.Classification
 		data.Level = mlResp.Level
-	case "6":
+	case "6", "7":
 		data.Level = mlResp.L
+		data.LevelConfidence = mlResp.Confidence
 	}
 
 	report := &cleaveReport{}
@@ -4824,9 +5044,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		}
 	}
 
-	// Merge ML classifications from ml.fs into cleave report files (matched by id).
-	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs. v=6 entries
-	// carry `l` instead of class/threshold, so the class is derived from it.
+	// Merge ML classifications from ml.files into cleave report files (matched by id).
+	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs. v6/v7 entries
+	// carry a level marker instead of class/threshold, so the class is derived from it.
 	mlByID := make(map[int]struct {
 		L         *int
 		Class     int
@@ -4835,7 +5055,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	}, len(mlResp.Files))
 	for _, f := range mlResp.Files {
 		class := f.Class
-		if mlResp.V == "6" {
+		if mlResp.V == "6" || mlResp.V == "7" {
 			class = classFromLevel(f.L)
 		}
 		mlByID[f.ID] = struct {
@@ -4939,10 +5159,12 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		}
 	}
 
-	// Verdict-stamp gradient for the top-level file. v6 colors by level; older
+	// Verdict-stamp gradient for the top-level file. v6/v7 color by level; older
 	// envelopes fall back to the threshold-based band.
 	data.StampGradient = stampGradient(mlResp.V, data.Level, data.Probability, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
-	data.LevelConfidence = levelConfidence(data.Level)
+	if mlResp.V != "6" && mlResp.V != "7" {
+		data.LevelConfidence = levelConfidence(data.Level)
+	}
 
 	// Flag when we have limited analysis info (unknown file type AND no findings)
 	if (data.FileType == "UNKNOWN" || data.FileType == "") && totalFindings == 0 {
@@ -5062,17 +5284,6 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 				})
 			}
 
-			// Extract string values for dropper detection
-			var strs []string
-			for _, s := range file.Strings {
-				strs = append(strs, parseStringTupleValue(s)...)
-			}
-
-			// Also scan evidence for dropper detection
-			for _, f := range file.Findings {
-				strs = append(strs, f.Evidence...)
-			}
-
 			if len(ff) > 0 {
 				fileFindings = append(fileFindings, FileFindings{
 					Path:           file.Path,
@@ -5081,7 +5292,7 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 					Probability:    file.Probability,
 					Formula:        file.Formula,
 					Findings:       ff,
-					Strings:        strs,
+					Strings:        galaxyStrings(file),
 				})
 			}
 		}
@@ -5144,6 +5355,43 @@ func maxCritInFile(f *cleaveFile) int {
 // parseStringTupleValue extracts the value from a v4 string tuple.
 // Format: [offset, value] or [offset, encoding, value]. Errors are
 // silently swallowed: a malformed tuple just yields an empty result.
+// galaxyStrings gathers the strings from a cleave file that BuildGalaxy scans
+// for dropper relationships. That scan is O(files² × strings × len) and
+// file.Strings comes straight from the attacker-influenced analysis envelope,
+// so a crafted archive (many long strings) could turn every render of the file
+// page into seconds of CPU. The count and per-string length are capped here;
+// real dropper references are short path/filename strings, so the bound does
+// not change normal detection.
+func galaxyStrings(file *cleaveFile) []string {
+	const (
+		maxGalaxyStrings   = 2000
+		maxGalaxyStringLen = 4096
+	)
+	var strs []string
+	add := func(v string) {
+		if len(strs) < maxGalaxyStrings && len(v) <= maxGalaxyStringLen {
+			strs = append(strs, v)
+		}
+	}
+	for _, s := range file.Strings {
+		if len(strs) >= maxGalaxyStrings {
+			break
+		}
+		for _, v := range parseStringTupleValue(s) {
+			add(v)
+		}
+	}
+	for _, f := range file.Findings {
+		if len(strs) >= maxGalaxyStrings {
+			break
+		}
+		for _, e := range f.Evidence {
+			add(e)
+		}
+	}
+	return strs
+}
+
 func parseStringTupleValue(raw json.RawMessage) []string {
 	var arr []json.RawMessage
 	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
@@ -5342,7 +5590,7 @@ func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[s
 	return out
 }
 
-// resolveMatchFile maps cleave's compact `el` location string to the
+// resolveMatchFile maps cleave's compact `loc` location string to the
 // inner file it refers to. Returns nil when the location is empty, isn't
 // a file reference (semantic labels like "import", plain byte offsets), or
 // doesn't resolve to any known inner file (nested archives we didn't extract).
@@ -5350,8 +5598,8 @@ func orderCategories(categoryMap map[string][]FindingDisplay, displayNames map[s
 // the match falls back to either the current file (when not the
 // archive container) or a path-less evidence row.
 //
-// Two `el` shapes are accepted for backward compatibility:
-//   - v6 (current): "<fs-id>[:<offset>]" — a digit-led token; the member path
+// Two location shapes are accepted for backward compatibility:
+//   - v7/current: "<file-id>[:<offset>]" — a digit-led token; the member path
 //     is resolved once via the file's id instead of being embedded per entry.
 //   - v5 (legacy/cached): "archive:<member-path>[:<offset>]".
 func resolveMatchFile(location string, pathToFile map[string]*cleaveFile, idToFile map[int]*cleaveFile) *cleaveFile {
@@ -5374,7 +5622,7 @@ func resolveMatchFile(location string, pathToFile map[string]*cleaveFile, idToFi
 	return pathToFile[strings.ReplaceAll(member, "!", "!!")]
 }
 
-// parseLocationID parses the v6 `el` form "<fs-id>[:<offset>]" and returns the
+// parseLocationID parses the v7 `loc` form "<file-id>[:<offset>]" and returns the
 // file id. Reports false for the legacy "archive:…" / "offset:…" strings and
 // anything whose leading token isn't a plain non-negative integer — the
 // "archive:" prefix keeps a member literally named with digits from being
@@ -6501,7 +6749,7 @@ func formatBytes(b int64) string {
 // litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
 // It wraps the cleave analysis report with an ML-based classification outcome.
 // litmusAPIResponse matches the v4 compact litmus JSON output.
-// Fields like formula, file_type, sha256 are embedded in cleave.fs[0],
+// Fields like formula, file_type, sha256 are embedded in cleave files[0],
 // not at the top level.
 // litmusFullResponse matches the top-level {"ml": {...}, "raw": {...}} envelope.
 type litmusFullResponse struct {
@@ -6510,19 +6758,21 @@ type litmusFullResponse struct {
 }
 
 // litmusMlResponse matches the ml section of the litmus response. Accepts
-// v=4 (Thresholds pair), v=5 (single Threshold + Level), and v=6 (L only —
-// `class` and `threshold` removed; benign signaled by L == -1). Parsing goes
-// through a custom UnmarshalJSON that tries the v6 shape first and falls
-// back to v5 fields when `l` is absent.
+// v=4 (Thresholds pair), v=5 (single Threshold + Level), and v=6/v7 (L plus
+// optional Conf; `class` and `threshold` removed; benign signaled by L == -1).
+// Parsing goes through a custom UnmarshalJSON that tries the v7 shape first and falls
+// back to v6/v5 fields when `lvl` is absent.
 //
 // Field semantics after parse:
-//   - L (v=6): nullable i32. -1 = benign; 0..100 = per-100M-benigns level
+//   - L (v=6/v7): nullable i32. -1 = benign; otherwise the per-100M-benigns level
 //     that selected the firing hostile threshold; nil = hostile via manual
 //     --threshold-hostile (no level applies).
 //   - Classification (back-compat): integer 0/1/2 derived consumer-side via
-//     envelopeClass(L) for v=6 inputs; carried from JSON for v=4/v=5.
+//     envelopeClass(L) for v=6/v7 inputs; carried from JSON for v=4/v=5.
+//   - Confidence (v=6/v7): ml.conf when present, otherwise derived from L for
+//     cached envelopes produced before litmus exported conf.
 //   - Threshold (back-compat): only populated by v=4/v=5 envelopes. Zero
-//     for v=6 — templates fall back to the legacy two-edge gradient.
+//     for v=6/v7 — templates fall back to the legacy two-edge gradient.
 //
 //nolint:govet // field order mirrors litmus's emitted JSON for readability
 type litmusMlResponse struct {
@@ -6530,7 +6780,8 @@ type litmusMlResponse struct {
 	Version    string `json:"-"`
 	AnalyzedAt string `json:"-"`
 	Files      []struct {
-		L         *int    `json:"l"` // v=6 only; per-member verdict-and-level marker
+		L         *int    `json:"lvl"`  // v=6/v7 only; per-member verdict-and-level marker
+		Conf      *int    `json:"conf"` // v=6/v7 only; per-member display/export confidence
 		ID        int     `json:"id"`
 		Class     int     `json:"class"` // v=4/v=5 only
 		Prob      float64 `json:"prob"`
@@ -6538,34 +6789,66 @@ type litmusMlResponse struct {
 	} `json:"-"`
 	Thresholds     [2]float64 `json:"-"` // v=4 only
 	Threshold      float64    `json:"-"` // v=5 only
-	L              *int       `json:"-"` // v=6: -1 benign / 0..100 hostile@level / nil hostile@manual
+	L              *int       `json:"-"` // v=6/v7: -1 benign / hostile@level / nil hostile@manual
+	Confidence     int        `json:"-"` // v=6/v7: ml.conf when present, else derived from L
 	Level          *int       `json:"-"` // v=5 only; kept for back-compat parsing
 	Classification int        `json:"-"`
 	Probability    float64    `json:"-"`
 }
 
-// UnmarshalJSON parses a litmus ml-section envelope. It accepts v=6 (the
-// current wire format — `l` only, no `class`/`threshold`) and falls back to
+// UnmarshalJSON parses a litmus ml-section envelope. It accepts v=7 (the
+// current wire format: `lvl`/`conf`, no `class`/`threshold`) and falls back to
+// v=6 (`l`/`conf`) and then
 // v=4/v=5 (`class`, `threshold`, `level`) for cached results produced before
-// the v6 rename. The fallback path is the reason the type holds both `L` and
+// the v7 rename. The fallback path is the reason the type holds both `L` and
 // `Level` / `Threshold` / `Classification` simultaneously.
 func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
-	// v6 wire shape. `l` is nullable i32: -1 (benign), 0..100 (hostile at
-	// that FPR level), or null (hostile via manual threshold).
-	var v6 struct {
-		L          *int   `json:"l"`
+	// v7 wire shape. `lvl` is nullable i32: -1 (benign), grid level (hostile at
+	// that FPR level), or null (hostile via manual threshold). `conf` is the
+	// optional level-derived display/export confidence.
+	var current struct {
+		Conf       *int   `json:"conf"`
+		L          *int   `json:"lvl"`
+		OldL       *int   `json:"l"`
 		V          string `json:"v"`
 		Version    string `json:"version"`
 		AnalyzedAt string `json:"analyzed_at"`
 		Files      []struct {
+			Conf *int    `json:"conf"`
+			L    *int    `json:"lvl"`
+			OldL *int    `json:"l"`
+			ID   int     `json:"id"`
+			Prob float64 `json:"prob"`
+		} `json:"files"`
+		OldFiles []struct {
+			Conf *int    `json:"conf"`
 			L    *int    `json:"l"`
 			ID   int     `json:"id"`
 			Prob float64 `json:"prob"`
 		} `json:"fs"`
-		Prob float64 `json:"prob"` // per-member: -1 benign / 0..100 hostile@level / null hostile@manual; benign member inside hostile archive can differ from parent
+		Prob float64 `json:"prob"` // raw model score used for the top-level decision
 	}
-	if err := json.Unmarshal(data, &v6); err != nil {
+	if err := json.Unmarshal(data, &current); err != nil {
 		return err
+	}
+	if current.L == nil {
+		current.L = current.OldL
+	}
+	if len(current.Files) == 0 {
+		for _, f := range current.OldFiles {
+			current.Files = append(current.Files, struct {
+				Conf *int    `json:"conf"`
+				L    *int    `json:"lvl"`
+				OldL *int    `json:"l"`
+				ID   int     `json:"id"`
+				Prob float64 `json:"prob"`
+			}{Conf: f.Conf, L: f.L, ID: f.ID, Prob: f.Prob})
+		}
+	}
+	for i := range current.Files {
+		if current.Files[i].L == nil {
+			current.Files[i].L = current.Files[i].OldL
+		}
 	}
 	// v5/v4 back-compat shape. Read independently so cached envelopes that
 	// still carry `class`/`threshold`/`level` continue to parse.
@@ -6583,53 +6866,60 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	}
 	_ = json.Unmarshal(data, &legacy) //nolint:errcheck // best-effort; ignore type mismatches
 
-	r.V = v6.V
-	r.Version = v6.Version
-	r.AnalyzedAt = v6.AnalyzedAt
-	r.Probability = v6.Prob
-	r.L = v6.L
+	r.V = current.V
+	r.Version = current.Version
+	r.AnalyzedAt = current.AnalyzedAt
+	r.Probability = current.Prob
+	r.L = current.L
 	r.Level = legacy.Level
 	r.Thresholds = legacy.Thresholds
 	r.Threshold = legacy.Threshold
+	if isCurrentWire(current.V, current.L) {
+		r.Confidence = confidenceFromWire(current.Conf, current.L)
+	} else {
+		r.Confidence = levelConfidence(legacy.Level)
+	}
 
-	// Derive Classification from v6 `l` when available; fall back to the
+	// Derive Classification from v6/v7 `L` when available; fall back to the
 	// legacy `class` JSON field for older envelopes.
 	switch {
-	case v6.V == "6" || v6.L != nil:
-		r.Classification = envelopeClass(v6.L)
+	case isCurrentWire(current.V, current.L):
+		r.Classification = envelopeClass(current.L)
 	default:
 		r.Classification = legacy.Classification
 	}
 
-	// Merge per-file entries. v6 fs[] entries carry id+prob+l; per-member
-	// `l` is fully resolved by litmus — a benign member inside a hostile
-	// archive emits `l: -1`, a hostile member without its own level
+	// Merge per-file entries. v6/v7 files[] entries carry id+prob+level; per-member
+	// `lvl` is fully resolved by litmus — a benign member inside a hostile
+	// archive emits `lvl: -1`, a hostile member without its own level
 	// inherits the envelope's level (or `null` for manual). Derive Class
-	// per-member from each member's `l`, falling back to the envelope-level
-	// classification if a member omitted `l` entirely (defensive — current
+	// per-member from each member's level, falling back to the envelope-level
+	// classification if a member omitted it entirely (defensive — current
 	// litmus always emits it). v5/v4 fs[] entries carry id+class+prob
 	// (+threshold for v5); keep those values when this is a legacy envelope.
-	isV6 := v6.V == "6" || v6.L != nil
+	isCurrent := isCurrentWire(current.V, current.L)
 	r.Files = r.Files[:0]
-	if isV6 {
-		for _, f := range v6.Files {
+	if isCurrent {
+		for _, f := range current.Files {
 			memberClass := r.Classification
 			if f.L != nil {
 				memberClass = envelopeClass(f.L)
 			}
 			r.Files = append(r.Files, struct {
-				L         *int    `json:"l"`
+				L         *int    `json:"lvl"`
+				Conf      *int    `json:"conf"`
 				ID        int     `json:"id"`
 				Class     int     `json:"class"`
 				Prob      float64 `json:"prob"`
 				Threshold float64 `json:"threshold"`
-			}{ID: f.ID, Class: memberClass, Prob: f.Prob, L: f.L})
+			}{ID: f.ID, Class: memberClass, Prob: f.Prob, L: f.L, Conf: confidencePointerFromWire(f.Conf, f.L)})
 		}
 		return nil
 	}
 	for _, lf := range legacy.Files {
 		r.Files = append(r.Files, struct {
-			L         *int    `json:"l"`
+			L         *int    `json:"lvl"`
+			Conf      *int    `json:"conf"`
 			ID        int     `json:"id"`
 			Class     int     `json:"class"`
 			Prob      float64 `json:"prob"`
@@ -6640,16 +6930,16 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 }
 
 // CriticalLevel is prism's consumer-side cutoff between hostile and suspicious
-// on the per-100M-benigns scale. A v6 envelope's `l` is the strictest grid
-// level at which the file fires — `l <= CriticalLevel` means it fires at or
-// below our critical line (hostile), `l > CriticalLevel` means it only fires
+// on the per-100M-benigns scale. A v6/v7 envelope's level is the strictest grid
+// level at which the file fires; level <= CriticalLevel means it fires at or
+// below our critical line (hostile), higher levels mean it only fires
 // in the noisier tail (suspicious), and `-1` means it never fires (benign).
 // Mirrors DefaultSeverityLevel in collimator/litmus/autocollie/promoter; see
 // collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
 const CriticalLevel = 4
 
-// envelopeClass derives the legacy 0/1/2 classification from a v=6 envelope's
-// `l` field. -1 → benign (0); 0..=CriticalLevel → hostile (2); above
+// envelopeClass derives the legacy 0/1/2 classification from a v6/v7 envelope's
+// level field. -1 → benign (0); 0..=CriticalLevel → hostile (2); above
 // CriticalLevel → suspicious (1); nil/null (manual mode, no level info) →
 // hostile (2), fail-safe.
 func envelopeClass(l *int) int {
@@ -6678,17 +6968,17 @@ func classificationName(c int) string {
 
 // verdictClass returns prism's integer verdict class (0=benign, 1=suspicious,
 // 2=hostile) for the envelope, bridging the wire-format versions. v=4/v=5
-// carry `class` directly. v=6 collapses verdict-and-level into `l` and no
+// carry `class` directly. v=6/v7 collapse verdict-and-level into `l`/`lvl` and no
 // longer wire-encodes a suspicious band, so the suspicious cutoff is
 // consumer-side; see classFromLevel.
 func (r *litmusMlResponse) verdictClass() int {
-	if r.V == "6" {
+	if r.V == "6" || r.V == "7" {
 		return classFromLevel(r.L)
 	}
 	return r.Classification
 }
 
-// classFromLevel applies prism's consumer-side level policy to a v=6 `l`
+// classFromLevel applies prism's consumer-side level policy to a v6/v7 level
 // marker (../litmus/docs/JSON.md). The sentinel -1 is benign; a nil marker is
 // hostile produced under manual thresholds (no level table applies); levels
 // 0..=50 are hostile; 51 and above are suspicious. Lower levels fire at
@@ -6780,7 +7070,7 @@ func renderBandGradient(_ float64, t float64, class int) template.CSS {
 	))
 }
 
-// levelStops anchor the v6 verdict-stamp spectrum to the per-100M-benigns level
+// levelStops anchor the v6/v7 verdict-stamp spectrum to the per-100M-benigns level
 // (../litmus JSON.md). The level reads like a normalized confidence scale:
 // lower levels fired at stricter false-positive cutoffs (higher-confidence
 // hostile), so they sit at the hot end and cool toward green as the level
@@ -6816,7 +7106,7 @@ func levelColor(level int) bandRGB {
 	return last.c
 }
 
-// levelGradient renders the verdict stamp directly from a v6 level marker,
+// levelGradient renders the verdict stamp directly from a v6/v7 level marker,
 // independent of the discrete verdict class. The benign sentinel (-1) is a
 // solid green; a level 0..1000 walks the violet→red→orange→yellow→green
 // spectrum; a nil marker (hostile via manual thresholds, no level table)
@@ -6845,30 +7135,114 @@ func levelGradientCSS(base bandRGB, solid bool) template.CSS {
 	))
 }
 
-// levelConfidence maps a v6 level marker to a rough "how confident this is
-// hostile" percentage for the litmus badge hover. The benign sentinel (-1)
-// reads as 1%; level 0 (strictest cutoff) as 100%; level 1000 (loosest) as 10%,
-// sliding linearly in between. A nil marker (manual-threshold hostile) has no
-// level table and reads as fully confident.
+func isCurrentWire(version string, level *int) bool {
+	return version == "6" || version == "7" || level != nil
+}
+
+func confidenceFromWire(conf *int, level *int) int {
+	if conf != nil {
+		return *conf
+	}
+	return levelConfidence(level)
+}
+
+func confidencePointerFromWire(conf *int, level *int) *int {
+	if conf != nil {
+		return conf
+	}
+	if level == nil {
+		return nil
+	}
+	v := levelConfidence(level)
+	return &v
+}
+
+// levelConfidence maps a v6/v7 level marker to the pessimistic integer confidence
+// percentage emitted by litmus as ml.conf. Keep this fallback in lockstep with
+// litmus::scan::level_confidence so cached pre-conf envelopes render the same
+// way as fresh envelopes.
 func levelConfidence(level *int) int {
 	switch {
 	case level == nil:
 		return 100
 	case *level < 0:
-		return 1
+		return 0
+	case *level == 0:
+		return 100
+	case *level == 1:
+		return 99
+	case *level == 2:
+		return 98
+	case *level == 3:
+		return 97
+	case *level == 4:
+		return 96
+	case *level == 5:
+		return 95
+	case *level <= 10:
+		return 94
+	case *level <= 20:
+		return 93
+	case *level <= 30:
+		return 92
+	case *level <= 40:
+		return 91
+	case *level <= 50:
+		return 90
+	case *level <= 60:
+		return 89
+	case *level <= 70:
+		return 88
+	case *level <= 80:
+		return 87
+	case *level <= 90:
+		return 86
+	case *level <= 100:
+		return 85
+	case *level <= 200:
+		return 82
+	case *level <= 300:
+		return 80
+	case *level <= 500:
+		return 78
+	case *level <= 1000:
+		return 75
+	case *level <= 2000:
+		return 66
+	case *level <= 5000:
+		return 54
+	case *level <= 7500:
+		return 49
+	case *level <= 10000:
+		return 45
+	case *level <= 15000:
+		return 38
+	case *level <= 20000:
+		return 33
+	case *level <= 25000:
+		return 29
+	case *level == 25001:
+		return 28
+	case *level == 25002:
+		return 27
+	case *level < 50000:
+		return 26
+	case *level == 50000:
+		return 17
+	case *level == 50001:
+		return 16
 	default:
-		l := min(*level, 1000)
-		return 100 - l*90/1000 // 100% at level 0 → 10% at level 1000
+		return 15
 	}
 }
 
 // stampGradient picks the verdict-stamp gradient for one file, dispatching on
 // the envelope version so the choice lives in one place rather than the
-// template. v=6 colors by level; v=5 uses the single deciding threshold; v=4
+// template. v=6/v7 color by level; v=5 uses the single deciding threshold; v=4
 // uses both band edges. prob/level are per-file; the threshold/class/band edges
 // are the envelope-level values, mirroring the prior template behavior.
 func stampGradient(version string, level *int, prob, threshold, suspT, hostT float64, class int) template.CSS {
-	if version == "6" {
+	if version == "6" || version == "7" {
 		return levelGradient(level)
 	}
 	if threshold > 0 {

@@ -40,7 +40,7 @@ func TestResultTemplateParses(t *testing.T) {
 		data     resultData
 	}{
 		{name: "single_file", data: singleFileData(), dontWant: "verdict-level"}, // benign: badge hidden
-		{name: "archive_with_children", data: archiveData(), want: "L72"},        // real level: badge shown
+		{name: "archive_with_children", data: archiveData(), want: "87%"},        // real level: confidence badge shown
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -78,7 +78,7 @@ func singleFileData() resultData {
 		SuspiciousT:  0.65,
 		HostileT:     0.887,
 		Nonce:        "n",
-		Level:        new(-1), // benign sentinel: badge must be hidden, not crash
+		Level:        testInt(-1), // benign sentinel: badge must be hidden, not crash
 	}
 }
 
@@ -87,25 +87,26 @@ func archiveData() resultData {
 		return strings.Repeat(string(c), 64)
 	}
 	return resultData{
-		Filename:     "archive.tgz",
-		SHA256:       mkSHA('a'),
-		SHA256Short:  strings.Repeat("a", 12) + "...",
-		Verdict:      "HOSTILE",
-		Formula:      template.HTML("Os"),
-		FileType:     "TAR.GZ",
-		Size:         "1.6 KB",
-		FindingCount: "12",
-		Duration:     "200ms",
-		MoleculeJSON: template.JS("{}"),
-		Layout:       "organic2",
-		BuildCommit:  "test",
-		SuspiciousT:  0.65,
-		HostileT:     0.887,
-		Nonce:        "n",
-		IsArchive:    true,
-		TotalFiles:   3,
-		ShownFiles:   3,
-		Level:        new(72), // real FPR level: badge must render "L72"
+		Filename:        "archive.tgz",
+		SHA256:          mkSHA('a'),
+		SHA256Short:     strings.Repeat("a", 12) + "...",
+		Verdict:         "HOSTILE",
+		Formula:         template.HTML("Os"),
+		FileType:        "TAR.GZ",
+		Size:            "1.6 KB",
+		FindingCount:    "12",
+		Duration:        "200ms",
+		MoleculeJSON:    template.JS("{}"),
+		Layout:          "organic2",
+		BuildCommit:     "test",
+		SuspiciousT:     0.65,
+		HostileT:        0.887,
+		Nonce:           "n",
+		IsArchive:       true,
+		TotalFiles:      3,
+		ShownFiles:      3,
+		Level:           testInt(72), // real FPR level: badge must render confidence
+		LevelConfidence: 87,
 		Files: []FileTreeEntry{
 			{Path: "archive.tgz", Display: "archive.tgz", Basename: "archive.tgz", SHA256: mkSHA('a'), SHA256Short: "aaaaaaaa", Classification: "hostile", Risk: "hostile", Formula: "Os", FileType: "TAR.GZ", SizeStr: "1.6 KB", Probability: 0.95, Depth: 0, IsContainer: true},
 			{Path: "archive.tgz!!package/index.js", Display: "package/index.js", Basename: "index.js", SHA256: mkSHA('b'), SHA256Short: "bbbbbbbb", Classification: "hostile", Risk: "hostile", Formula: "H", FileType: "JS", SizeStr: "2.0 KB", Probability: 0.91, Depth: 1},
