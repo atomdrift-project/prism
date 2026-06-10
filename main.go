@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -78,6 +79,8 @@ var (
 	pendingTemplate    *template.Template
 	hopperAPIAddr      string       // Address of hopper API server (e.g., "hopper-api:8081")
 	hopperClient       *http.Client // HTTP client for hopper API server
+	litmusAddr         string       // Address of the dedicated litmus analysis server; empty disables it
+	litmusClient       *http.Client // HTTP client for the litmus analysis server
 	cache              *fido.TieredCache[string, storedResult]
 	feedCache          *fido.TieredCache[string, cachedFeedSnapshot]
 	reportCache        *fido.TieredCache[string, cachedReport]
@@ -95,6 +98,11 @@ var (
 const (
 	defaultHopperDSN     = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
 	defaultHopperAPIAddr = "hopper-api:8081"
+	// defaultLitmusAddr is the dedicated litmus analysis server (litmus serve's
+	// default listen port). Uploads are analyzed here first; when it returns,
+	// prism publishes the result to hopper so hopper's own worker pool doesn't
+	// duplicate the work. Optional — when unreachable, hopper analyzes instead.
+	defaultLitmusAddr = "litmus:49999"
 	// feedCacheTTL is the absolute lifetime of any cached feed query
 	// (frontpage default, criticality variants, ecosystem/domain/formula
 	// filtered, and free-text ?q= searches). Every feed query goes through
@@ -1305,6 +1313,7 @@ func main() {
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
+	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "litmus analysis server host:port (also reads LITMUS_ADDR env; empty disables, falling back to hopper-only analysis)")
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
@@ -1620,10 +1629,29 @@ func loadConfig() {
 		Timeout: 5 * time.Minute,
 	}
 
+	// litmus analysis server. Precedence: flag > LITMUS_ADDR env > default.
+	// An explicit "off"/"none"/"disabled" turns the integration off so uploads
+	// fall back to hopper-only analysis.
+	if litmusAddr == "" {
+		litmusAddr = os.Getenv("LITMUS_ADDR")
+	}
+	switch strings.ToLower(strings.TrimSpace(litmusAddr)) {
+	case "":
+		litmusAddr = defaultLitmusAddr
+	case "off", "none", "disabled":
+		litmusAddr = ""
+	}
+	// The litmus analyze can run the full litmusAnalyzeTimeout budget; give the
+	// client a slightly longer backstop so the context deadline fires first.
+	litmusClient = &http.Client{
+		Timeout: litmusAnalyzeTimeout + time.Minute,
+	}
+
 	csrfKey = loadCSRFKey()
 
 	logger.Debug("configuration loaded",
 		"HOPPER_API_ADDR", hopperAPIAddr,
+		"LITMUS_ADDR", litmusAddr,
 		"PORT", os.Getenv("PORT"),
 	)
 }
@@ -4341,8 +4369,6 @@ func hopperUploadURL(filename string) string {
 // flag or PRISM_UPLOADS env var (1/true/yes/on to enable); both default
 // to off so a fresh deploy is closed-by-default. When false the handler
 // short-circuits to a 503 and the UI greys out the button.
-//
-//nolint:revive // renderError calls are more verbose than http.Error but worth it for UX
 var uploadEnabled = false
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -4490,49 +4516,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			filename := filepath.Base(part.FileName())
-			reqLogger = reqLogger.With("filename", filename)
-			reqLogger.Info("forwarding upload to hopper")
-
-			// Cap the file part's body even though the whole request is already
-			// behind MaxBytesReader: a malformed multipart with one giant
-			// non-file leading part could otherwise waste outbound bandwidth
-			// to hopper before MaxBytesReader fires.
-			res, uerr := uploadToHopper(ctx, io.LimitReader(part, maxUploadSize), filename, reqLogger)
-			_ = part.Close() //nolint:errcheck // best-effort
-			if uerr != nil {
-				var maxErr *http.MaxBytesError
-				switch {
-				case errors.As(uerr, &maxErr):
-					renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
-						Icon:    "⚖",
-						Title:   "File too large",
-						Message: "The web interface accepts files up to 100 MB.",
-					})
-				case errors.Is(uerr, errUploadTokenUnavailable):
-					reqLogger.Warn("upload rejected: hopper token unavailable", "error", uerr)
-					renderError(w, r, http.StatusServiceUnavailable, errorData{
-						Icon:    "⏳",
-						Title:   "Service warming up",
-						Message: "The analysis service isn't ready yet. Please try again in a moment.",
-					})
-				default:
-					reqLogger.Error("hopper upload failed", "error", uerr)
-					renderError(w, r, http.StatusBadGateway, errorData{
-						Icon:    "⚠",
-						Title:   "Upload failed",
-						Message: "Couldn't reach the analysis service. Please try again shortly.",
-					})
-				}
-				return
-			}
-			reqLogger.Info("upload accepted by hopper",
-				"sha256", res.SHA256,
-				"size", res.Size,
-				"already_analyzed", res.AlreadyAnalyzed,
-				"total_duration_ms", time.Since(requestStart).Milliseconds(),
-			)
-			http.Redirect(w, r, "/file/"+res.SHA256, http.StatusSeeOther)
+			serveUploadedFile(ctx, w, r, part, maxUploadSize, requestStart, reqLogger)
 			return
 
 		default:
@@ -4549,6 +4533,85 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// serveUploadedFile buffers the multipart file part, creates the sample row in
+// hopper (which must exist before any result can be published to it), starts
+// the litmus fast path, and redirects to the result page. On any failure it
+// renders the matching error page. It closes part before returning.
+func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Request, part *multipart.Part, maxUploadSize int64, requestStart time.Time, reqLogger *slog.Logger) {
+	filename := filepath.Base(part.FileName())
+	reqLogger = reqLogger.With("filename", filename)
+
+	// Buffer the file once: hopper needs it to create the sample row, and the
+	// litmus fast path needs the same bytes to analyze. Cap the part even
+	// though the whole request is already behind MaxBytesReader — a malformed
+	// multipart with one giant non-file leading part could otherwise waste
+	// memory first. A MaxBytesError surfaces here as the body cap trips.
+	buf, rerr := io.ReadAll(io.LimitReader(part, maxUploadSize))
+	_ = part.Close() //nolint:errcheck // best-effort
+	if rerr != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(rerr, &maxErr) {
+			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
+			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
+				Icon:  "⚖",
+				Title: "File too large",
+				MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
+					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+			})
+			return
+		}
+		reqLogger.Warn("upload read failed", "error", rerr)
+		renderError(w, r, http.StatusBadRequest, errorData{
+			Icon:    "⚠",
+			Title:   "Upload failed",
+			Message: "Something went wrong reading your file. Please try again.",
+		})
+		return
+	}
+
+	// Create the sample row in hopper first: hopper only accepts an analysis
+	// result for a sample it already knows about, so the row must exist before
+	// the litmus fast path can publish to it.
+	reqLogger.Info("forwarding upload to hopper")
+	res, uerr := uploadToHopper(ctx, buf, filename, reqLogger)
+	if uerr != nil {
+		if errors.Is(uerr, errUploadTokenUnavailable) {
+			reqLogger.Warn("upload rejected: hopper token unavailable", "error", uerr)
+			renderError(w, r, http.StatusServiceUnavailable, errorData{
+				Icon:    "⏳",
+				Title:   "Service warming up",
+				Message: "The analysis service isn't ready yet. Please try again in a moment.",
+			})
+			return
+		}
+		reqLogger.Error("hopper upload failed", "error", uerr)
+		renderError(w, r, http.StatusBadGateway, errorData{
+			Icon:    "⚠",
+			Title:   "Upload failed",
+			Message: "Couldn't reach the analysis service. Please try again shortly.",
+		})
+		return
+	}
+	reqLogger.Info("upload accepted by hopper",
+		"sha256", res.SHA256,
+		"size", res.Size,
+		"already_analyzed", res.AlreadyAnalyzed,
+		"total_duration_ms", time.Since(requestStart).Milliseconds(),
+	)
+
+	// Fast path: analyze on the dedicated litmus server and publish the result
+	// back to hopper so its worker pool never has to redo it. Runs in the
+	// background (detached from this request) so the user gets the result page
+	// immediately; the page's SSE wait shows the verdict the moment litmus
+	// publishes — or, if litmus is down/slow, when hopper's own worker
+	// finishes. Skipped when the sample was already analyzed (dedup hit) or
+	// litmus is disabled.
+	if !res.AlreadyAnalyzed {
+		scheduleLitmusAnalysis(context.WithoutCancel(ctx), buf, res.SHA256, filename)
+	}
+	http.Redirect(w, r, "/file/"+res.SHA256, http.StatusSeeOther)
+}
+
 // errUploadTokenUnavailable means hopper hasn't yet provisioned the upload
 // token (typically because the hopper service is still warming up). The
 // upload handler surfaces this as a 503-equivalent UX to the user.
@@ -4559,21 +4622,15 @@ var errUploadTokenUnavailable = errors.New("hopper upload token unavailable")
 // previously-valid token; the next read picks up the new value.
 const uploadTokenKey = "upload_token"
 
-// uploadToHopper POSTs body to hopper /api/upload with a Bearer token read
-// from hopper's KV table. The body is buffered up front so the request can
-// be safely retried with backoff (and so the 401 rotation path can resend
-// the same bytes). The buffer is bounded by the request-level
-// MaxBytesReader plus the per-part io.LimitReader the caller wraps around
-// the multipart part. On a 401 (token rotation signal) we re-read the
+// uploadToHopper POSTs buf to hopper /api/upload with a Bearer token read
+// from hopper's KV table. buf is already buffered by the caller so the
+// request can be safely retried with backoff (and so the 401 rotation path
+// can resend the same bytes). On a 401 (token rotation signal) we re-read the
 // token from KV and retry the upload exactly once.
-func uploadToHopper(ctx context.Context, body io.Reader, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
+func uploadToHopper(ctx context.Context, buf []byte, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, errUploadTokenUnavailable
-	}
-	buf, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("read upload body: %w", err)
 	}
 	target := hopperUploadURL(filename)
 
@@ -4728,6 +4785,199 @@ func readUploadResponse(resp *http.Response, log *slog.Logger) (*hopperUploadRes
 		return nil, fmt.Errorf("hopper returned invalid sha256: %q", ur.SHA256)
 	}
 	return &ur, nil
+}
+
+// Litmus fast-path tuning.
+const (
+	// litmusAnalyzeTimeout bounds one background analyze+publish cycle. The
+	// user already has the result page; this is the patience budget for the
+	// litmus fast path before we give up and leave the sample to hopper's own
+	// worker pool.
+	litmusAnalyzeTimeout = 10 * time.Minute
+	// litmusWorkerName identifies prism when it publishes a result to hopper's
+	// POST /api/result — the same channel hopper's pull workers use.
+	litmusWorkerName = "prism"
+	// maxLitmusResponseBytes bounds the /analyze response we'll read, matching
+	// hopper's own result-body ceiling so a runaway report can't exhaust memory.
+	maxLitmusResponseBytes = 256 << 20
+)
+
+// litmusEnvelope is the subset of litmus /analyze's {"ml":…,"raw":…} response
+// that prism forwards to hopper. Error is set when litmus reports a structured
+// failure.
+type litmusEnvelope struct {
+	Error string          `json:"error"`
+	ML    json.RawMessage `json:"ml"`
+	Raw   json.RawMessage `json:"raw"`
+}
+
+// litmusAnalyzeURL builds the absolute URL of the litmus server's POST
+// /analyze endpoint, or "" when litmus is disabled.
+func litmusAnalyzeURL() string {
+	base := strings.TrimSpace(litmusAddr)
+	if base == "" {
+		return ""
+	}
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/analyze"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// scheduleLitmusAnalysis runs the litmus fast path in the background: analyze
+// buf on the dedicated litmus server, then publish the verdict to hopper's
+// /api/result (the worker channel) so hopper's pool doesn't re-analyze sha.
+// Best-effort — any failure just leaves the sample for hopper's own worker,
+// which the /file/<sha> wait page surfaces when it finishes.
+// The caller passes context.WithoutCancel(r.Context()) so the goroutine keeps
+// request-scoped values but survives the request returning.
+func scheduleLitmusAnalysis(ctx context.Context, buf []byte, sha, filename string) {
+	target := litmusAnalyzeURL()
+	if target == "" {
+		return // litmus disabled
+	}
+	log := logger.With("sha256", sha, "filename", filename, "via", "litmus")
+	go func() {
+		// Bounded by its own patience budget; cancellation is already detached
+		// from the request by the caller's context.WithoutCancel.
+		runCtx, cancel := context.WithTimeout(ctx, litmusAnalyzeTimeout)
+		defer cancel()
+		start := time.Now()
+		env, err := analyzeWithLitmus(runCtx, target, buf, filename)
+		if err != nil {
+			log.Warn("litmus analyze failed; leaving sample for hopper worker", "error", err)
+			return
+		}
+		if err := publishResultToHopper(runCtx, sha, env, time.Since(start).Milliseconds()); err != nil {
+			log.Warn("publishing litmus result to hopper failed; hopper worker will re-analyze", "error", err)
+			return
+		}
+		log.Info("litmus result published to hopper", "duration_ms", time.Since(start).Milliseconds())
+	}()
+}
+
+// analyzeWithLitmus POSTs buf to litmus POST /analyze as multipart/form-data
+// (one part named "file") and returns the ml/raw sections of the response
+// envelope. A non-200 status, a structured error body, or a missing ml
+// section is reported as an error so the caller falls back to hopper's worker.
+func analyzeWithLitmus(ctx context.Context, target string, buf []byte, filename string) (*litmusEnvelope, error) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("build multipart: %w", err)
+	}
+	if _, err := part.Write(buf); err != nil {
+		return nil, fmt.Errorf("write multipart: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, &body)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := litmusClient.Do(req) //nolint:gosec // target built from admin-configured litmus host, not user input
+	if err != nil {
+		return nil, fmt.Errorf("litmus request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
+	rd := io.LimitReader(resp.Body, maxLitmusResponseBytes)
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(rd, 1024)) //nolint:errcheck // diagnostics only
+		return nil, fmt.Errorf("litmus status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var env litmusEnvelope
+	if err := json.NewDecoder(rd).Decode(&env); err != nil {
+		return nil, fmt.Errorf("decode litmus response: %w", err)
+	}
+	if env.Error != "" {
+		return nil, fmt.Errorf("litmus error: %s", env.Error)
+	}
+	if len(env.ML) == 0 {
+		return nil, errors.New("litmus response missing ml section")
+	}
+	return &env, nil
+}
+
+// hopperResultRequest mirrors hopper's POST /api/result body — the same shape
+// a litmus worker posts. prism uses it to publish a fast-path verdict for an
+// already-uploaded sample.
+type hopperResultRequest struct {
+	SHA256     string          `json:"sha256"`
+	Worker     string          `json:"worker"`
+	ML         json.RawMessage `json:"ml"`
+	Raw        json.RawMessage `json:"raw"`
+	DurationMs int64           `json:"duration_ms"`
+}
+
+// hopperResultURL builds the absolute URL of hopper's POST /api/result
+// endpoint from the same admin-configured hopper-api host as the other routes.
+func hopperResultURL() string {
+	base := strings.TrimSpace(hopperAPIAddr)
+	if base == "" {
+		base = defaultHopperAPIAddr
+	}
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		u = &url.URL{Scheme: "http", Host: defaultHopperAPIAddr}
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/result"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// publishResultToHopper POSTs a litmus verdict to hopper's /api/result so the
+// sample is marked analyzed without hopper's worker pool repeating the work.
+// The same per-dependency breaker that guards other hopper-api calls applies.
+func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope, durationMs int64) error {
+	if err := apiBreaker.allow(); err != nil {
+		return fmt.Errorf("hopper-api result: %w", err)
+	}
+	body, err := json.Marshal(hopperResultRequest{
+		SHA256:     sha,
+		Worker:     litmusWorkerName,
+		ML:         env.ML,
+		Raw:        env.Raw,
+		DurationMs: durationMs,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal result: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hopperResultURL(), bytes.NewReader(body))
+	if err != nil {
+		// Local build error: hopper was never contacted; don't move the breaker.
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hopperClient.Do(req) //nolint:gosec // hopperResultURL built from admin-configured hopper-api host
+	if err != nil {
+		apiBreaker.failure()
+		return fmt.Errorf("hopper request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
+	if resp.StatusCode >= http.StatusInternalServerError {
+		apiBreaker.failure()
+	} else {
+		apiBreaker.success()
+	}
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024)) //nolint:errcheck // diagnostics only
+		return fmt.Errorf("hopper /api/result status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	return nil
 }
 
 // prepareResultData converts raw cleave output to template data.
@@ -5394,8 +5644,8 @@ func locationOffset(location string) string {
 	if _, ok := parseLocationID(location); !ok {
 		return ""
 	}
-	if i := strings.IndexByte(location, ':'); i >= 0 {
-		return location[i+1:]
+	if _, after, ok := strings.Cut(location, ":"); ok {
+		return after
 	}
 	return ""
 }
