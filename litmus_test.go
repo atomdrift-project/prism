@@ -121,6 +121,83 @@ func TestAnalyzeWithLitmusErrors(t *testing.T) {
 	}
 }
 
+// TestStoredResultFromLitmus confirms a litmus /analyze envelope becomes a
+// cacheable result the renderer can use without hopper: RawLitmus carries the
+// {ml,raw} envelope, classification is derived from ml, and size/timestamps
+// are populated.
+func TestStoredResultFromLitmus(t *testing.T) {
+	env := &litmusEnvelope{
+		ML:  json.RawMessage(`{"v":"7","lvl":-1,"conf":0}`),
+		Raw: json.RawMessage(`{"files":[{"sha":"abc","type":"crate"}]}`),
+	}
+	res := storedResultFromLitmus("onering-1.4.1.crate", env, 4096)
+
+	if res.Filename != "onering-1.4.1.crate" {
+		t.Errorf("filename = %q", res.Filename)
+	}
+	if res.SizeBytes != 4096 {
+		t.Errorf("size = %d, want 4096", res.SizeBytes)
+	}
+	if res.AnalyzedAt.IsZero() || res.CachedAt.IsZero() {
+		t.Error("timestamps must be set so the result renders as analyzed")
+	}
+	// RawLitmus must be the {ml,raw} envelope prepareResultData parses.
+	var env2 struct {
+		ML  json.RawMessage `json:"ml"`
+		Raw json.RawMessage `json:"raw"`
+	}
+	if err := json.Unmarshal([]byte(res.RawLitmus), &env2); err != nil {
+		t.Fatalf("RawLitmus not valid envelope JSON: %v", err)
+	}
+	if !strings.Contains(string(env2.ML), `"lvl":-1`) {
+		t.Errorf("envelope ml = %s, want litmus ml section", env2.ML)
+	}
+	if !strings.Contains(string(env2.Raw), `"crate"`) {
+		t.Errorf("envelope raw = %s, want cleave raw section", env2.Raw)
+	}
+}
+
+// TestStoredResultFromLitmusDropsInvalid ensures malformed ml/raw don't poison
+// the envelope (omitted rather than embedded as broken JSON).
+func TestStoredResultFromLitmusDropsInvalid(t *testing.T) {
+	env := &litmusEnvelope{ML: json.RawMessage(`not json`), Raw: json.RawMessage(`{"ok":true}`)}
+	res := storedResultFromLitmus("x", env, 1)
+	if !json.Valid([]byte(res.RawLitmus)) {
+		t.Fatalf("RawLitmus must stay valid JSON, got %q", res.RawLitmus)
+	}
+	if strings.Contains(res.RawLitmus, "not json") {
+		t.Errorf("invalid ml leaked into envelope: %s", res.RawLitmus)
+	}
+}
+
+// TestLitmusSlotsBounded verifies the fast-path semaphore admits exactly
+// maxConcurrentLitmus tokens and then refuses (non-blocking), which is what
+// makes a saturated fast path degrade to hopper instead of queueing work.
+func TestLitmusSlotsBounded(t *testing.T) {
+	if cap(litmusSlots) != maxConcurrentLitmus {
+		t.Fatalf("litmusSlots cap = %d, want %d", cap(litmusSlots), maxConcurrentLitmus)
+	}
+	// Fill every slot.
+	for i := range maxConcurrentLitmus {
+		select {
+		case litmusSlots <- struct{}{}:
+		default:
+			t.Fatalf("slot %d should have been free", i)
+		}
+	}
+	// The next acquire must fail without blocking.
+	select {
+	case litmusSlots <- struct{}{}:
+		t.Error("acquired a slot past capacity; semaphore is not bounding concurrency")
+		<-litmusSlots
+	default:
+	}
+	// Drain so the shared global is clean for other tests.
+	for range maxConcurrentLitmus {
+		<-litmusSlots
+	}
+}
+
 // TestPublishResultToHopper asserts prism posts the worker-shaped payload to
 // hopper /api/result and that a rejection surfaces as an error.
 func TestPublishResultToHopper(t *testing.T) {

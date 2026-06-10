@@ -1641,10 +1641,10 @@ func loadConfig() {
 	case "off", "none", "disabled":
 		litmusAddr = ""
 	}
-	// The litmus analyze can run the full litmusAnalyzeTimeout budget; give the
-	// client a slightly longer backstop so the context deadline fires first.
+	// The litmus analyze can run the full ingest budget; give the client a
+	// slightly longer backstop so the context deadline fires first.
 	litmusClient = &http.Client{
-		Timeout: litmusAnalyzeTimeout + time.Minute,
+		Timeout: uploadIngestTimeout + time.Minute,
 	}
 
 	csrfKey = loadCSRFKey()
@@ -3332,6 +3332,16 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		return fetchFromHopper(lctx, sha)
 	})
 	if err != nil {
+		// A just-uploaded sample may not be in hopper yet (upload + analysis
+		// run in the background) and may not have reached prism's cache either.
+		// Show the "analyzing" page rather than a 404 until ingestion lands a
+		// result or gives up.
+		if v, ok := uploadsInFlight.Load(sha); ok {
+			var pend *pendingAnalysisError
+			if filename, isStr := v.(string); isStr && !errors.As(err, &pend) {
+				return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: filename}
+			}
+		}
 		return false, storedResult{}, err
 	}
 	// Self-heal stale cache entries from before the enrichment deploy: if a
@@ -4200,15 +4210,11 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 
 	check := func() (state string, payload string) {
 		if after.IsZero() {
-			exists, analyzed, err := db.SampleAnalyzed(ctx, sha)
-			if err != nil {
-				return "", ""
-			}
-			switch {
-			case !exists:
-				return "missing", `{"reason":"not found"}`
-			case analyzed:
+			switch uploadViewState(ctx, sha) {
+			case "ready":
 				return "ready", readyPayload(sha)
+			case "missing":
+				return "missing", `{"reason":"not found"}`
 			}
 			return "pending", ""
 		}
@@ -4249,6 +4255,24 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// uploadViewState reports whether sha is viewable yet on the normal (non-
+// rescan) wait/status path: "ready" once either prism has cached a verdict
+// (the litmus fast path) or hopper has analyzed the sample, "pending" while
+// ingestion is still in flight, "missing" otherwise. lookupResult checks
+// prism's cache before hopper, so a litmus-only result (hopper upload failed)
+// still flips the page to the result view.
+func uploadViewState(ctx context.Context, sha string) string {
+	_, _, err := lookupResult(ctx, sha, logger)
+	if err == nil {
+		return "ready"
+	}
+	var pend *pendingAnalysisError
+	if errors.As(err, &pend) {
+		return "pending"
+	}
+	return "missing"
 }
 
 // parseAfterMillis parses an ?after=<unix-ms> query value into a UTC
@@ -4302,16 +4326,12 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		var (
-			analyzed bool
-			err      error
-		)
-		exists, analyzed, err = db.SampleAnalyzed(ctx, sha)
-		if err != nil {
-			http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
-			return
+		switch uploadViewState(ctx, sha) {
+		case "ready":
+			exists, ready = true, true
+		case "pending":
+			exists = true
 		}
-		ready = analyzed
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -4541,11 +4561,12 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	filename := filepath.Base(part.FileName())
 	reqLogger = reqLogger.With("filename", filename)
 
-	// Buffer the file once: hopper needs it to create the sample row, and the
-	// litmus fast path needs the same bytes to analyze. Cap the part even
-	// though the whole request is already behind MaxBytesReader — a malformed
-	// multipart with one giant non-file leading part could otherwise waste
-	// memory first. A MaxBytesError surfaces here as the body cap trips.
+	// Buffer the file once and identify it by content hash — the same sha256
+	// hopper and litmus derive from the bytes — so we never depend on a backend
+	// to tell us where to send the user. Cap the part even though the whole
+	// request is already behind MaxBytesReader: a malformed multipart with one
+	// giant non-file leading part could otherwise waste memory first. A
+	// MaxBytesError surfaces here as the body cap trips.
 	buf, rerr := io.ReadAll(io.LimitReader(part, maxUploadSize))
 	_ = part.Close() //nolint:errcheck // best-effort
 	if rerr != nil {
@@ -4569,47 +4590,22 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Create the sample row in hopper first: hopper only accepts an analysis
-	// result for a sample it already knows about, so the row must exist before
-	// the litmus fast path can publish to it.
-	reqLogger.Info("forwarding upload to hopper")
-	res, uerr := uploadToHopper(ctx, buf, filename, reqLogger)
-	if uerr != nil {
-		if errors.Is(uerr, errUploadTokenUnavailable) {
-			reqLogger.Warn("upload rejected: hopper token unavailable", "error", uerr)
-			renderError(w, r, http.StatusServiceUnavailable, errorData{
-				Icon:    "⏳",
-				Title:   "Service warming up",
-				Message: "The analysis service isn't ready yet. Please try again in a moment.",
-			})
-			return
-		}
-		reqLogger.Error("hopper upload failed", "error", uerr)
-		renderError(w, r, http.StatusBadGateway, errorData{
-			Icon:    "⚠",
-			Title:   "Upload failed",
-			Message: "Couldn't reach the analysis service. Please try again shortly.",
-		})
-		return
-	}
-	reqLogger.Info("upload accepted by hopper",
-		"sha256", res.SHA256,
-		"size", res.Size,
-		"already_analyzed", res.AlreadyAnalyzed,
+	sum := sha256.Sum256(buf)
+	sha := hex.EncodeToString(sum[:])
+	reqLogger = reqLogger.With("sha256", sha)
+	reqLogger.Info("upload received; ingesting via litmus and hopper",
+		"size", len(buf),
 		"total_duration_ms", time.Since(requestStart).Milliseconds(),
 	)
 
-	// Fast path: analyze on the dedicated litmus server and publish the result
-	// back to hopper so its worker pool never has to redo it. Runs in the
-	// background (detached from this request) so the user gets the result page
-	// immediately; the page's SSE wait shows the verdict the moment litmus
-	// publishes — or, if litmus is down/slow, when hopper's own worker
-	// finishes. Skipped when the sample was already analyzed (dedup hit) or
-	// litmus is disabled.
-	if !res.AlreadyAnalyzed {
-		scheduleLitmusAnalysis(context.WithoutCancel(ctx), buf, res.SHA256, filename)
-	}
-	http.Redirect(w, r, "/file/"+res.SHA256, http.StatusSeeOther)
+	// Ingest on litmus and hopper concurrently in the background; either path
+	// alone makes /file/<sha> render. Mark the sha in-flight first so the page
+	// shows an "analyzing" state (not a 404) during the window before either
+	// backend has a result.
+	uploadsInFlight.Store(sha, filename)
+	go ingestUpload(context.WithoutCancel(ctx), buf, sha, filename)
+
+	http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
 }
 
 // errUploadTokenUnavailable means hopper hasn't yet provisioned the upload
@@ -4787,20 +4783,38 @@ func readUploadResponse(resp *http.Response, log *slog.Logger) (*hopperUploadRes
 	return &ur, nil
 }
 
-// Litmus fast-path tuning.
+// Upload ingestion tuning.
 const (
-	// litmusAnalyzeTimeout bounds one background analyze+publish cycle. The
-	// user already has the result page; this is the patience budget for the
-	// litmus fast path before we give up and leave the sample to hopper's own
-	// worker pool.
-	litmusAnalyzeTimeout = 10 * time.Minute
+	// uploadIngestTimeout bounds the background ingestion of one upload across
+	// both paths (litmus analyze + cache + publish, and the hopper store). The
+	// user already has the result page; this is the patience budget before we
+	// give up. Generous enough for a slow 100 MB hopper store or a full litmus
+	// analyze of a large archive.
+	uploadIngestTimeout = 10 * time.Minute
 	// litmusWorkerName identifies prism when it publishes a result to hopper's
 	// POST /api/result — the same channel hopper's pull workers use.
 	litmusWorkerName = "prism"
 	// maxLitmusResponseBytes bounds the /analyze response we'll read, matching
 	// hopper's own result-body ceiling so a runaway report can't exhaust memory.
 	maxLitmusResponseBytes = 256 << 20
+	// maxConcurrentLitmus caps in-flight litmus analyses. Each holds a multipart
+	// copy of the file (up to the upload cap) for the analysis duration, so
+	// without a bound an upload burst could pin large amounts of memory and
+	// overrun the litmus server. When all slots are busy a new upload skips the
+	// fast path; hopper still stores it durably and its own worker analyzes it.
+	maxConcurrentLitmus = 8
 )
+
+// litmusSlots is the maxConcurrentLitmus semaphore: a token per in-flight
+// litmus analysis, acquired non-blocking so a saturated fast path degrades to
+// hopper rather than queueing memory-heavy work.
+var litmusSlots = make(chan struct{}, maxConcurrentLitmus)
+
+// uploadsInFlight tracks shas whose upload is being ingested in the background
+// (sha -> filename string). lookupResult renders a pending "analyzing" page for
+// these instead of a 404 during the window before hopper has the sample row or
+// litmus has cached a verdict.
+var uploadsInFlight sync.Map
 
 // litmusEnvelope is the subset of litmus /analyze's {"ml":…,"raw":…} response
 // that prism forwards to hopper. Error is set when litmus reports a structured
@@ -4831,36 +4845,131 @@ func litmusAnalyzeURL() string {
 	return u.String()
 }
 
-// scheduleLitmusAnalysis runs the litmus fast path in the background: analyze
-// buf on the dedicated litmus server, then publish the verdict to hopper's
-// /api/result (the worker channel) so hopper's pool doesn't re-analyze sha.
-// Best-effort — any failure just leaves the sample for hopper's own worker,
-// which the /file/<sha> wait page surfaces when it finishes.
-// The caller passes context.WithoutCancel(r.Context()) so the goroutine keeps
-// request-scoped values but survives the request returning.
-func scheduleLitmusAnalysis(ctx context.Context, buf []byte, sha, filename string) {
-	target := litmusAnalyzeURL()
-	if target == "" {
-		return // litmus disabled
+// ingestUpload drives the two independent ingestion paths for a freshly
+// uploaded sample, concurrently:
+//
+//   - litmus fast path: analyze on the dedicated litmus server and cache the
+//     verdict in prism's own result cache, so /file/<sha> renders immediately
+//     even if hopper never accepts the sample.
+//   - hopper upload: store the bytes durably and queue the sample for hopper's
+//     own worker pool.
+//
+// Either path alone lets the page render error-free. When BOTH succeed, prism
+// publishes the litmus verdict to hopper's /api/result so its workers skip the
+// re-analysis — gated on the upload, because /api/result is an UPDATE keyed by
+// sha that silently no-ops (returns 200, writes nothing) for a sample that
+// doesn't exist yet. If BOTH fail the sample is unviewable, which we log
+// loudly. Runs detached from the request via the caller's WithoutCancel.
+func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
+	ctx, cancel := context.WithTimeout(ctx, uploadIngestTimeout)
+	defer cancel()
+	defer uploadsInFlight.Delete(sha)
+	log := logger.With("sha256", sha, "filename", filename)
+
+	var (
+		wg                 sync.WaitGroup
+		litmusOK, hopperOK bool
+		env                *litmusEnvelope
+		analyzeMs          int64
+	)
+
+	wg.Go(func() {
+		if _, err := uploadToHopper(ctx, buf, filename, log); err != nil {
+			log.Error("upload to hopper failed", "error", err)
+			return
+		}
+		hopperOK = true
+	})
+
+	if target := litmusAnalyzeURL(); target != "" {
+		wg.Go(func() {
+			// Take a slot, or skip the fast path when saturated — hopper still
+			// ingests durably, so the sample is never lost, just analyzed by
+			// hopper's worker instead.
+			select {
+			case litmusSlots <- struct{}{}:
+				defer func() { <-litmusSlots }()
+			default:
+				log.Warn("litmus fast path at capacity; leaving sample for hopper worker",
+					"max_concurrent", maxConcurrentLitmus)
+				return
+			}
+			start := time.Now()
+			e, err := analyzeWithLitmus(ctx, target, buf, filename)
+			if err != nil {
+				log.Error("litmus analyze failed", "error", err)
+				return
+			}
+			// Cache the verdict in prism immediately so the result page renders
+			// even if the hopper upload never succeeds.
+			cacheLitmusResult(ctx, sha, filename, e, int64(len(buf)), log)
+			env, analyzeMs, litmusOK = e, time.Since(start).Milliseconds(), true
+		})
 	}
-	log := logger.With("sha256", sha, "filename", filename, "via", "litmus")
-	go func() {
-		// Bounded by its own patience budget; cancellation is already detached
-		// from the request by the caller's context.WithoutCancel.
-		runCtx, cancel := context.WithTimeout(ctx, litmusAnalyzeTimeout)
-		defer cancel()
-		start := time.Now()
-		env, err := analyzeWithLitmus(runCtx, target, buf, filename)
-		if err != nil {
-			log.Warn("litmus analyze failed; leaving sample for hopper worker", "error", err)
-			return
-		}
-		if err := publishResultToHopper(runCtx, sha, env, time.Since(start).Milliseconds()); err != nil {
+	wg.Wait()
+
+	if litmusOK && hopperOK {
+		if err := publishResultToHopper(ctx, sha, env, analyzeMs); err != nil {
 			log.Warn("publishing litmus result to hopper failed; hopper worker will re-analyze", "error", err)
-			return
 		}
-		log.Info("litmus result published to hopper", "duration_ms", time.Since(start).Milliseconds())
-	}()
+	}
+
+	switch {
+	case litmusOK && hopperOK:
+		log.Info("upload ingested via litmus and hopper")
+	case litmusOK:
+		log.Warn("upload ingested via litmus only; hopper upload failed (sample not durably stored in hopper)")
+	case hopperOK:
+		log.Warn("upload ingested via hopper only; litmus fast path failed (hopper worker will analyze)")
+	default:
+		log.Error("UPLOAD INGESTION FAILED: neither litmus nor hopper accepted the sample; it is not viewable")
+	}
+}
+
+// cacheLitmusResult stores a litmus verdict in prism's result cache so
+// /file/<sha> renders without waiting on (or needing) hopper. The litmus
+// /analyze envelope is already the {ml,raw} shape prism stores as RawLitmus.
+func cacheLitmusResult(ctx context.Context, sha, filename string, env *litmusEnvelope, size int64, log *slog.Logger) {
+	// Synchronous Set (not SetAsync): the value must be visible in the cache
+	// before the caller marks the litmus path done and the in-flight marker is
+	// cleared, otherwise a poll could briefly 404 a result we already have.
+	if err := cache.Set(ctx, sha, storedResultFromLitmus(filename, env, size)); err != nil {
+		log.Warn("caching litmus result failed", "error", err)
+	}
+}
+
+// storedResultFromLitmus builds a cacheable result from a litmus /analyze
+// envelope. Mirrors storedResultFromHopperSample but sources everything from
+// the envelope plus the known upload metadata (uploads carry no provenance).
+func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) storedResult {
+	envelope := map[string]json.RawMessage{}
+	if json.Valid(env.ML) {
+		envelope["ml"] = env.ML
+	}
+	if json.Valid(env.Raw) {
+		envelope["raw"] = env.Raw
+	}
+	rawLitmus, err := json.Marshal(envelope)
+	if err != nil {
+		rawLitmus = []byte("{}")
+	}
+	classification := ""
+	if len(env.ML) > 0 {
+		var mlResp litmusMlResponse
+		if json.Unmarshal(env.ML, &mlResp) == nil {
+			classification = classificationName(mlResp.verdictClass())
+		}
+	}
+	now := time.Now().UTC()
+	return storedResult{
+		Filename:       filename,
+		RawLitmus:      string(rawLitmus),
+		Classification: classification,
+		CachedAt:       now,
+		AnalyzedAt:     now,
+		CreatedAt:      now,
+		SizeBytes:      size,
+	}
 }
 
 // analyzeWithLitmus POSTs buf to litmus POST /analyze as multipart/form-data
