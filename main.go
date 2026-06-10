@@ -854,6 +854,12 @@ type storedResult struct {
 	// "npm", "pypi", "debian"). Empty for uploads or rows hopper could
 	// not attribute.
 	Ecosystem string
+	// SizeBytes is hopper's authoritative byte count for the sample,
+	// recorded from the actual stored bytes at ingest. It is the source of
+	// truth for size: the cleave report's entry-level size is absent on
+	// compacted and pre-v7 root entries, so size must not be re-derived
+	// from the report when this is available.
+	SizeBytes int64
 }
 
 type feedRow struct {
@@ -2534,6 +2540,7 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		SourceURL:      sample.URL,
 		SourceDomain:   sample.Domain,
 		Ecosystem:      sample.Ecosystem,
+		SizeBytes:      sample.SizeBytes,
 	}, nil
 }
 
@@ -5102,6 +5109,14 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 		data.SizeBytes = report.Files[0].Size
 	}
 
+	// Prefer hopper's authoritative size over anything derived from the
+	// cleave report: compacted and pre-v7 root entries carry no entry-level
+	// size, so the report alone yields 0 bytes for those samples.
+	if res.SizeBytes > 0 {
+		data.SizeBytes = res.SizeBytes
+		data.Size = formatBytes(res.SizeBytes)
+	}
+
 	// Extract findings for formula generation
 	var findings []FindingForFormula
 	var totalFindings int
@@ -5239,7 +5254,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 			data.Contents = renderTextContent(body, report.Files[0].Findings, filename)
 		case strings.Contains(err.Error(), "too large"):
 			data.ContentTooLarge = true
-			data.ContentSizeStr = formatBytes(report.Files[0].Size)
+			// data.SizeBytes already prefers hopper's authoritative size;
+			// the report's entry-level size is 0 on compacted/pre-v7 roots.
+			data.ContentSizeStr = formatBytes(data.SizeBytes)
 		default:
 			logger.Debug("contents fetch failed", "sha256", sha256Hex, "error", err)
 		}
