@@ -933,6 +933,7 @@ type cleaveFile struct {
 	Facts          cleaveFacts                `json:"fact,omitzero"`
 	Exports        []symbolInfo               `json:"exports,omitempty"`
 	Findings       []finding                  `json:"find,omitempty"`
+	Ctx            []contextWindow            `json:"ctx,omitempty"`
 	Strings        []json.RawMessage          `json:"ss,omitempty"`
 	Imports        []string                   `json:"is,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
@@ -1030,6 +1031,7 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		Exports     []symbolInfo               `json:"exports,omitempty"`
 		Findings    []finding                  `json:"find,omitempty"`
 		OldFindings []finding                  `json:"ts,omitempty"`
+		Ctx         []contextWindow            `json:"ctx,omitempty"`
 		Strings     []json.RawMessage          `json:"ss,omitempty"`
 		Imports     []string                   `json:"is,omitempty"`
 		Sections    []sectionInfo              `json:"sections,omitempty"`
@@ -1051,6 +1053,7 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		Facts:    raw.Facts,
 		Exports:  raw.Exports,
 		Findings: raw.Findings,
+		Ctx:      raw.Ctx,
 		Strings:  raw.Strings,
 		Imports:  raw.Imports,
 		Sections: raw.Sections,
@@ -1186,6 +1189,27 @@ type sectionInfo struct {
 	Flags   string  `json:"flags,omitempty"`
 	Size    int64   `json:"size"`
 	Entropy float64 `json:"entropy,omitempty"`
+}
+
+// contextWindow is one entry in a file's v7 `ctx` array: a slice of file
+// content (Text) at byte offset Offset, optionally a hex dump (Hex), with
+// Notes naming the traits that matched inside it. v7 reports carry match
+// evidence here instead of inline on each finding.
+type contextWindow struct {
+	Text   string        `json:"t"`
+	Notes  []contextNote `json:"n,omitempty"`
+	Offset int64         `json:"l"`
+	Hex    bool          `json:"x,omitempty"`
+}
+
+// contextNote attributes a span of a contextWindow to a single trait by its
+// full ID. Offset/Size locate the match within the window.
+type contextNote struct {
+	ID     string `json:"i"`
+	Desc   string `json:"d,omitempty"`
+	Offset int64  `json:"o"`
+	Crit   int    `json:"c,omitempty"`
+	Size   int    `json:"z,omitempty"`
 }
 
 type finding struct {
@@ -5376,6 +5400,74 @@ func locationOffset(location string) string {
 	return ""
 }
 
+// evidenceRow is one resolved match for a finding before file attribution:
+// the snippet text, its within-file offset, whether it is a hex dump (so the
+// caller skips source highlighting), and locRef — the raw legacy `loc` string
+// (e.g. "1:0x3718c0" or "archive:pkg/x.go") used to back-attribute a rolled-up
+// match to an inner archive member. ctx-sourced rows leave locRef empty
+// because they already belong to the file that carries them.
+type evidenceRow struct {
+	text   string
+	offset string
+	locRef string
+	hex    bool
+}
+
+// contextIndex maps each full trait ID to the evidence rows the file's v7
+// `ctx` array attributes to it. Returns nil for pre-v7 files with no ctx.
+func contextIndex(file *cleaveFile) map[string][]evidenceRow {
+	if len(file.Ctx) == 0 {
+		return nil
+	}
+	idx := make(map[string][]evidenceRow)
+	for w := range file.Ctx {
+		win := &file.Ctx[w]
+		for _, n := range win.Notes {
+			idx[n.ID] = append(idx[n.ID], evidenceRow{
+				text:   win.Text,
+				offset: formatOffset(n.Offset, win.Hex),
+				hex:    win.Hex,
+			})
+		}
+	}
+	return idx
+}
+
+// evidenceRows returns the match rows for a finding, preferring v7 `ctx`
+// attribution (via idx) and falling back to the finding's inline `ev`/`loc`
+// so older reports still expand.
+func evidenceRows(f finding, idx map[string][]evidenceRow) []evidenceRow {
+	if rows := idx[f.ID]; len(rows) > 0 {
+		return rows
+	}
+	rows := make([]evidenceRow, len(f.Evidence))
+	for i, ev := range f.Evidence {
+		rows[i] = evidenceRow{text: ev}
+		if i < len(f.Locations) {
+			rows[i].locRef = f.Locations[i]
+		}
+	}
+	return rows
+}
+
+// formatOffset renders a byte offset for display: hex (matching the hex-dump
+// convention) for binary context, decimal otherwise.
+func formatOffset(off int64, isHex bool) string {
+	if isHex {
+		return fmt.Sprintf("0x%x", off)
+	}
+	return strconv.FormatInt(off, 10)
+}
+
+// matchTokens highlights ev as source unless it is a hex dump, which is not
+// lexable as code.
+func matchTokens(ev, filename string, isHex bool) []EvidenceToken {
+	if isHex {
+		return nil
+	}
+	return highlightEvidence(ev, filename)
+}
+
 // aggregateArchiveCategories merges every file's findings into one category
 // list, deduped by trait-ID directory prefix. Used by the archive Traits tab.
 // Unlike per-file aggregation, this version attributes every aggregated trait
@@ -5425,6 +5517,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 
 	for i := range files {
 		file := &files[i]
+		ctxIdx := contextIndex(file)
 		for _, f := range file.Findings {
 			if f.Crit < 1 || f.Conf < minTraitConfidence {
 				continue
@@ -5458,17 +5551,17 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				agg.conf = f.Conf
 				agg.desc = f.Desc
 			}
-			// Walk evidence and locations in parallel. When cleave has
-			// roll-up attribution (`loc` populated), each evidence value
-			// carries its source-file hint and offset at the same index.
-			// We resolve each pair into a (filename, location, evidence)
-			// row. Container-as-source is dropped here: it's almost always
-			// a rollup, not a real source file.
-			for ei, ev := range f.Evidence {
-				var path, sha, loc string
-				if ei < len(f.Locations) {
-					loc = locationOffset(f.Locations[ei])
-					if target := resolveMatchFile(f.Locations[ei], pathToFile, idToFile); target != nil {
+			// Resolve each match into a (filename, location, evidence) row.
+			// v7 ctx rows belong to this file directly; legacy inline rows
+			// may carry a `loc` hint that back-attributes a container rollup
+			// to the inner file that produced it. Container-as-source is
+			// dropped: it's a rollup, not a real source file.
+			for _, row := range evidenceRows(f, ctxIdx) {
+				ev := row.text
+				path, sha, loc := "", "", row.offset
+				if row.locRef != "" {
+					loc = locationOffset(row.locRef)
+					if target := resolveMatchFile(row.locRef, pathToFile, idToFile); target != nil {
 						path = displayPath(target.Path)
 						sha = target.SHA256
 					}
@@ -5494,7 +5587,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 						Path:     path,
 						Filename: base,
 						Location: loc,
-						Tokens:   highlightEvidence(ev, base),
+						Tokens:   matchTokens(ev, base, row.hex),
 						Count:    1,
 					}
 					agg.order = append(agg.order, mk)
@@ -5567,18 +5660,43 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		if len(file.Findings) == 0 {
 			continue
 		}
+		ctxIdx := contextIndex(file)
+		base := extractBasename(file.Path)
 
 		// Aggregate findings by directory path (everything except last component)
 		// Key: "topLevel/dirPath", Value: best finding for that directory
 		type aggregatedFinding struct {
-			evidence map[string]bool
+			matches  map[string]*FindingMatch
 			dirPath  string
 			topLevel string
 			desc     string
+			order    []string
 			crit     int
 			conf     float64
 		}
 		aggregated := make(map[string]*aggregatedFinding)
+
+		// addMatch records one evidence row under a trait, deduping identical
+		// (text, offset) pairs and bumping the repeat count instead. Per-file
+		// findings don't carry path attribution — we're already in this file's
+		// context — but its name still picks the syntax-highlighting lexer.
+		addMatch := func(agg *aggregatedFinding, row evidenceRow) {
+			if row.text == "" {
+				return
+			}
+			mk := row.text + "\x00" + row.offset
+			if m, ok := agg.matches[mk]; ok {
+				m.Count++
+				return
+			}
+			agg.matches[mk] = &FindingMatch{
+				Evidence: row.text,
+				Location: row.offset,
+				Tokens:   matchTokens(row.text, base, row.hex),
+				Count:    1,
+			}
+			agg.order = append(agg.order, mk)
+		}
 
 		for _, f := range file.Findings {
 			// Include everything down to component (1) above the confidence
@@ -5605,33 +5723,24 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 
 			key := topLevel + "/" + dirPath
 
-			existing, ok := aggregated[key]
+			agg, ok := aggregated[key]
 			if !ok {
-				evidenceSet := make(map[string]bool)
-				for _, e := range f.Evidence {
-					evidenceSet[e] = true
-				}
-				aggregated[key] = &aggregatedFinding{
+				agg = &aggregatedFinding{
 					dirPath:  dirPath,
 					topLevel: topLevel,
 					crit:     f.Crit,
 					conf:     f.Conf,
 					desc:     f.Desc,
-					evidence: evidenceSet,
+					matches:  make(map[string]*FindingMatch),
 				}
-			} else {
-				shouldReplace := f.Crit > existing.crit ||
-					(f.Crit == existing.crit && f.Conf > existing.conf)
-
-				if shouldReplace {
-					existing.crit = f.Crit
-					existing.conf = f.Conf
-					existing.desc = f.Desc
-				}
-
-				for _, e := range f.Evidence {
-					existing.evidence[e] = true
-				}
+				aggregated[key] = agg
+			} else if f.Crit > agg.crit || (f.Crit == agg.crit && f.Conf > agg.conf) {
+				agg.crit = f.Crit
+				agg.conf = f.Conf
+				agg.desc = f.Desc
+			}
+			for _, row := range evidenceRows(f, ctxIdx) {
+				addMatch(agg, row)
 			}
 		}
 
@@ -5639,22 +5748,21 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		// criticality*confidence ones across every category.
 		scored := make([]scoredTrait, 0, len(aggregated))
 		for _, agg := range aggregated {
-			// Convert evidence map to sorted slice. Per-file findings
-			// don't carry path attribution (we're already in that file's
-			// context), so each match is an evidence-only row — but the
-			// file's own name still picks the syntax-highlighting lexer.
-			var evidence []string
-			for e := range agg.evidence {
-				evidence = append(evidence, e)
+			matches := make([]FindingMatch, 0, len(agg.matches))
+			for _, k := range agg.order {
+				matches = append(matches, *agg.matches[k])
 			}
-			sort.Strings(evidence)
-			if len(evidence) > 8 {
-				evidence = evidence[:8]
-			}
-			base := extractBasename(file.Path)
-			matches := make([]FindingMatch, 0, len(evidence))
-			for _, e := range evidence {
-				matches = append(matches, FindingMatch{Evidence: e, Tokens: highlightEvidence(e, base), Count: 1})
+			sort.SliceStable(matches, func(i, j int) bool {
+				if matches[i].Count != matches[j].Count {
+					return matches[i].Count > matches[j].Count
+				}
+				if matches[i].Evidence != matches[j].Evidence {
+					return matches[i].Evidence < matches[j].Evidence
+				}
+				return matches[i].Location < matches[j].Location
+			})
+			if len(matches) > 8 {
+				matches = matches[:8]
 			}
 
 			scored = append(scored, scoredTrait{
