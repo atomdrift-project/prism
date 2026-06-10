@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -105,7 +104,7 @@ func TestPrepareResultDataSeparatesFirstSeenAndAnalyzed(t *testing.T) {
 	raw := `{"ml":{"thresholds":[0.65,0.887],"fs":[{"id":0,"prob":0.1,"class":0}]},"raw":{"fs":[{"id":0,"sha":"` +
 		strings.Repeat("a", 64) + `","type":"pe","dp":0,"f":"K","sz":12}]}}`
 
-	data := prepareResultData(context.Background(), "sample.exe", strings.Repeat("a", 64), &storedResult{
+	data := prepareResultData("sample.exe", strings.Repeat("a", 64), &storedResult{
 		RawLitmus:      raw,
 		Classification: "benign",
 		CachedAt:       analyzed,
@@ -771,7 +770,7 @@ func TestRenderHTMLPage(t *testing.T) {
 	}
 
 	// Prepare template data
-	resultData := prepareResultData(context.Background(), "midd.zip", sha256Hex, res)
+	resultData := prepareResultData("midd.zip", sha256Hex, res)
 
 	// Log what we got
 	t.Logf("Formula: %s", resultData.Formula)
@@ -873,13 +872,10 @@ func TestPrepareResultData_SingleFileArchive(t *testing.T) {
 		t.Fatalf("marshal envelope: %v", err)
 	}
 
-	data := prepareResultData(context.Background(), "wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
+	data := prepareResultData("wrapper.zip", strings.Repeat("a", 64), &storedResult{RawLitmus: string(envelope)})
 
 	if !data.IsArchive {
-		t.Error("IsArchive should be true so the Files tab renders for the container")
-	}
-	if len(data.Files) != 2 {
-		t.Errorf("Files tree got %d entries, want 2 (container + inner)", len(data.Files))
+		t.Error("IsArchive should be true so the aggregated archive Traits tab renders")
 	}
 	if data.FileType != "ZIP" {
 		t.Errorf("FileType = %q, want ZIP (from the depth-0 container)", data.FileType)
@@ -922,7 +918,7 @@ func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
 		t.Fatalf("marshal envelope: %v", err)
 	}
 
-	data := prepareResultData(context.Background(), "bundle.zip", strings.Repeat("b", 64), &storedResult{RawLitmus: string(envelope)})
+	data := prepareResultData("bundle.zip", strings.Repeat("b", 64), &storedResult{RawLitmus: string(envelope)})
 
 	if !data.IsArchive {
 		t.Error("IsArchive should be true for multi-inner-file archive")

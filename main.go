@@ -80,7 +80,6 @@ var (
 	hopperClient       *http.Client // HTTP client for hopper API server
 	cache              *fido.TieredCache[string, storedResult]
 	feedCache          *fido.TieredCache[string, cachedFeedSnapshot]
-	contentCache       *fido.TieredCache[string, cachedContent]
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	logger             *slog.Logger
@@ -478,17 +477,30 @@ type FindingDisplay struct {
 	ConfPct int
 }
 
-// FindingMatch is one row in an expandable trait card. It carries the
-// evidence string (always) plus, when the producing file is known, the
-// inner-file path + SHA so the row can become a clickable link. For
-// archive aggregations evidence and file are populated from cleave's
-// parallel `e` / `el` arrays; for per-file findings the evidence stands
-// on its own (the file is implied by the surrounding view).
+// FindingMatch is one row in an expandable trait card, rendered as
+// "filename — location — evidence". For archive aggregations the filename
+// and location are resolved from cleave's parallel `ev` / `loc` arrays;
+// for per-file findings the evidence stands on its own (the file is
+// implied by the surrounding view) and Filename/Location stay empty.
 type FindingMatch struct {
 	Evidence string
-	Path     string
-	SHA256   string
-	Count    int
+	Path     string // full inner-archive path, shown as the row's tooltip
+	Filename string // basename of Path, the visible filename column
+	Location string // offset within the file from cleave's `loc`, e.g. "1042"
+	// Tokens is the chroma-highlighted form of Evidence, lexed by the
+	// source filename. Empty when no lexer matched; the template falls
+	// back to plain Evidence text.
+	Tokens []EvidenceToken
+	Count  int
+}
+
+// EvidenceToken is one chroma-classified slice of an evidence string. Class
+// is a chroma standard-type CSS class (always a fixed identifier from the
+// chroma library, never attacker-controlled); empty means render Text as a
+// bare text node with no wrapping span.
+type EvidenceToken struct {
+	Class string
+	Text  string
 }
 
 // CategoryGroup groups findings by top-level category.
@@ -626,26 +638,6 @@ type FileKVDisplay struct {
 	Probability    float64
 }
 
-// FileTreeEntry is a single row in the archive Files tab tree. It carries
-// just enough info to render the left-pane row (risk dot, basename, size,
-// formula, sha) and identify which detail block to swap into the right pane.
-type FileTreeEntry struct {
-	Path           string // full path within the archive (e.g. "archive.tgz!!package/index.js")
-	Display        string // path stripped of the archive prefix, used for tree building
-	Basename       string // last path segment
-	SHA256         string // 64-char lowercase hex
-	SHA256Short    string // first 8 chars, for compact display
-	Classification string // "hostile", "suspicious", "benign", or ""
-	Risk           string // critIntToString of max trait crit ("hostile"/"suspicious"/"notable"/"")
-	Formula        string // chemical formula chip
-	FileType       string // "JS", "PE", "TAR.GZ", ...
-	SizeStr        string // human-readable, e.g. "2.0 KB"
-	Size           int64
-	Probability    float64
-	Depth          int
-	IsContainer    bool // true for the archive container (depth 0)
-}
-
 // ParentArchive is one archive that contains the currently-viewed file. It
 // powers the "found in" backlinks shown on standalone child pages so users
 // can navigate up to the archive context they came from.
@@ -736,29 +728,20 @@ type resultData struct {
 	EcosystemURL string
 	Layout       string
 	BuildCommit  string
-	Files        []FileTreeEntry
-	// FileTreeJSON is the hierarchical tree of archive contents, JSON-encoded
-	// for the client-side Miller-column renderer. Empty string for non-archive
-	// pages.
-	FileTreeJSON template.JS
-	// TraitOccurrenceJSON maps each full trait ID seen in this archive to its
-	// archive-wide occurrence count and the matching archive-Traits-tab card
-	// ID. Powers the "also in N other files" pivot from a file's source-view
-	// trait sidebar back into the archive Traits tab.
-	TraitOccurrenceJSON template.JS
-	FileMetrics         []FileMetricsDisplay
-	FileSections        []FileSectionsDisplay
-	FileSymbols         []FileSymbolsDisplay
-	FileStrings         []FileStringsDisplay
-	FileFindings        []FileFindingsDisplay
-	FileKVs             []FileKVDisplay
+	FileMetrics  []FileMetricsDisplay
+	FileSections []FileSectionsDisplay
+	FileSymbols  []FileSymbolsDisplay
+	FileStrings  []FileStringsDisplay
+	FileFindings []FileFindingsDisplay
+	FileKVs      []FileKVDisplay
 	// Parents lists archives that contain this file. Populated only on
 	// standalone child pages (non-archive views) so the user can navigate
 	// up to the archive context the file came from.
 	Parents []ParentArchive
 	// ArchiveCategories is the aggregated trait categories across every
 	// file in an archive (deduped by trait ID). The archive Traits tab
-	// shows this summary; per-file breakdowns live behind the Files tab.
+	// shows this summary; expanding a trait reveals its per-file
+	// filename — location — evidence rows.
 	ArchiveCategories []CategoryGroup
 	// ArchiveTraitTotal / ArchiveTraitShown mirror the per-file counts for
 	// the aggregated archive Traits tab: total distinct traits vs. how many
@@ -780,51 +763,10 @@ type resultData struct {
 	// percentage shown on the litmus badge (from ml.conf, falling back to
 	// levelConfidence for cached envelopes).
 	LevelConfidence int
-	TotalFiles      int
-	ShownFiles      int
 	Probability     float64
 	IsArchive       bool
-	IsText          bool // file_type indicates a text/script file — show Contents tab instead of Strings, hide Metadata
 	LimitedInfo     bool
 	RescanAllowed   bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
-	// Contents holds the rendered text body of a text file, broken into
-	// annotated lines. Empty for non-text files and archives.
-	Contents []ContentLine
-	// ContentTooLarge is set when the file is text but exceeds
-	// maxContentBytes; the template shows a download link instead.
-	ContentTooLarge bool
-	// ContentSizeStr is the human-readable size of an oversized content,
-	// shown alongside the "too large" message.
-	ContentSizeStr string
-}
-
-// ContentLine is one rendered line of a text file's body. Risk and Traits
-// power the per-line crit dots and hover tooltips on the Contents tab.
-// Tokens carries chroma syntax-highlighted segments when a lexer matched
-// the file; the client constructs DOM nodes from these (textContent only,
-// no innerHTML) so there is no path for attacker-controlled markup.
-type ContentLine struct {
-	Text string
-	// Tokens are the chroma-classified spans for this line. Empty when no
-	// lexer matched the file (caller falls back to plain Text).
-	Tokens []ContentToken `json:"Tokens,omitempty"`
-	// Risk is "hostile"/"suspicious"/"notable"/"baseline"/"component"/"".
-	// Computed from the highest-crit finding whose evidence appears on
-	// this line.
-	Risk string
-	// Traits is the dedup'd list of finding IDs whose evidence appears
-	// on this line, used for the hover tooltip.
-	Traits []string
-	Number int
-}
-
-// ContentToken is one chroma-classified slice of a source line. Class is
-// the chroma standard-type CSS class (always a fixed identifier from the
-// chroma library, never attacker-controlled); empty means render Text as
-// a bare text node with no wrapping span.
-type ContentToken struct {
-	Class string `json:"c,omitempty"`
-	Text  string `json:"t"`
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -1394,7 +1336,6 @@ func main() {
 		logger.Info("cache disabled via --no-cache flag, using null stores")
 		cache = openNullCache[storedResult]("result cache")
 		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
-		contentCache = openNullCache[cachedContent]("content cache")
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 	} else {
@@ -1420,7 +1361,6 @@ func main() {
 		// snapshot is cheap to rebuild after a restart. The per-SHA caches
 		// below stay on disk: their keys are bounded by real data.
 		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
-		contentCache = openLocalFSCache[cachedContent]("prism-content", cacheDir, "content cache")
 		reportCache = openLocalFSCache[cachedReport]("prism-report", cacheDir, "report cache")
 		parentArchiveCache = openLocalFSCache[cachedParents]("prism-parents", cacheDir, "parent-archive cache")
 	}
@@ -1543,11 +1483,6 @@ func main() {
 				logger.Error("failed to close fido feed cache", "error", err)
 			}
 		}
-		if contentCache != nil {
-			if err := contentCache.Close(); err != nil {
-				logger.Error("failed to close fido content cache", "error", err)
-			}
-		}
 		if reportCache != nil {
 			if err := reportCache.Close(); err != nil {
 				logger.Error("failed to close fido report cache", "error", err)
@@ -1633,7 +1568,6 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
-	mux.HandleFunc("GET /file/{sha256}/contents", handleFileContents)
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
 	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
@@ -3152,7 +3086,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		"cache_hit", cacheHit,
 		"duration_ms", time.Since(requestStart).Milliseconds(),
 	)
-	data := prepareResultData(r.Context(), res.Filename, sha, &res)
+	data := prepareResultData(res.Filename, sha, &res)
 	data.Nonce = nonceFor(r)
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
@@ -3312,90 +3246,9 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 	return out
 }
 
-// Content fetch budgets. hopper-api now resolves archive members on its
-// side (extracts inner files from parent archives), so prism just fetches
-// what hopper returns and caches that — never the parent.
-const (
-	maxContentBytes     = 256 * 1024       // displayable inline content
-	maxContentLines     = 4000             // line cap to keep the DOM tractable
-	contentFetchTimeout = 10 * time.Second // per-request bound; the upstream client's 5-min default is too lenient for the page-render path
-	parentLookupTimeout = 2 * time.Second  // budget for the N+1 SampleBySHA256 lookups behind ParentArchives
-)
-
-// cachedContent wraps file bytes for fido's JSON-encoded localfs store.
-// Body is base64-encoded by the JSON layer.
-type cachedContent struct {
-	FetchedAt time.Time
-	Body      []byte
-}
-
-// fetchFileBytes returns up to maxContentBytes for a sample SHA, going
-// through the fido cache. hopper-api handles both top-level samples and
-// archive members behind one URL; we treat them identically here.
-//
-// Errors degrade gracefully: callers in the page-render path log and fall
-// back to a "no contents" message rather than failing the whole page.
-// Recognisable error substrings: "sample not found", "too large".
-func fetchFileBytes(ctx context.Context, sha string) ([]byte, error) {
-	c, err := contentCache.Fetch(ctx, sha, func(lctx context.Context) (cachedContent, error) {
-		body, err := downloadFromHopperAPI(lctx, sha, maxContentBytes)
-		if err != nil {
-			return cachedContent{}, err
-		}
-		return cachedContent{Body: body, FetchedAt: time.Now().UTC()}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return c.Body, nil
-}
-
-// downloadFromHopperAPI streams up to maxBytes of the sample identified by
-// sha from the hopper-api file endpoint. The endpoint resolves archive
-// members on its side, so we don't need to know whether sha is a top-level
-// sample or an inner file.
-func downloadFromHopperAPI(ctx context.Context, sha string, maxBytes int64) ([]byte, error) {
-	if !apiBreaker.allow() {
-		return nil, fmt.Errorf("hopper-api download: %w", errBreakerOpen)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hopperFileURL(sha), http.NoBody)
-	if err != nil {
-		// Local request-build error: hopper was never contacted, so this is
-		// not a dependency failure and must not move the breaker.
-		return nil, fmt.Errorf("prepare request: %w", err)
-	}
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
-	if err != nil {
-		apiBreaker.failure()
-		return nil, fmt.Errorf("hopper-api request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort close on a response body we've already drained
-	if resp.StatusCode >= http.StatusInternalServerError {
-		// 5xx means hopper-api itself is unhealthy; count it against the breaker.
-		apiBreaker.failure()
-		return nil, fmt.Errorf("hopper-api status %d", resp.StatusCode)
-	}
-	// Any non-5xx response (incl. 404/413) proves hopper-api is reachable and
-	// responsive, so the breaker recovers; the remaining checks are business-level.
-	apiBreaker.success()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("sample bytes not found: status %d", resp.StatusCode)
-	}
-	if resp.StatusCode == http.StatusRequestEntityTooLarge {
-		return nil, fmt.Errorf("file too large: status %d", resp.StatusCode)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("hopper-api status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	if int64(len(body)) > maxBytes {
-		return nil, fmt.Errorf("file too large (>%d bytes)", maxBytes)
-	}
-	return body, nil
-}
+// parentLookupTimeout bounds the N+1 SampleBySHA256 lookups behind
+// ParentArchives so a slow hopper-db degrades the backlinks, not the page.
+const parentLookupTimeout = 2 * time.Second
 
 // hopperCacheTTL is how long a cached result is served without consulting
 // hopper. Older entries are still served immediately; the refresh happens
@@ -3494,8 +3347,8 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	if db == nil {
 		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
 	}
-	if !dbBreaker.allow() {
-		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", errBreakerOpen)
+	if err := dbBreaker.allow(); err != nil {
+		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
 	}
 	sample, err := db.SampleBySHA256(ctx, sha)
 	if err != nil {
@@ -3859,8 +3712,8 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		return
 	}
 
-	if !apiBreaker.allow() {
-		reqLogger.Warn("hopper download skipped: circuit breaker open")
+	if err := apiBreaker.allow(); err != nil {
+		reqLogger.Warn("hopper download skipped", "error", err)
 		w.Header().Set("Retry-After", "10")
 		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
 		return
@@ -3945,17 +3798,6 @@ func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code}) //nolint:errcheck,errchkjson // payload is a map[string]string (JSON-safe); response already failed
 }
 
-// writeJSON writes a successful JSON response with a stable cache header.
-// The cache is private + short-lived because the body depends on the
-// underlying SHA's analysis, which is itself immutable for that SHA.
-func writeJSON(w http.ResponseWriter, body any, logger *slog.Logger) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "private, max-age=300")
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		logger.Debug("contents: encode failed", "error", err)
-	}
-}
-
 // handleRescan accepts any user's request to re-queue a sample for analysis,
 // gated only by a valid CSRF token (so the request demonstrably came from a
 // recently-rendered page) and a server-side cooldown enforced atomically in
@@ -4002,95 +3844,6 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 	reqLogger.Info("rescan queued")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"}) //nolint:errcheck,errchkjson // map[string]string is JSON-safe
-}
-
-// handleFileContents returns rendered source-line JSON for a file SHA. Used
-// by the archive Files tab's inline source viewer. All responses (success
-// and error) carry a JSON body so the client can parse uniformly.
-func handleFileContents(w http.ResponseWriter, r *http.Request) {
-	sha := strings.ToLower(r.PathValue("sha256"))
-	reqLogger := logger.With("sha256", sha, "client_ip", clientIP(r))
-	if !validSHA256(sha) {
-		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
-		return
-	}
-	_, res, err := lookupResult(r.Context(), sha, reqLogger)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeJSONError(w, http.StatusNotFound, "not_found", "result not found")
-			return
-		}
-		reqLogger.Warn("contents lookup failed", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-
-	// Parse the cleave report so we can read findings for the requested SHA.
-	var fullResp litmusFullResponse
-	if err := json.Unmarshal([]byte(res.RawLitmus), &fullResp); err != nil {
-		writeJSONError(w, http.StatusUnprocessableEntity, "no_analysis", "no analysis available for this file")
-		return
-	}
-	report := &cleaveReport{}
-	if len(fullResp.Raw) > 0 {
-		if err := json.Unmarshal(fullResp.Raw, report); err != nil {
-			reqLogger.Debug("contents: failed to parse cleave data", "error", err)
-		}
-	}
-
-	var file *cleaveFile
-	for i := range report.Files {
-		if strings.EqualFold(report.Files[i].SHA256, sha) {
-			file = &report.Files[i]
-			break
-		}
-	}
-	if file == nil && len(report.Files) > 0 {
-		// Fallback to the depth-0 entry: this SHA was looked up directly
-		// (standalone-file route), and the report has just one entry.
-		file = &report.Files[0]
-	}
-	if file == nil {
-		writeJSONError(w, http.StatusUnprocessableEntity, "no_file", "no file in report")
-		return
-	}
-
-	if !isTextFileType(file.FileType) {
-		writeJSON(w, map[string]any{
-			"sha":      sha,
-			"fileType": file.FileType,
-			"isText":   false,
-		}, reqLogger)
-		return
-	}
-
-	fetchCtx, cancel := context.WithTimeout(r.Context(), contentFetchTimeout)
-	body, err := fetchFileBytes(fetchCtx, sha)
-	cancel()
-	if err != nil {
-		if strings.Contains(err.Error(), "too large") {
-			writeJSON(w, map[string]any{
-				"sha":      sha,
-				"fileType": file.FileType,
-				"isText":   true,
-				"tooLarge": true,
-				"sizeStr":  formatBytes(file.Size),
-			}, reqLogger)
-			return
-		}
-		reqLogger.Debug("contents fetch failed", "error", err)
-		writeJSONError(w, http.StatusBadGateway, "fetch_failed", "couldn't fetch file body")
-		return
-	}
-
-	lines := renderTextContent(body, file.Findings, file.Path)
-	writeJSON(w, map[string]any{
-		"sha":       sha,
-		"fileType":  file.FileType,
-		"isText":    true,
-		"lineCount": len(lines),
-		"lines":     lines,
-	}, reqLogger)
 }
 
 // hopperDSNHost extracts the host:port from a postgres DSN for logging.
@@ -4909,8 +4662,8 @@ func postUploadWithRetry(ctx context.Context, target string, buf []byte, token s
 // postOnce performs a single POST /api/upload with the given Bearer token.
 // Body is read from buf so retries can replay it.
 func postOnce(ctx context.Context, target string, buf []byte, token string) (*http.Response, error) {
-	if !apiBreaker.allow() {
-		return nil, fmt.Errorf("hopper-api upload: %w", errBreakerOpen)
+	if err := apiBreaker.allow(); err != nil {
+		return nil, fmt.Errorf("hopper-api upload: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
 	if err != nil {
@@ -4956,20 +4709,18 @@ func readUploadResponse(resp *http.Response, log *slog.Logger) (*hopperUploadRes
 // prepareResultData converts raw cleave output to template data.
 //
 //nolint:gocognit,maintidx // inherently complex data assembly
-func prepareResultData(ctx context.Context, filename, sha256Hex string, res *storedResult) resultData {
+func prepareResultData(filename, sha256Hex string, res *storedResult) resultData {
 	data := resultData{
-		Filename:            html.EscapeString(filename),
-		SHA256:              sha256Hex,
-		SHA256Short:         sha256Hex[:12] + "...",
-		FileType:            "UNKNOWN",
-		RiskLevel:           "",
-		RiskLabel:           "",
-		Size:                "0 B",
-		FindingCount:        "0",
-		Duration:            "0ms",
-		MoleculeJSON:        template.JS("{}"),
-		FileTreeJSON:        template.JS("null"),
-		TraitOccurrenceJSON: template.JS("{}"),
+		Filename:     html.EscapeString(filename),
+		SHA256:       sha256Hex,
+		SHA256Short:  sha256Hex[:12] + "...",
+		FileType:     "UNKNOWN",
+		RiskLevel:    "",
+		RiskLabel:    "",
+		Size:         "0 B",
+		FindingCount: "0",
+		Duration:     "0ms",
+		MoleculeJSON: template.JS("{}"),
 	}
 
 	if sha256Hex != "" && len(sha256Hex) >= 12 {
@@ -5208,11 +4959,9 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	// For large archives, truncate to the top 100 most critical files.
 	// The depth-0 container is always first (guaranteed by the sort above).
 	const maxArchiveFiles = 100
-	data.TotalFiles = len(report.Files)
 	if len(report.Files) > maxArchiveFiles {
 		report.Files = report.Files[:maxArchiveFiles]
 	}
-	data.ShownFiles = len(report.Files)
 
 	// Build structured data for table display
 	data.FileFindings = buildStructuredFindings(report.Files)
@@ -5221,46 +4970,12 @@ func prepareResultData(ctx context.Context, filename, sha256Hex string, res *sto
 	data.FileSections = buildStructuredSections(report.Files)
 	data.FileMetrics = buildStructuredMetrics(report.Files)
 	data.FileKVs = buildStructuredKV(report.Files)
-	data.Files = buildFileTree(report.Files, filename)
-	if root := buildFileTreeNodes(report.Files); root != nil {
-		if treeJSON, err := json.Marshal(root); err == nil {
-			data.FileTreeJSON = template.JS(treeJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
-		}
-	}
-	if occ := buildTraitOccurrenceMap(report.Files); len(occ) > 0 {
-		if occJSON, err := json.Marshal(occ); err == nil {
-			data.TraitOccurrenceJSON = template.JS(occJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
-		}
-	}
 	data.ArchiveCategories, data.ArchiveTraitTotal, data.ArchiveTraitShown = aggregateArchiveCategories(report.Files)
 
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
-	// should render the file-tree view.
+	// should render the aggregated archive Traits tab.
 	data.IsArchive = len(report.Files) > 1
-
-	// Contents tab: for non-archive text files, fetch the body and render
-	// it with per-line trait annotations. fido caches the bytes by SHA so
-	// repeat views (and parent-archive recursion for inner children) are
-	// cheap. The fetch is bounded so a slow or down hopper-api degrades
-	// gracefully — the page renders without contents instead of hanging.
-	if !data.IsArchive && len(report.Files) > 0 && isTextFileType(report.Files[0].FileType) {
-		data.IsText = true
-		fetchCtx, cancel := context.WithTimeout(ctx, contentFetchTimeout)
-		body, err := fetchFileBytes(fetchCtx, sha256Hex)
-		cancel()
-		switch {
-		case err == nil:
-			data.Contents = renderTextContent(body, report.Files[0].Findings, filename)
-		case strings.Contains(err.Error(), "too large"):
-			data.ContentTooLarge = true
-			// data.SizeBytes already prefers hopper's authoritative size;
-			// the report's entry-level size is 0 on compacted/pre-v7 roots.
-			data.ContentSizeStr = formatBytes(data.SizeBytes)
-		default:
-			logger.Debug("contents fetch failed", "sha256", sha256Hex, "error", err)
-		}
-	}
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
@@ -5427,60 +5142,6 @@ func parseStringTupleValue(raw json.RawMessage) []string {
 	return []string{val}
 }
 
-// traitOccurrence records archive-wide stats for a single full trait ID:
-// how many files it fired in, and the archive-Traits-tab card it maps to so
-// the source-view sidebar can pivot back into that card.
-type traitOccurrence struct {
-	Category  string `json:"c"`
-	ArchiveID string `json:"d"`
-	Count     int    `json:"n"`
-}
-
-// buildTraitOccurrenceMap counts the distinct files where each full trait ID
-// fires across the archive, keyed by the full ID. Includes everything down to
-// component (Crit 1) so the source-view sidebar can pivot into any card the
-// archive Traits tab may render (matches aggregateArchiveCategories).
-func buildTraitOccurrenceMap(files []cleaveFile) map[string]traitOccurrence {
-	perTraitFiles := make(map[string]map[string]struct{})
-	perTraitArchive := make(map[string]traitOccurrence)
-	for i := range files {
-		f := &files[i]
-		for _, t := range f.Findings {
-			if t.Crit < 1 || t.Conf < minTraitConfidence {
-				continue
-			}
-			parts := strings.Split(t.ID, "/")
-			if len(parts) < 2 {
-				continue
-			}
-			cat := parts[0]
-			var dir string
-			if len(parts) > 2 {
-				dir = strings.Join(parts[1:len(parts)-1], "/")
-			} else {
-				dir = parts[1]
-			}
-			if perTraitFiles[t.ID] == nil {
-				perTraitFiles[t.ID] = make(map[string]struct{})
-			}
-			perTraitFiles[t.ID][f.SHA256] = struct{}{}
-			perTraitArchive[t.ID] = traitOccurrence{Category: cat, ArchiveID: dir}
-		}
-	}
-	out := make(map[string]traitOccurrence, len(perTraitFiles))
-	for id, set := range perTraitFiles {
-		a := perTraitArchive[id]
-		a.Count = len(set)
-		out[id] = a
-	}
-	return out
-}
-
-// aggregateArchiveCategories merges every file's findings into one category
-// list, deduped by trait-ID directory prefix. Used by the archive Traits tab.
-// Unlike per-file aggregation, this version attributes every aggregated trait
-// back to the files that contributed, so the UI can expand a trait to show
-// "fired in N files" and link to each.
 // canonicalCategoryOrder is the preferred display order for top-level
 // trait categories across the result page (both archive aggregation and
 // per-file views). Categories not listed here render after all known
@@ -5659,6 +5320,68 @@ func parseLocationID(location string) (int, bool) {
 	return id, true
 }
 
+// chromaStylesheet is the chroma syntax-highlighting CSS. Built once at
+// startup so every result page can inline it without re-running the
+// formatter.
+var chromaStylesheet = func() template.CSS {
+	s := styles.Get("github")
+	if s == nil {
+		s = styles.Fallback
+	}
+	var sb strings.Builder
+	formatter := chromahtml.New(chromahtml.WithClasses(true))
+	if err := formatter.WriteCSS(&sb, s); err != nil {
+		return ""
+	}
+	return template.CSS(sb.String()) //nolint:gosec // chroma CSS is library output, no user input
+}()
+
+// highlightEvidence renders an evidence fragment as chroma tokens, picking
+// the lexer from the source filename. Returns nil when the inputs are empty
+// or no lexer matches; the template then falls back to plain text.
+func highlightEvidence(evidence, filename string) []EvidenceToken {
+	if evidence == "" || filename == "" {
+		return nil
+	}
+	lexer := lexers.Match(filename)
+	if lexer == nil {
+		return nil
+	}
+	lexer = chroma.Coalesce(lexer)
+	iter, err := lexer.Tokenise(nil, evidence)
+	if err != nil {
+		return nil
+	}
+	var out []EvidenceToken
+	for tok := iter(); tok != chroma.EOF; tok = iter() {
+		out = append(out, EvidenceToken{Class: chroma.StandardTypes[tok.Type], Text: tok.Value})
+	}
+	return out
+}
+
+// locationOffset extracts the within-file position from a `loc` entry: the
+// "<offset>" of the v7 "<file-id>:<offset>" form or of the legacy
+// "offset:<n>" form. Returns "" for entries that carry no position (bare
+// file ids and "archive:…" member paths).
+func locationOffset(location string) string {
+	if after, ok := strings.CutPrefix(location, "offset:"); ok {
+		return after
+	}
+	if _, ok := parseLocationID(location); !ok {
+		return ""
+	}
+	if i := strings.IndexByte(location, ':'); i >= 0 {
+		return location[i+1:]
+	}
+	return ""
+}
+
+// aggregateArchiveCategories merges every file's findings into one category
+// list, deduped by trait-ID directory prefix. Used by the archive Traits tab.
+// Unlike per-file aggregation, this version attributes every aggregated trait
+// back to the files that contributed, so the UI can expand a trait into
+// "filename — location — evidence" rows.
+//
 //nolint:gocognit // inherently complex: trait bucketing plus per-evidence file back-attribution
 func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, total, shown int) {
 	categoryNames := map[string]string{
@@ -5736,17 +5459,15 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				agg.desc = f.Desc
 			}
 			// Walk evidence and locations in parallel. When cleave has
-			// roll-up attribution (`el` populated), each evidence value
-			// carries its source-file hint at the same index. We resolve
-			// each pair into a (evidence, file?) match. Container-as-source
-			// is dropped here: it's almost always a rollup that we can't
-			// navigate to, so it would render as a dead link.
+			// roll-up attribution (`loc` populated), each evidence value
+			// carries its source-file hint and offset at the same index.
+			// We resolve each pair into a (filename, location, evidence)
+			// row. Container-as-source is dropped here: it's almost always
+			// a rollup, not a real source file.
 			for ei, ev := range f.Evidence {
-				var (
-					path string
-					sha  string
-				)
+				var path, sha, loc string
 				if ei < len(f.Locations) {
+					loc = locationOffset(f.Locations[ei])
 					if target := resolveMatchFile(f.Locations[ei], pathToFile, idToFile); target != nil {
 						path = displayPath(target.Path)
 						sha = target.SHA256
@@ -5759,20 +5480,21 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 					sha = file.SHA256
 				}
 				if containerSHAs[sha] {
-					// Drop the archive container as a source — the file
-					// tree skips depth-0 entries so the link wouldn't
-					// resolve. Keep the evidence text; the row just
-					// won't be clickable.
-					path, sha = "", ""
+					// Drop the archive container as a source. Keep the
+					// evidence text; the row just has no filename column.
+					path, loc = "", ""
 				}
-				mk := ev + "\x00" + sha
+				mk := ev + "\x00" + path + "\x00" + loc
 				if m, ok := agg.matches[mk]; ok {
 					m.Count++
 				} else {
+					base := extractBasename(path)
 					agg.matches[mk] = &FindingMatch{
 						Evidence: ev,
 						Path:     path,
-						SHA256:   sha,
+						Filename: base,
+						Location: loc,
+						Tokens:   highlightEvidence(ev, base),
 						Count:    1,
 					}
 					agg.order = append(agg.order, mk)
@@ -5794,15 +5516,18 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 			if matches[i].Count != matches[j].Count {
 				return matches[i].Count > matches[j].Count
 			}
-			// Matches with a file link sort ahead of bare evidence so
-			// clickable rows are visually grouped at the top.
-			if (matches[i].SHA256 != "") != (matches[j].SHA256 != "") {
-				return matches[i].SHA256 != ""
+			// Matches with file attribution sort ahead of bare evidence
+			// so fully-described rows are visually grouped at the top.
+			if (matches[i].Path != "") != (matches[j].Path != "") {
+				return matches[i].Path != ""
 			}
 			if matches[i].Evidence != matches[j].Evidence {
 				return matches[i].Evidence < matches[j].Evidence
 			}
-			return matches[i].Path < matches[j].Path
+			if matches[i].Path != matches[j].Path {
+				return matches[i].Path < matches[j].Path
+			}
+			return matches[i].Location < matches[j].Location
 		})
 		const maxMatches = 24
 		if len(matches) > maxMatches {
@@ -5916,7 +5641,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 		for _, agg := range aggregated {
 			// Convert evidence map to sorted slice. Per-file findings
 			// don't carry path attribution (we're already in that file's
-			// context), so each match is an evidence-only row.
+			// context), so each match is an evidence-only row — but the
+			// file's own name still picks the syntax-highlighting lexer.
 			var evidence []string
 			for e := range agg.evidence {
 				evidence = append(evidence, e)
@@ -5925,9 +5651,10 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			if len(evidence) > 8 {
 				evidence = evidence[:8]
 			}
+			base := extractBasename(file.Path)
 			matches := make([]FindingMatch, 0, len(evidence))
 			for _, e := range evidence {
-				matches = append(matches, FindingMatch{Evidence: e, Count: 1})
+				matches = append(matches, FindingMatch{Evidence: e, Tokens: highlightEvidence(e, base), Count: 1})
 			}
 
 			scored = append(scored, scoredTrait{
@@ -6364,163 +6091,6 @@ func timeAgo(d time.Duration) string {
 	}
 }
 
-// chromaCSSOnce-generated chroma stylesheet. Built once at startup so every
-// result page can inline it without re-running the formatter.
-var chromaStylesheet = func() template.CSS {
-	s := styles.Get("github")
-	if s == nil {
-		s = styles.Fallback
-	}
-	var sb strings.Builder
-	formatter := chromahtml.New(chromahtml.WithClasses(true))
-	if err := formatter.WriteCSS(&sb, s); err != nil {
-		return ""
-	}
-	return template.CSS(sb.String()) //nolint:gosec // chroma CSS is library output, no user input
-}()
-
-// highlightLines tokenises body with the lexer matching filename and returns
-// per-line chroma tokens. Returns nil if no lexer matches; callers then
-// fall back to plain text rendering. The client renders each token as a
-// span with the Class as its className and Text as textContent — no HTML
-// is constructed server-side, so there is no innerHTML attack surface.
-func highlightLines(body, filename string) [][]ContentToken {
-	if filename == "" || body == "" {
-		return nil
-	}
-	lexer := lexers.Match(filename)
-	if lexer == nil {
-		return nil
-	}
-	lexer = chroma.Coalesce(lexer)
-	iter, err := lexer.Tokenise(nil, body)
-	if err != nil {
-		return nil
-	}
-	var lines [][]ContentToken
-	var current []ContentToken
-	emit := func() {
-		lines = append(lines, current)
-		current = nil
-	}
-	for tok := iter(); tok != chroma.EOF; tok = iter() {
-		class := chroma.StandardTypes[tok.Type]
-		// Walk the token's value, splitting on '\n'. A newline ends the
-		// current line buffer; subsequent characters land in the next line.
-		parts := strings.Split(tok.Value, "\n")
-		for j, part := range parts {
-			if j > 0 {
-				emit()
-			}
-			if part == "" {
-				continue
-			}
-			current = append(current, ContentToken{Class: class, Text: part})
-		}
-	}
-	emit() // final line, even if empty
-	return lines
-}
-
-// renderTextContent splits body into lines and tags each with the highest-
-// crit finding whose evidence appears on that line. Multiple matching
-// findings contribute their IDs to the line's hover tooltip; the dot color
-// reflects only the worst hit so the visual stays readable.
-//
-// Evidence matching is plain substring search — cleave's evidence strings
-// are usually exact line fragments, so this catches most cases without
-// pulling in regex. Empty evidence strings are skipped to avoid matching
-// every line.
-//
-// The output is capped at maxContentLines so a pathological 256KB file of
-// 1-byte lines doesn't blow up the rendered DOM. A truncation marker tells
-// the user the body was cut off.
-//
-// When filename matches a chroma lexer, each ContentLine also carries
-// pre-rendered syntax-highlighted HTML in ContentLine.HTML. Callers should
-// prefer HTML when set and fall back to Text.
-func renderTextContent(body []byte, findings []finding, filename string) []ContentLine {
-	rawLines := strings.Split(string(body), "\n")
-	truncated := false
-	if len(rawLines) > maxContentLines {
-		rawLines = rawLines[:maxContentLines]
-		truncated = true
-	}
-	highlights := highlightLines(strings.Join(rawLines, "\n"), filename)
-	out := make([]ContentLine, 0, len(rawLines)+1)
-	for i, line := range rawLines {
-		// Strip trailing CR so Windows-style CRLF files don't render
-		// stray glyphs and substring matching against evidence (which
-		// usually doesn't carry CR) still works.
-		line = strings.TrimRight(line, "\r")
-		cl := ContentLine{Number: i + 1, Text: line}
-		if i < len(highlights) {
-			cl.Tokens = highlights[i]
-		}
-		if line == "" {
-			out = append(out, cl)
-			continue
-		}
-		bestCrit := 0
-		seen := make(map[string]bool)
-		for _, f := range findings {
-			matched := false
-			for _, e := range f.Evidence {
-				if e == "" {
-					continue
-				}
-				if strings.Contains(line, e) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-			if f.Crit > bestCrit {
-				bestCrit = f.Crit
-			}
-			if !seen[f.ID] {
-				seen[f.ID] = true
-				cl.Traits = append(cl.Traits, f.ID)
-			}
-		}
-		if bestCrit > 0 {
-			cl.Risk = critIntToString(bestCrit)
-		}
-		out = append(out, cl)
-	}
-	if truncated {
-		out = append(out, ContentLine{
-			Number: maxContentLines + 1,
-			Text:   fmt.Sprintf("… file truncated to first %d lines; download to see the rest", maxContentLines),
-		})
-	}
-	return out
-}
-
-// textFileTypes is the set of cleave file_type values whose content is
-// displayable as plain text. The Contents tab shows the file body for these
-// types; the Metadata tab is hidden because most don't carry useful kv yet.
-var textFileTypes = map[string]bool{
-	"javascript": true, "python": true, "ruby": true, "perl": true,
-	"php": true, "go": true, "rust": true, "c": true, "cpp": true,
-	"csharp": true, "java": true, "kotlin": true, "scala": true,
-	"swift": true, "elixir": true, "shell": true, "powershell": true,
-	"lua": true, "r": true, "haskell": true, "ocaml": true, "clojure": true,
-	"erlang": true, "dart": true, "objective-c": true, "groovy": true,
-	"makefile": true, "dockerfile": true, "cmake": true, "yaml": true,
-	"toml": true, "ini": true, "xml": true, "html": true, "css": true,
-	"text": true, "markdown": true, "package.json": true, "pkg-info": true,
-	"json": true, "sql": true, "vue": true, "svelte": true, "typescript": true,
-}
-
-// isTextFileType reports whether cleave's file_type names a body the
-// Contents tab can render directly.
-func isTextFileType(t string) bool {
-	return textFileTypes[strings.ToLower(strings.TrimSpace(t))]
-}
-
 // extractBasename extracts the filename from a path, handling archive paths.
 func extractBasename(path string) string {
 	if strings.Contains(path, "!!") {
@@ -6541,212 +6111,6 @@ func displayPath(p string) string {
 		return p[i+2:]
 	}
 	return p
-}
-
-// fileTreeNode is a single node in the hierarchical archive-contents tree
-// emitted to the client. Compact JSON tags keep page weight low for big
-// archives.
-// Fields are ordered for fieldalignment: strings (2-word pointer-bearing
-// headers) first, then the slice (3-word header — placed last among
-// pointer fields so its trailing len/cap sit outside the GC scan area),
-// then non-pointer fields. Within the strings, shared → file-only → dir-only.
-type fileTreeNode struct {
-	Name string `json:"n"`
-	Path string `json:"p"`
-	// File-only string fields.
-	SHA      string `json:"sha,omitempty"`
-	FileType string `json:"ty,omitempty"`
-	SizeStr  string `json:"sz,omitempty"`
-	Risk     string `json:"r,omitempty"`
-	// Dir-only string field, rolled up from descendants.
-	MaxRisk  string          `json:"mr,omitempty"`
-	Children []*fileTreeNode `json:"c,omitempty"`
-	// Non-pointer fields last (no GC scan past this point).
-	Prob      float64 `json:"pr,omitempty"` // file-only
-	MaxProb   float64 `json:"mp,omitempty"` // dir-only, rolled up
-	FileCount int     `json:"fc,omitempty"` // dir-only, rolled up
-	Dir       bool    `json:"d,omitempty"`
-}
-
-// buildFileTreeNodes constructs a directory tree from the archive's files,
-// rolls up severity/probability for each directory, and collapses long
-// single-child directory chains so a path like
-// "github.com/benedict-erwin/gqm@v0.1.2/internal/foo.go" renders as one
-// breadcrumb pill rather than three wasted Miller columns.
-func buildFileTreeNodes(files []cleaveFile) *fileTreeNode {
-	root := &fileTreeNode{Dir: true}
-	for i := range files {
-		f := &files[i]
-		if f.Depth == 0 {
-			continue // skip archive container itself
-		}
-		path := displayPath(f.Path)
-		path = strings.TrimPrefix(path, "./")
-		path = strings.TrimPrefix(path, "/")
-		if path == "" {
-			continue
-		}
-		segments := strings.Split(path, "/")
-		cur := root
-		for si, seg := range segments {
-			isLeaf := si == len(segments)-1
-			child := findChild(cur, seg)
-			if child == nil {
-				child = &fileTreeNode{
-					Name: seg,
-					Path: strings.Join(segments[:si+1], "/"),
-					Dir:  !isLeaf,
-				}
-				cur.Children = append(cur.Children, child)
-			}
-			if isLeaf {
-				child.Dir = false
-				child.SHA = f.SHA256
-				child.FileType = strings.ToUpper(f.FileType)
-				child.SizeStr = formatBytes(f.Size)
-				child.Risk = critIntToString(maxCritInFile(f))
-				child.Prob = f.Probability
-				if child.Risk == "" && f.Classification != "" && f.Classification != "benign" {
-					child.Risk = f.Classification
-				}
-			}
-			cur = child
-		}
-	}
-	rollupTree(root)
-	collapseChains(root)
-	sortTree(root)
-	return root
-}
-
-// findChild locates an immediate child of n by name, or returns nil.
-func findChild(n *fileTreeNode, name string) *fileTreeNode {
-	for _, c := range n.Children {
-		if c.Name == name {
-			return c
-		}
-	}
-	return nil
-}
-
-// rollupTree fills MaxRisk / MaxProb / FileCount on every directory by
-// recursing into descendants.
-func rollupTree(n *fileTreeNode) {
-	if !n.Dir {
-		return
-	}
-	rank := map[string]int{"hostile": 3, "suspicious": 2, "notable": 1}
-	worstRank := 0
-	var maxProb float64
-	count := 0
-	for _, c := range n.Children {
-		rollupTree(c)
-		if c.Dir {
-			count += c.FileCount
-			if r := rank[c.MaxRisk]; r > worstRank {
-				worstRank = r
-				n.MaxRisk = c.MaxRisk
-			}
-			if c.MaxProb > maxProb {
-				maxProb = c.MaxProb
-			}
-		} else {
-			count++
-			if r := rank[c.Risk]; r > worstRank {
-				worstRank = r
-				n.MaxRisk = c.Risk
-			}
-			if c.Prob > maxProb {
-				maxProb = c.Prob
-			}
-		}
-	}
-	n.FileCount = count
-	n.MaxProb = maxProb
-}
-
-// collapseChains squashes runs of single-child directories so that
-// `a -> b -> c -> leaves` becomes one node named `a/b/c` whose children are
-// the leaves. Cosmetic only — Path stays intact, so #file=<sha> still works.
-func collapseChains(n *fileTreeNode) {
-	if !n.Dir {
-		return
-	}
-	for len(n.Children) == 1 && n.Children[0].Dir {
-		only := n.Children[0]
-		if n.Name == "" {
-			n.Name = only.Name
-		} else {
-			n.Name = n.Name + "/" + only.Name
-		}
-		n.Path = only.Path
-		n.Children = only.Children
-	}
-	for _, c := range n.Children {
-		collapseChains(c)
-	}
-}
-
-// sortTree orders directory contents: dirs first (alpha), then files sorted
-// by Probability desc so risky ones lead.
-func sortTree(n *fileTreeNode) {
-	if !n.Dir {
-		return
-	}
-	sort.SliceStable(n.Children, func(i, j int) bool {
-		a, b := n.Children[i], n.Children[j]
-		if a.Dir != b.Dir {
-			return a.Dir
-		}
-		if a.Dir {
-			return a.Name < b.Name
-		}
-		if a.Prob != b.Prob {
-			return a.Prob > b.Prob
-		}
-		return a.Name < b.Name
-	})
-	for _, c := range n.Children {
-		sortTree(c)
-	}
-}
-
-// buildFileTree converts cleave files into FileTreeEntry rows for the
-// archive Files tab. Order matches the input (already sorted by severity in
-// prepareResultData), so the left-pane tree shows risky files first within
-// each directory's group.
-func buildFileTree(files []cleaveFile, archiveFilename string) []FileTreeEntry {
-	out := make([]FileTreeEntry, 0, len(files))
-	for i := range files {
-		f := &files[i]
-		display := displayPath(f.Path)
-		isContainer := f.Depth == 0
-		if isContainer {
-			display = archiveFilename
-		}
-		risk := critIntToString(maxCritInFile(f))
-		short := f.SHA256
-		if len(short) > 8 {
-			short = short[:8]
-		}
-		out = append(out, FileTreeEntry{
-			Path:           f.Path,
-			Display:        display,
-			Basename:       extractBasename(f.Path),
-			SHA256:         f.SHA256,
-			SHA256Short:    short,
-			Classification: f.Classification,
-			Risk:           risk,
-			Formula:        f.Formula,
-			FileType:       strings.ToUpper(f.FileType),
-			Size:           f.Size,
-			SizeStr:        formatBytes(f.Size),
-			Probability:    f.Probability,
-			Depth:          f.Depth,
-			IsContainer:    isContainer,
-		})
-	}
-	return out
 }
 
 // formatBytes formats bytes into human-readable format.

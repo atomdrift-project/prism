@@ -246,10 +246,9 @@
             .hero-has-nav .verdict-bar-left { padding-left: 32px; }
             .hero-has-nav .verdict { padding-right: 32px; }
         }
-        /* Compact form used when the Files tab is active: collapse the
-           molecule + formula block so the file explorer below has room.
-           Use the hero-toggle button (or double-click on a pointer device) to
-           expand it back. */
+        /* Compact hero: collapses the molecule + formula block so the tabs
+           below get more room. Toggled by the hero-toggle button (or
+           double-click on a pointer device). */
         .hero.compact { margin-bottom: 12px; }
         .hero.compact .hero-body { display: none; }
         .hero.compact .verdict-meta { padding-bottom: 12px; }
@@ -799,427 +798,6 @@
             overflow: hidden;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
-        .file-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 16px;
-            background: var(--mist);
-            border-bottom: 1px solid var(--border);
-        }
-        .file-header.sev-hostile { background: rgba(239, 68, 68, 0.16); border-bottom-color: rgba(239, 68, 68, 0.24); }
-        .file-header.sev-suspicious { background: rgba(234, 179, 8, 0.16); border-bottom-color: rgba(234, 179, 8, 0.24); }
-        .file-header.sev-notable { background: rgba(59, 130, 246, 0.12); border-bottom-color: rgba(59, 130, 246, 0.2); }
-        .file-header.sev-benign { background: rgba(154, 190, 37, 0.16); border-bottom-color: rgba(154, 190, 37, 0.24); }
-        .file-header-left {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 0;
-        }
-        .file-header-right {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-left: auto;
-            flex-shrink: 0;
-        }
-        .file-risk-dot {
-            width: 14px;
-            height: 12px;
-            border-radius: 2px;
-            flex-shrink: 0;
-        }
-        .file-eval-badge {
-            font-family: 'Oxanium', sans-serif;
-            font-size: 13px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--carbon);
-        }
-        .file-name-header {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--carbon);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        /* Files tab — two-pane archive explorer */
-        .files-explorer {
-            display: flex;
-            flex-direction: column;
-            min-height: 480px;
-        }
-        .files-search {
-            padding: 10px 12px;
-            border-bottom: 1px solid var(--border);
-            background: var(--white);
-        }
-        .files-search input {
-            width: 100%;
-            padding: 6px 10px;
-            font: inherit;
-            font-size: 13px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            background: var(--white);
-            color: var(--carbon);
-            outline: none;
-        }
-        .files-search input:focus {
-            border-color: var(--toxic-muted);
-            box-shadow: 0 0 0 2px var(--toxic-dim);
-        }
-        .files-truncated-notice {
-            padding: 6px 12px;
-            font-size: 12px;
-            color: var(--iron);
-            background: var(--cream);
-            border-bottom: 1px solid var(--border);
-            font-variant-numeric: tabular-nums;
-        }
-        /* Miller columns — horizontal-scrolling stack of directory listings.
-           Height grows to fit content (no inner scrollbars), so a 5-file
-           archive renders as a short strip and a 100-file archive expands
-           the page. Each column sizes to its widest row within sane bounds. */
-        .files-miller {
-            display: flex;
-            align-items: stretch;
-            overflow-x: auto;
-            border-bottom: 1px solid var(--border);
-            background: var(--mist);
-        }
-        .files-miller-col {
-            flex: 0 0 auto;
-            width: max-content;
-            min-width: 200px;
-            max-width: 480px;
-            border-right: 1px solid var(--border);
-            background: var(--mist);
-            display: flex;
-            flex-direction: column;
-        }
-        /* Hint and search-result columns fill remaining horizontal space
-           instead of sizing to content. */
-        .files-miller-col.files-miller-col-fill {
-            flex: 1 1 320px;
-            width: auto;
-            max-width: none;
-        }
-        .files-miller-col:last-child { border-right: none; }
-        .files-miller-colhead {
-            padding: 8px 12px;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--slate);
-            background: var(--white);
-            border-bottom: 1px solid var(--border);
-            font-family: 'SF Mono', Consolas, monospace;
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .files-miller-list { list-style: none; padding: 4px 0; flex: 1; }
-        .files-miller-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            min-height: 32px;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12.5px;
-            color: var(--carbon);
-            cursor: pointer;
-            transition: background 0.1s;
-        }
-        .files-miller-row:hover { background: rgba(0, 0, 0, 0.05); }
-        .files-miller-row.selected { background: rgba(208, 255, 0, 0.22); }
-        .files-miller-row[hidden] { display: none; }
-        .files-miller-row .nm {
-            flex: 1 1 auto;
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .files-miller-row .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 2px;
-            flex-shrink: 0;
-        }
-        .files-miller-row .dot.hostile { background: var(--hostile); }
-        .files-miller-row .dot.suspicious { background: var(--suspicious); }
-        .files-miller-row .dot.notable { background: var(--notable); }
-        .files-miller-row .dot.clean { background: var(--clean, #22c55e); opacity: 0.45; }
-        .files-miller-row .meta {
-            flex-shrink: 0;
-            font-size: 12px;
-            color: var(--slate);
-            font-variant-numeric: tabular-nums;
-        }
-        .files-miller-row .chev {
-            color: var(--slate);
-            font-size: 11px;
-            flex-shrink: 0;
-        }
-        .files-miller-row.leaf .chev { visibility: hidden; }
-        .files-miller-hint {
-            padding: 28px 22px;
-            color: var(--slate);
-            font-size: 12.5px;
-            text-align: center;
-            max-width: 320px;
-            margin: auto;
-        }
-        .files-miller-hint .emph { color: var(--carbon); font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
-
-        /* Inline source viewer (text files inside an archive) */
-        .files-source-view {
-            display: none;
-            min-height: 360px;
-        }
-        .files-source-view.active { display: block; }
-        .fs-source {
-            overflow: auto;
-            max-height: 600px;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12.5px;
-            line-height: 1.55;
-            background: var(--white);
-        }
-        .fs-line {
-            display: grid;
-            grid-template-columns: 52px 14px 1fr;
-            padding: 0 12px;
-            min-height: 22px;
-            align-items: center;
-            border-left: 3px solid transparent;
-        }
-        .fs-line:hover { background: rgba(0,0,0,0.02); }
-        .fs-line.crit-hostile { background: rgba(239, 68, 68, 0.07); border-left-color: var(--hostile); }
-        .fs-line.crit-suspicious { background: rgba(234, 179, 8, 0.07); border-left-color: var(--suspicious); }
-        .fs-line.crit-notable { background: rgba(59, 130, 246, 0.05); border-left-color: var(--notable); }
-        .fs-line.crit-baseline { background: rgba(120, 120, 120, 0.04); border-left-color: rgba(120, 120, 120, 0.4); }
-        .fs-line.flash { animation: fs-flash 1.4s ease-out; }
-        @keyframes fs-flash {
-            0% { background: rgba(208, 255, 0, 0.55); }
-            100% { /* settles back to natural color */ }
-        }
-        .fs-line .ln {
-            text-align: right;
-            padding-right: 12px;
-            color: var(--slate);
-            font-size: 11.5px;
-            user-select: none;
-            font-variant-numeric: tabular-nums;
-        }
-        .fs-line .gut {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            justify-self: center;
-            background: transparent;
-        }
-        .fs-line.crit-hostile .gut { background: var(--hostile); }
-        .fs-line.crit-suspicious .gut { background: var(--suspicious); }
-        .fs-line.crit-notable .gut { background: var(--notable); }
-        .fs-line .code {
-            white-space: pre;
-            overflow-x: visible;
-            color: var(--carbon);
-        }
-        /* Top-traits chip strip below the filename. Shows up to three
-           suspicious-or-hostile traits that fired on this file; clicking a
-           chip jumps the source viewer to the first matching line. */
-        .files-detail-toptraits {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-bottom: 10px;
-        }
-        .files-detail-toptraits:empty { display: none; }
-        .fs-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px 6px 10px;
-            font: inherit;
-            font-size: 12.5px;
-            line-height: 1.4;
-            min-height: 32px;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            background: var(--white);
-            color: var(--iron);
-            cursor: pointer;
-            max-width: 320px;
-            transition: border-color 0.1s, color 0.1s, background 0.1s;
-        }
-        .fs-chip:hover { border-color: var(--toxic-muted); color: var(--carbon); }
-        .fs-chip-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .fs-chip-dot.hostile { background: var(--hostile); }
-        .fs-chip-dot.suspicious { background: var(--suspicious); }
-        .fs-chip-dot.notable { background: var(--notable); }
-        .fs-chip-id {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .fs-chip-n {
-            font-size: 11.5px;
-            color: var(--slate);
-            font-variant-numeric: tabular-nums;
-        }
-        .fs-source-placeholder {
-            padding: 40px 24px;
-            text-align: center;
-            color: var(--slate);
-            font-size: 13px;
-        }
-        @media (max-width: 760px) {
-            .files-miller-col {
-                max-width: 320px;
-            }
-            .fs-source { max-height: 420px; }
-        }
-        .files-detail-pane {
-            padding: 16px 20px;
-            overflow-y: auto;
-            max-height: 720px;
-        }
-        .files-detail-empty {
-            padding: 64px 24px;
-            text-align: center;
-            color: var(--slate);
-        }
-        .files-detail-empty-title {
-            font-family: 'Oxanium', sans-serif;
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--carbon);
-            margin-bottom: 8px;
-        }
-        .files-detail-empty-sub {
-            font-size: 14px;
-            max-width: 420px;
-            margin: 0 auto;
-            line-height: 1.5;
-        }
-        .files-detail-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            padding-bottom: 12px;
-            margin-bottom: 12px;
-            border-bottom: 1px solid var(--border);
-        }
-        .files-detail-name {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--carbon);
-        }
-        .files-detail-formula {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--iron);
-            background: var(--mist);
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        /* SHA line sits below the file header: label + full hash link to
-           VirusTotal + a small copy button. Quiet monospace strip so it
-           doesn't compete with the filename row above. */
-        .files-detail-sha-line {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: -4px;
-            margin-bottom: 12px;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12.5px;
-            color: var(--slate);
-            word-break: break-all;
-        }
-        .files-detail-sha-link {
-            color: var(--iron);
-            border-bottom: 1px dotted var(--slate);
-            min-width: 0;
-            transition: color 0.12s, border-color 0.12s;
-        }
-        .files-detail-sha-link:hover { color: var(--carbon); border-bottom-color: var(--carbon); }
-        .files-detail-sha {
-            font-family: 'Inter', -apple-system, sans-serif;
-            font-size: 12px;
-            color: var(--slate);
-            cursor: pointer;
-            padding: 4px 10px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--white);
-            flex-shrink: 0;
-            transition: color 0.12s, border-color 0.12s, background 0.12s;
-        }
-        .files-detail-sha:hover { color: var(--carbon); border-color: var(--toxic-muted); }
-        .files-detail-sha.copied {
-            color: var(--toxic-dark);
-            border-color: var(--toxic-muted);
-            background: var(--toxic-dim);
-        }
-        .files-detail-open {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            color: var(--slate);
-            padding: 6px 10px;
-            border-radius: 4px;
-            min-width: 32px;
-            min-height: 32px;
-        }
-        .files-detail-open:hover { color: var(--carbon); background: var(--mist); }
-        .files-detail-subtabs {
-            display: flex;
-            gap: 0;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 12px;
-        }
-        .files-subtab {
-            padding: 10px 16px;
-            font: inherit;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--slate);
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            cursor: pointer;
-        }
-        .files-subtab:hover { color: var(--carbon); }
-        .files-subtab.active {
-            color: var(--carbon);
-            font-weight: 600;
-            border-bottom-color: var(--toxic-muted);
-        }
-        .files-detail-block[hidden] { display: none; }
-        .files-detail-body[hidden] { display: none; }
 
         .category-section {
             margin-bottom: 12px;
@@ -1371,34 +949,26 @@
             min-width: 0;
             flex: 1 1 auto;
         }
-        a.finding-source {
-            display: inline-flex;
-            align-items: baseline;
-            gap: 6px;
+        .finding-match-file {
             color: var(--iron);
-            text-decoration: none;
-            border-bottom: 1px dotted var(--slate);
             font-size: 12.5px;
-            flex: 0 1 auto;
-            max-width: 100%;
-            transition: color 0.12s, border-color 0.12s;
-        }
-        a.finding-source:hover {
-            color: var(--toxic-dark);
-            border-bottom-color: var(--toxic-muted);
-        }
-        .finding-source-path {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            min-width: 0;
+            flex: 0 1 auto;
+            max-width: 40%;
         }
-        .finding-source-count {
+        .finding-match-loc {
+            color: var(--slate);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            flex: 0 0 auto;
+        }
+        .finding-match-count {
             color: var(--slate);
             font-size: 12px;
             font-variant-numeric: tabular-nums;
         }
-        .finding-match-arrow { color: var(--slate); }
         .crit-badge {
             display: inline-block;
             width: 14px;
@@ -1718,61 +1288,6 @@
             font-weight: 500;
             color: var(--carbon);
         }
-        /* Contents tab — line-numbered file body with crit dots */
-        .contents-body {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            line-height: 1.5;
-            background: var(--white);
-            padding: 12px 0;
-            overflow-x: auto;
-            max-height: 720px;
-            overflow-y: auto;
-        }
-        .content-line {
-            display: grid;
-            grid-template-columns: 48px 14px 1fr;
-            align-items: start;
-            gap: 6px;
-            padding: 0 16px 0 8px;
-            white-space: pre;
-            border-left: 3px solid transparent;
-        }
-        .content-line:hover { background: rgba(0, 0, 0, 0.03); }
-        .content-line.crit-hostile { background: rgba(239, 68, 68, 0.08); border-left-color: var(--hostile); }
-        .content-line.crit-suspicious { background: rgba(234, 179, 8, 0.08); border-left-color: var(--suspicious); }
-        .content-line.crit-notable { background: rgba(59, 130, 246, 0.06); border-left-color: var(--notable); }
-        .content-line.crit-baseline { background: rgba(120, 120, 120, 0.04); border-left-color: rgba(120, 120, 120, 0.4); }
-        .content-line.crit-component { border-left-color: rgba(120, 120, 120, 0.2); }
-        .content-num {
-            color: var(--slate);
-            font-variant-numeric: tabular-nums;
-            text-align: right;
-            user-select: none;
-            opacity: 0.7;
-        }
-        .content-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-top: 6px;
-            justify-self: center;
-            flex-shrink: 0;
-        }
-        .content-dot.crit-hostile { background: var(--hostile); }
-        .content-dot.crit-suspicious { background: var(--suspicious); }
-        .content-dot.crit-notable { background: var(--notable); }
-        .content-dot.crit-baseline { background: rgba(120, 120, 120, 0.55); width: 5px; height: 5px; margin-top: 7.5px; }
-        .content-dot.crit-component { background: rgba(120, 120, 120, 0.3); width: 4px; height: 4px; margin-top: 8px; }
-        .content-dot.crit-none { background: transparent; }
-        .content-text {
-            color: var(--carbon);
-            background: transparent;
-            font-family: inherit;
-            font-size: inherit;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
 
         /* KV tab — flat structural key→value rows */
         .kv-table {
@@ -1840,20 +1355,12 @@
                (Apple HIG / WCAG 2.5.5). Keeps the desktop density we like
                while still being friendly to thumbs on a phone. */
             .tab { padding: 14px 18px; font-size: 14px; }
-            .files-subtab { padding: 12px 18px; font-size: 13.5px; }
-            .files-miller-row { min-height: 40px; padding: 10px 12px; }
-            .fs-chip { min-height: 36px; }
-            .files-detail-sha,
             .rescan-btn,
             .download-btn { padding: 8px 12px; font-size: 13px; }
-            .files-detail-open,
             .hero-toggle { min-width: 44px; min-height: 44px; }
             .galaxy-info-close { width: 40px; height: 40px; }
         }
-        /* Respect users who opt out of motion at the OS level. We keep the
-           flash-color change so attention still gets drawn to a jumped-to
-           line, but drop the keyframe animation; programmatic scrolls in JS
-           also check `prefers-reduced-motion` and switch to instant jumps. */
+        /* Respect users who opt out of motion at the OS level. */
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
                 animation-duration: 0.001ms !important;
@@ -1861,16 +1368,11 @@
                 transition-duration: 0.001ms !important;
                 scroll-behavior: auto !important;
             }
-            .fs-line.flash {
-                animation: none;
-                background: rgba(208, 255, 0, 0.55);
-            }
         }
         /* Chroma syntax highlighting (generated server-side). Scoped under
-           .chroma so it only applies inside <code class="chroma"> blocks. */
+           .chroma so it only applies inside <code class="chroma"> blocks —
+           currently the evidence column of expanded trait cards. */
         {{chromaCSS}}
-        /* Make chroma class colors respect dark/light backgrounds in our
-           content line scaffold; inherit our font + size. */
         .chroma { background: transparent; font: inherit; color: inherit; }
         .chroma span { font: inherit; }
     </style>
@@ -2002,18 +1504,12 @@
         <section class="tabs-section" aria-label="Analysis details">
             <div class="tabs" role="tablist" aria-label="Analysis sections">
                 <button type="button" class="tab active" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="true" aria-controls="tab-traits" tabindex="0">Traits</button>
-                {{if .IsArchive}}
-                <button type="button" class="tab" role="tab" id="tabbtn-files" data-tab="files" aria-selected="false" aria-controls="tab-files" tabindex="-1">Files</button>
-                {{else}}
-                {{if .IsText}}
-                <button type="button" class="tab" role="tab" id="tabbtn-contents" data-tab="contents" aria-selected="false" aria-controls="tab-contents" tabindex="-1">Contents</button>
-                {{else}}
+                {{if not .IsArchive}}
                 <button type="button" class="tab" role="tab" id="tabbtn-strings" data-tab="strings" aria-selected="false" aria-controls="tab-strings" tabindex="-1">Strings</button>
-                {{end}}
                 <button type="button" class="tab" role="tab" id="tabbtn-symbols" data-tab="symbols" aria-selected="false" aria-controls="tab-symbols" tabindex="-1">Symbols</button>
                 {{if .FileSections}}<button type="button" class="tab" role="tab" id="tabbtn-sections" data-tab="sections" aria-selected="false" aria-controls="tab-sections" tabindex="-1">Sections</button>{{end}}
                 <button type="button" class="tab" role="tab" id="tabbtn-metrics" data-tab="metrics" aria-selected="false" aria-controls="tab-metrics" tabindex="-1">Metrics</button>
-                {{if not .IsText}}<button type="button" class="tab" role="tab" id="tabbtn-kv" data-tab="kv" aria-selected="false" aria-controls="tab-kv" tabindex="-1">Metadata</button>{{end}}
+                <button type="button" class="tab" role="tab" id="tabbtn-kv" data-tab="kv" aria-selected="false" aria-controls="tab-kv" tabindex="-1">Metadata</button>
                 {{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
@@ -2041,8 +1537,10 @@
                                         <ul class="finding-matches">
                                             {{range .Matches}}
                                             <li class="finding-match">
-                                                <code class="finding-match-evidence">{{.Evidence}}</code>
-                                                {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
+                                                {{if .Filename}}<span class="finding-match-file" title="{{.Path}}">{{.Filename}}</span>{{end}}
+                                                {{if .Location}}<span class="finding-match-loc">{{.Location}}</span>{{end}}
+                                                <code class="finding-match-evidence chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Evidence}}{{end}}</code>
+                                                {{if gt .Count 1}}<span class="finding-match-count">×{{.Count}}</span>{{end}}
                                             </li>
                                             {{end}}
                                         </ul>
@@ -2090,8 +1588,10 @@
                                     <ul class="finding-matches">
                                         {{range .Matches}}
                                         <li class="finding-match">
-                                            <code class="finding-match-evidence">{{.Evidence}}</code>
-                                            {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
+                                            {{if .Filename}}<span class="finding-match-file" title="{{.Path}}">{{.Filename}}</span>{{end}}
+                                            {{if .Location}}<span class="finding-match-loc">{{.Location}}</span>{{end}}
+                                            <code class="finding-match-evidence chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Evidence}}{{end}}</code>
+                                            {{if gt .Count 1}}<span class="finding-match-count">×{{.Count}}</span>{{end}}
                                         </li>
                                         {{end}}
                                     </ul>
@@ -2123,40 +1623,9 @@
             </div>
 
             {{if not .IsArchive}}
-            {{if .IsText}}
-            <div class="tab-content" id="tab-contents" role="tabpanel" aria-labelledby="tabbtn-contents" tabindex="0">
-                {{if .ContentTooLarge}}
-                    <div class="no-findings">
-                        File is {{.ContentSizeStr}} — too large to display inline.
-                        <a href="/file/{{.SHA256}}.dl">Download</a> to view.
-                    </div>
-                {{else if .Contents}}
-                    <div class="contents-body">
-                        {{range .Contents}}
-                        <div class="content-line{{if .Risk}} crit-{{.Risk}}{{end}}"{{if .Traits}} title="{{range $i, $t := .Traits}}{{if $i}}, {{end}}{{$t}}{{end}}"{{end}}>
-                            <span class="content-num">{{.Number}}</span>
-                            <span class="content-dot crit-{{if .Risk}}{{.Risk}}{{else}}none{{end}}"></span>
-                            <code class="content-text chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Text}}{{end}}</code>
-                        </div>
-                        {{end}}
-                    </div>
-                {{else}}
-                    <div class="no-findings">Content unavailable. <a href="/file/{{.SHA256}}.dl">Download</a> to view.</div>
-                {{end}}
-            </div>
-            {{else}}
             <div class="tab-content" id="tab-strings" role="tabpanel" aria-labelledby="tabbtn-strings" tabindex="0">
                 {{if .FileStrings}}
                     {{range .FileStrings}}
-                    {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
-                        <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{.Gradient}}"></span>
-                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                        </div>
-                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                    </div>
-                    {{end}}
                     {{if .HasSections}}
                         {{range .Sections}}
                         <div class="category-section">
@@ -2190,20 +1659,10 @@
                     <div class="no-findings">No strings extracted</div>
                 {{end}}
             </div>
-            {{end}}{{/* end if .IsText / else */}}
 
             <div class="tab-content" id="tab-symbols" role="tabpanel" aria-labelledby="tabbtn-symbols" tabindex="0">
                 {{if .FileSymbols}}
                     {{range .FileSymbols}}
-                    {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
-                        <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{.Gradient}}"></span>
-                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                        </div>
-                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                    </div>
-                    {{end}}
                     {{if .Imports}}
                     <div class="category-section">
                         <h2 class="category-title">Imports</h2>
@@ -2233,15 +1692,6 @@
             <div class="tab-content" id="tab-sections" role="tabpanel" aria-labelledby="tabbtn-sections" tabindex="0">
                 {{if .FileSections}}
                     {{range .FileSections}}
-                    {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
-                        <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{.Gradient}}"></span>
-                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                        </div>
-                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                    </div>
-                    {{end}}
                     <table class="sections-table">
                         <thead>
                             <tr>
@@ -2276,15 +1726,6 @@
             <div class="tab-content" id="tab-metrics" role="tabpanel" aria-labelledby="tabbtn-metrics" tabindex="0">
                 {{if .FileMetrics}}
                     {{range .FileMetrics}}
-                    {{if $.IsArchive}}
-                    <div class="file-header {{if eq .Classification "hostile"}}sev-hostile{{else if eq .Classification "suspicious"}}sev-suspicious{{else if .Classification}}sev-benign{{else if eq .Risk "hostile"}}sev-hostile{{else if eq .Risk "suspicious"}}sev-suspicious{{else}}sev-notable{{end}}" data-file-sha="{{.SHA256}}">
-                        <div class="file-header-left">
-                            <span class="file-risk-dot" data-gradient="{{.Gradient}}"></span>
-                            <span class="file-name-header" title="{{.Basename}}">{{.Basename}}</span>
-                        </div>
-                        {{if .Classification}}<div class="file-header-right"><span class="file-eval-badge">{{.Classification}}</span></div>{{end}}
-                    </div>
-                    {{end}}
                     {{range .Groups}}
                     <div class="category-section">
                         <h2 class="category-title">{{.Name}}</h2>
@@ -2307,200 +1748,7 @@
             </div>
             {{end}}{{/* end if not .IsArchive */}}
 
-            {{if .IsArchive}}
-            <div class="tab-content" id="tab-files" role="tabpanel" aria-labelledby="tabbtn-files" tabindex="0">
-                <div class="files-explorer">
-                    <div class="files-search" role="search">
-                        <label for="files-search-input" class="sr-only">Filter files in this archive</label>
-                        <input type="text" id="files-search-input" placeholder="Filter files…" autocomplete="off" spellcheck="false" aria-label="Filter files in this archive" />
-                    </div>
-                    {{if lt .ShownFiles .TotalFiles}}
-                    <div class="files-truncated-notice" title="Files are ranked by ML probability; the lowest-scoring entries are hidden when archives exceed the display cap.">
-                        Showing top {{.ShownFiles}} of {{.TotalFiles}} files
-                    </div>
-                    {{end}}
-                    <div class="files-miller" id="files-miller" role="tree" aria-label="Archive files. Use arrow keys to navigate, Enter to open."></div>
-                    <div class="files-detail-pane" id="files-detail">
-                        <div class="files-detail-empty" data-default="1">
-                            <div class="files-detail-empty-title">{{.Filename}}</div>
-                            <div class="files-detail-empty-sub">Archive of {{.TotalFiles}} file{{if ne .TotalFiles 1}}s{{end}}. Select a file to inspect its contents, symbols, metrics, and metadata.</div>
-                        </div>
-                        {{range .Files}}{{if not .IsContainer}}
-                        <div class="files-detail-header-block" data-file-sha="{{.SHA256}}" hidden>
-                            <div class="files-detail-header">
-                                <span class="files-detail-name">{{.Basename}}</span>
-                                {{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
-                                {{if .Classification}}<span class="file-eval-badge">{{.Classification}}</span>{{end}}
-                                {{if .Formula}}<span class="files-detail-formula" title="formula">{{.Formula}}</span>{{end}}
-                                <a class="files-detail-open" href="/file/{{.SHA256}}" aria-label="Open {{.Basename}} in its own page"><span aria-hidden="true">↗</span></a>
-                                <span class="files-detail-size">{{.SizeStr}}</span>
-                            </div>
-                            <div class="files-detail-sha-line">
-                                <span class="sr-only">SHA256: </span>
-                                <a class="files-detail-sha-link" href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>
-                                <button type="button" class="files-detail-sha" data-sha="{{.SHA256}}" aria-label="Copy SHA256 to clipboard"><span aria-hidden="true">⧉ </span>copy</button>
-                            </div>
-                            <div class="files-detail-toptraits" data-toptraits-for="{{.SHA256}}"></div>
-                            <div class="files-detail-subtabs" role="tablist" aria-label="File detail views">
-                                <button type="button" class="files-subtab" role="tab" data-sub="source" aria-selected="false" tabindex="-1" hidden>Source</button>
-                                <button type="button" class="files-subtab active" role="tab" data-sub="findings" aria-selected="true" tabindex="0">Traits</button>
-                                <button type="button" class="files-subtab" role="tab" data-sub="strings" aria-selected="false" tabindex="-1">Strings</button>
-                                <button type="button" class="files-subtab" role="tab" data-sub="symbols" aria-selected="false" tabindex="-1">Symbols</button>
-                                <button type="button" class="files-subtab" role="tab" data-sub="metrics" aria-selected="false" tabindex="-1">Metrics</button>
-                                <button type="button" class="files-subtab" role="tab" data-sub="kv" aria-selected="false" tabindex="-1">Metadata</button>
-                            </div>
-                        </div>
-                        {{end}}{{end}}
-                        <div class="files-source-view" id="files-source-view">
-                            <div class="fs-source" id="fs-source"></div>
-                        </div>
-                        {{range .FileFindings}}
-                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="findings" hidden>
-                            {{if .Categories}}
-                            {{range .Categories}}
-                            <div class="category-section">
-                                <h2 class="category-title">{{.Name}}</h2>
-                                <div class="findings-list">
-                                    {{range .Findings}}
-                                    <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
-                                        {{if .Matches}}
-                                        <button type="button" class="finding-card-toggle" aria-expanded="false">
-                                            <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
-                                            <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
-                                            <span class="trait-body">
-                                                <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                                                <span class="trait-desc">{{.Desc}}</span>
-                                            </span>
-                                            <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
-                                        </button>
-                                        <div class="finding-detail" hidden>
-                                            <ul class="finding-matches">
-                                                {{range .Matches}}
-                                                <li class="finding-match">
-                                                    <code class="finding-match-evidence">{{.Evidence}}</code>
-                                                    {{if .SHA256}}<a class="finding-source" data-sha="{{.SHA256}}" href="#file={{.SHA256}}" title="Open {{.Path}}"><span class="finding-source-path">{{.Path}}</span>{{if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}<span aria-hidden="true" class="finding-match-arrow"> ↗</span></a>{{else if gt .Count 1}}<span class="finding-source-count">×{{.Count}}</span>{{end}}
-                                                </li>
-                                                {{end}}
-                                            </ul>
-                                        </div>
-                                        {{else}}
-                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
-                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
-                                        <div class="trait-body">
-                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                                            <span class="trait-desc">{{.Desc}}</span>
-                                        </div>
-                                        {{end}}
-                                    </div>
-                                    {{end}}
-                                </div>
-                            </div>
-                            {{end}}
-                            {{else}}
-                            <div class="no-findings">No notable behaviors detected.</div>
-                            {{end}}
-                        </div>
-                        {{end}}
-                        {{range .FileStrings}}
-                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="strings" hidden>
-                            {{if .HasSections}}
-                                {{range .Sections}}
-                                <div class="category-section">
-                                    <h2 class="category-title">{{.Section}}</h2>
-                                    <table class="strings-table">
-                                        <tbody>
-                                            {{range .Strings}}
-                                            <tr>
-                                                {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
-                                                <td>{{.Value}}</td>
-                                            </tr>
-                                            {{end}}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                {{end}}
-                            {{else}}
-                                <table class="strings-table">
-                                    <tbody>
-                                        {{range .Strings}}
-                                        <tr>
-                                            {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
-                                            <td>{{.Value}}</td>
-                                        </tr>
-                                        {{end}}
-                                    </tbody>
-                                </table>
-                            {{end}}
-                        </div>
-                        {{end}}
-                        {{range .FileSymbols}}
-                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="symbols" hidden>
-                            {{if .Imports}}
-                            <div class="category-section">
-                                <h2 class="category-title">Imports</h2>
-                                <div class="symbols-list">
-                                    {{range .Imports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
-                                </div>
-                            </div>
-                            {{end}}
-                            {{if .Exports}}
-                            <div class="category-section">
-                                <h2 class="category-title">Exports</h2>
-                                <div class="symbols-list">
-                                    {{range .Exports}}<div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>{{end}}
-                                </div>
-                            </div>
-                            {{end}}
-                            {{if and (not .Imports) (not .Exports)}}<div class="no-findings">No symbols found</div>{{end}}
-                        </div>
-                        {{end}}
-                        {{range .FileMetrics}}
-                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="metrics" hidden>
-                            {{if .Groups}}
-                            {{range .Groups}}
-                            <div class="category-section">
-                                <h2 class="category-title">{{.Name}}</h2>
-                                <table class="metrics-table">
-                                    <tbody>
-                                        {{range .Fields}}
-                                        <tr>
-                                            <td class="metric-label">{{.Label}}</td>
-                                            <td class="metric-value">{{.Value}}</td>
-                                        </tr>
-                                        {{end}}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {{end}}
-                            {{else}}
-                            <div class="no-findings">No metrics available</div>
-                            {{end}}
-                        </div>
-                        {{end}}
-                        {{range .FileKVs}}
-                        <div class="files-detail-block" data-file-sha="{{.SHA256}}" data-section="kv" hidden>
-                            {{if .Pairs}}
-                            <table class="kv-table">
-                                <tbody>
-                                    {{range .Pairs}}
-                                    <tr>
-                                        <td class="kv-key">{{.Key}}</td>
-                                        <td class="kv-value">{{.Value}}</td>
-                                    </tr>
-                                    {{end}}
-                                </tbody>
-                            </table>
-                            {{else}}
-                            <div class="no-findings">No metadata available.</div>
-                            {{end}}
-                        </div>
-                        {{end}}
-                    </div>
-                </div>
-            </div>
-            {{end}}{{/* end if .IsArchive */}}
-
-            {{if and (not .IsArchive) (not .IsText)}}
+            {{if not .IsArchive}}
             <div class="tab-content" id="tab-kv" role="tabpanel" aria-labelledby="tabbtn-kv" tabindex="0">
                 {{if .FileKVs}}
                     {{range .FileKVs}}
@@ -2543,12 +1791,9 @@
 
     <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
     <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
-    {{if .IsArchive}}<script nonce="{{.Nonce}}" id="file-tree-data" type="application/json">{{.FileTreeJSON}}</script>{{end}}
-    {{if .IsArchive}}<script nonce="{{.Nonce}}" id="trait-occurrence-data" type="application/json">{{.TraitOccurrenceJSON}}</script>{{end}}
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/hero-nav.js?v={{.BuildCommit}}"></script>
-    {{if .IsArchive}}<script nonce="{{.Nonce}}" type="module" src="/static/js/files-tab.js?v={{.BuildCommit}}"></script>{{end}}
     <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
 </body>
 </html>

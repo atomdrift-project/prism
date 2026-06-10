@@ -806,10 +806,8 @@ window.addEventListener("resize", () => {
 
 // Tab switching with URL-hash anchors so tab views are shareable.
 // Hash format: `#<tab-name>` (e.g. `#traits`, `#symbols`, `#metrics`).
-// The archive Files tab continues to use `#file=<sha>` for selecting a
-// specific entry — that scheme is owned by files-tab.js, which also
-// brings the Files tab forward on hashchange. We skip those hashes here
-// so the two handlers don't fight.
+// Legacy `#file=<sha>` hashes (from the retired archive Files tab) are
+// ignored so old bookmarks don't get misread as tab names.
 const tabButtons = Array.from(document.querySelectorAll('.tabs [role="tab"]'));
 const tabNames = new Set(tabButtons.map((t) => t.dataset.tab));
 
@@ -833,11 +831,6 @@ function activateTab(name, focus) {
   });
   contentEl.classList.add("active");
   if (focus) tabEl.focus();
-  // Files tab needs the screen real estate; collapse the molecule hero
-  // into a compact strip. Other tabs get the full hero back.
-  const hero = document.querySelector(".hero");
-  if (hero) hero.classList.toggle("compact", name === "files");
-  syncHeroToggle();
   return true;
 }
 
@@ -916,7 +909,7 @@ for (const tab of tabButtons) {
 function applyTabHash() {
   const h = location.hash.replace(/^#/, "");
   if (!h) return;
-  if (h.startsWith("file=")) return; // owned by files-tab.js
+  if (h.startsWith("file=")) return; // legacy Files-tab bookmark; not a tab name
   if (tabNames.has(h)) activateTab(h);
 }
 window.addEventListener("hashchange", applyTabHash);

@@ -8,8 +8,8 @@ import (
 // TestAggregateBackAttributesViaLocations covers the kops-style case where
 // cleave rolled an inner-file match up to the archive container and recorded
 // the original member path in the finding's `el` (Locations) field. The
-// resulting Matches list must point at the inner file's SHA so the trait
-// card can render a clickable row for the user.
+// resulting Matches list must carry the inner file's name so the trait card
+// can render its "filename — location — evidence" row.
 func TestAggregateBackAttributesViaLocations(t *testing.T) {
 	innerSHA := strings.Repeat("b", 64)
 	containerSHA := strings.Repeat("a", 64)
@@ -55,11 +55,14 @@ func TestAggregateBackAttributesViaLocations(t *testing.T) {
 	if m.Evidence != "package assets" {
 		t.Errorf("match Evidence = %q, want %q", m.Evidence, "package assets")
 	}
-	if m.SHA256 != innerSHA {
-		t.Errorf("match SHA256 = %q, want inner file SHA %q", m.SHA256, innerSHA)
+	if m.Filename != "builder.go" {
+		t.Errorf("match Filename = %q, want %q", m.Filename, "builder.go")
 	}
 	if m.Path != "pkg/assets/builder.go" {
 		t.Errorf("match Path = %q, want %q", m.Path, "pkg/assets/builder.go")
+	}
+	if m.Location != "" {
+		t.Errorf("match Location = %q, want empty (legacy archive: form has no offset)", m.Location)
 	}
 }
 
@@ -108,11 +111,14 @@ func TestAggregateBackAttributesViaFileIndex(t *testing.T) {
 		t.Fatalf("expected exactly one match, got %d: %+v", len(got.Matches), got.Matches)
 	}
 	m := got.Matches[0]
-	if m.SHA256 != innerSHA {
-		t.Errorf("match SHA256 = %q, want inner file SHA %q", m.SHA256, innerSHA)
+	if m.Filename != "builder.go" {
+		t.Errorf("match Filename = %q, want %q", m.Filename, "builder.go")
 	}
 	if m.Path != "pkg/assets/builder.go" {
 		t.Errorf("match Path = %q, want %q", m.Path, "pkg/assets/builder.go")
+	}
+	if m.Location != "0x3718c0" {
+		t.Errorf("match Location = %q, want the byte offset %q", m.Location, "0x3718c0")
 	}
 }
 
@@ -143,7 +149,7 @@ func TestParseLocationID(t *testing.T) {
 // safety net: when a finding only fires on the container and we can't
 // back-attribute via Locations (no `el` from older cleave builds, or a
 // nested archive we don't have unpacked), the match drops the container
-// SHA so the row renders as path-less evidence instead of a dead link.
+// attribution so the row renders as bare evidence with no filename column.
 func TestAggregateDropsUnresolvableContainerSources(t *testing.T) {
 	containerSHA := strings.Repeat("a", 64)
 	files := []cleaveFile{
@@ -164,11 +170,57 @@ func TestAggregateDropsUnresolvableContainerSources(t *testing.T) {
 	for _, g := range groups {
 		for _, f := range g.Findings {
 			for _, m := range f.Matches {
-				if m.SHA256 == containerSHA {
-					t.Errorf("container SHA leaked into matches: %+v", m)
+				if m.Path != "" || m.Filename != "" {
+					t.Errorf("container leaked into match attribution: %+v", m)
 				}
 			}
 		}
+	}
+}
+
+// TestLocationOffset locks in offset extraction across the three `loc`
+// generations: v7 "<file-id>:<offset>", legacy "offset:<n>", and forms that
+// carry no position at all.
+func TestLocationOffset(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"1:0x3718c0", "0x3718c0"},
+		{"42", ""},
+		{"offset:0x1234", "0x1234"},
+		{"archive:pkg/assets/builder.go", ""},
+		{"archive:0a8ab3.macho:0x10", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := locationOffset(c.in); got != c.want {
+			t.Errorf("locationOffset(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestHighlightEvidence exercises the chroma path: a JS filename yields
+// classed tokens whose concatenation reproduces the evidence exactly, and
+// an unknown filename falls back to nil (plain-text rendering).
+func TestHighlightEvidence(t *testing.T) {
+	ev := "require('child_process').exec(cmd)"
+	tokens := highlightEvidence(ev, "index.js")
+	if len(tokens) == 0 {
+		t.Fatal("expected chroma tokens for a .js filename, got none")
+	}
+	var sb strings.Builder
+	for _, tok := range tokens {
+		sb.WriteString(tok.Text)
+	}
+	if sb.String() != ev {
+		t.Errorf("token concatenation = %q, want original evidence %q", sb.String(), ev)
+	}
+	if highlightEvidence(ev, "") != nil {
+		t.Error("empty filename should disable highlighting")
+	}
+	if highlightEvidence("", "index.js") != nil {
+		t.Error("empty evidence should yield no tokens")
 	}
 }
 

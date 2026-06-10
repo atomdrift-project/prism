@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -47,22 +48,25 @@ type breaker struct {
 	state    breakerState
 }
 
-// allow reports whether a call may proceed. When open it admits exactly one
-// probe once the cooldown has elapsed; all other callers fast-fail.
-func (b *breaker) allow() bool {
+// allow reports whether a call may proceed; nil means go ahead. When open it
+// admits exactly one probe once the cooldown has elapsed; all other callers
+// receive an error wrapping errBreakerOpen that says why the breaker is open
+// and when the next probe will be admitted.
+func (b *breaker) allow() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	switch b.state {
 	case breakerOpen:
-		if time.Since(b.openedAt) < b.cooldown {
-			return false
+		if wait := b.cooldown - time.Since(b.openedAt); wait > 0 {
+			return fmt.Errorf("%w after %d consecutive failures, next probe in %s",
+				errBreakerOpen, b.failures, wait.Round(time.Millisecond))
 		}
 		b.state = breakerHalfOpen // this caller becomes the probe
-		return true
+		return nil
 	case breakerHalfOpen:
-		return false // a probe is already in flight
+		return fmt.Errorf("%w, recovery probe in flight", errBreakerOpen)
 	default:
-		return true
+		return nil
 	}
 }
 

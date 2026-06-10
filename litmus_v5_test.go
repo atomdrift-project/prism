@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"html/template"
 	"strings"
@@ -46,7 +45,7 @@ func TestPrepareResultDataV6Envelope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := `{"ml":` + tc.ml + `,"raw":{"fs":[{"id":0,"sha":"` + sha +
 				`","type":"pe","dp":0,"f":"K","sz":12}]}}`
-			data := prepareResultData(context.Background(), "sample.exe", sha, &storedResult{
+			data := prepareResultData("sample.exe", sha, &storedResult{
 				RawLitmus:      raw,
 				Classification: tc.wantClass,
 			})
@@ -72,7 +71,7 @@ func TestPrepareResultDataV7Envelope(t *testing.T) {
 	sha := strings.Repeat("d", 64)
 	raw := `{"ml":{"v":"7","prob":0.97,"lvl":50,"conf":90,"files":[{"id":0,"prob":0.97,"lvl":50,"conf":90}]},"raw":{"files":[{"id":0,"sha":"` + sha +
 		`","type":"pe","dp":0,"mol":"K","size":12}]}}`
-	data := prepareResultData(context.Background(), "sample.exe", sha, &storedResult{
+	data := prepareResultData("sample.exe", sha, &storedResult{
 		RawLitmus:      raw,
 		Classification: "hostile",
 	})

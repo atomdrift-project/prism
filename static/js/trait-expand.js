@@ -3,26 +3,9 @@
 // with aria-expanded, followed by a <div class="finding-detail" hidden>
 // sibling. Clicking (or pressing Enter/Space — buttons handle that
 // natively) flips both states so keyboard users and screen readers see
-// the same change as sighted mouse users. The detail contains either
-// evidence values (per-file) or a list of source files that fired this
-// aggregated trait (archive level); links in there use `#file=<sha>`
-// so files-tab.js's hashchange handler switches to the Files tab and
-// selects the file.
+// the same change as sighted mouse users. The detail lists each match
+// as a filename — location — evidence row.
 document.addEventListener("click", (ev) => {
-  const link = ev.target.closest("a.finding-source");
-  if (link) {
-    ev.stopPropagation();
-    // Carry the originating trait into the hash so files-tab.js can
-    // highlight the matching trait card and scroll to its first line.
-    const card = link.closest(".finding-card");
-    const tid = card?.dataset.traitId;
-    if (tid) {
-      ev.preventDefault();
-      const sha = link.dataset.sha || "";
-      location.hash = `file=${sha}&trait=${encodeURIComponent(tid)}`;
-    }
-    return;
-  }
   const toggle = ev.target.closest(".finding-card-toggle");
   if (!toggle) return;
   const card = toggle.closest(".finding-card");
