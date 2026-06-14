@@ -81,7 +81,8 @@ func previewData() resultData {
 			{1, "!function(e){var t={};function n(r){if(t[r])return t[r].exports;var o=t[r]={i:r,l:!1,exports:{}};return e[r].call(o.exports,o,o.exports,n),o.l=!0,o.exports}n.m=e;var a=eval(atob(\"ZmV0Y2goJ2h0dHBzOi8vZXZpbCcp\"));return n.c=t,n.d=function(e,t,r){n.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},a}([])",
 				[]ctxNote{{ID: "execution/interpreter/eval::obfuscated", Desc: "eval of base64-decoded payload", Off: 196, Len: 23, Crit: 5}}},
 		}),
-		hexMember(3, "libpayload.so", "ddd"),
+		hexMember(3, "libpayload.so", "ddd", 0x10010),
+		hexMember(5, "stub.bin", "fff", 0x40),
 	}
 	container := cleaveFile{
 		ID: 0, Depth: 0, SHA256: "aaa", Path: "wuphf-0.225.0.tgz", FileType: "tar.gz",
@@ -94,7 +95,7 @@ func previewData() resultData {
 		}},
 	}
 	files := append([]cleaveFile{container}, members...)
-	d.FileViews = buildFileViews(files)
+	d.FileViews, _ = buildFileViews(files)
 	if src, hex := contentLocCh(d.FileViews); src > 0 || hex > 0 {
 		d.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, src, hex))
 	}
@@ -140,19 +141,19 @@ func jsMember(id int, name, sha, ftype string, lines []ctxLine) cleaveFile {
 // hexMember builds a binary member with one hex context window, including a row
 // where two traits match (only the strongest should annotate) and a large
 // offset to exercise column alignment against the source line numbers.
-func hexMember(id int, name, sha string) cleaveFile {
-	data := make([]byte, 64)
+func hexMember(id int, name, sha string, base int64) cleaveFile {
+	data := make([]byte, 53) // not a multiple of 16, so the last row is short (tests padding)
 	for i := range data {
 		data[i] = byte(0x20 + (i*7)%90)
 	}
 	copy(data, []byte("\x7fELF\x02\x01\x01"))
 	notes := []contextNote{
-		{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Offset: 0x10020, Size: 8, Crit: 3},
-		{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Offset: 0x10024, Size: 8, Crit: 4},
-		{ID: "fs/write::single-byte", Desc: "Write single bytes to file", Offset: 0x10038, Size: 4, Crit: 3},
+		{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Offset: base + 0x10, Size: 8, Crit: 3},
+		{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Offset: base + 0x14, Size: 8, Crit: 4},
+		{ID: "fs/write::single-byte", Desc: "Write single bytes to file", Offset: base + 0x28, Size: 4, Crit: 3},
 	}
 	f := cleaveFile{ID: id, Depth: 1, SHA256: sha, Path: "wuphf-0.225.0.tgz!!" + name, FileType: "elf"}
-	f.Ctx = []contextWindow{{Offset: 0x10010, Hex: true, Data: data, Notes: notes}}
+	f.Ctx = []contextWindow{{Offset: base, Hex: true, Data: data, Notes: notes}}
 	for _, n := range notes {
 		f.Findings = appendFinding(f.Findings, n.ID, n.Desc, n.Crit)
 	}

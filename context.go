@@ -521,9 +521,19 @@ func renderHexWindow(win *contextWindow, filterID string, descByID map[string]st
 		row := win.Data[start:min(start+hexStride, len(win.Data))]
 		rowBase := win.Offset + int64(start)
 		spans, crit := spansForRow(win.Notes, rowBase, len(row), filterID)
-		hexCells := make([]contextSeg, len(row))
-		asciiCells := make([]contextSeg, len(row))
-		for k, b := range row {
+		// Always emit hexStride cells, padding a short final row with blanks
+		// ("  " = the width of a hex pair, " " for ascii). Every hex window then
+		// has an identical, fully-populated grid, so the offset / hex / ascii
+		// columns line up within a window and across files.
+		hexCells := make([]contextSeg, hexStride)
+		asciiCells := make([]contextSeg, hexStride)
+		for k := range hexStride {
+			if k >= len(row) {
+				hexCells[k] = contextSeg{Text: "  "}
+				asciiCells[k] = contextSeg{Text: " "}
+				continue
+			}
+			b := row[k]
 			sev := spanSeverityAt(spans, k)
 			hexCells[k] = contextSeg{Text: fmt.Sprintf("%02x", b), Crit: sev}
 			asciiCells[k] = contextSeg{Text: printableByte(b), Crit: sev}

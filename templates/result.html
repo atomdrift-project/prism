@@ -1018,7 +1018,7 @@
             color: var(--slate);
             user-select: none;
             font-variant-numeric: tabular-nums;
-            border-right: 1px solid var(--mist);
+            border-right: 1px solid var(--border);
         }
         .ctx-code {
             padding-left: 14px !important;
@@ -1026,13 +1026,16 @@
             white-space: pre; /* lines are clipped server-side, so don't wrap */
         }
         .ctx-clip { color: var(--slate); user-select: none; }
-        /* Hex offset reads smaller and sits closer to the bytes than a source
-           line number does — it is an address, not the focus. */
-        .ctx-hex .ctx-loc { font-size: 11px; padding-right: 7px !important; }
-        .ctx-hex .ctx-bytes { padding: 1px 12px 1px 7px !important; color: var(--iron); }
+        /* Hex offset reads smaller (it is an address, not the focus) but keeps
+           the same gutter padding as a source line number for consistency.
+           Hex and ascii are one logical dump, so the gap between them is tight;
+           the gap from the divider to the bytes matches the source code inset. */
+        .ctx-hex .ctx-loc { font-size: 11px; }
+        .ctx-hex .ctx-bytes { padding: 1px 4px 1px 14px !important; color: var(--iron); }
         .ctx-hex .ctx-ascii { padding: 1px 14px 1px 0 !important; color: var(--slate); }
         .ctx-hex .ctx-bytes .ctx-cell { margin-right: 6px; }
         .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 14px; }
+        .ctx-hex .ctx-bytes .ctx-cell:last-child { margin-right: 0; }
         .ctx-cell { color: inherit; }
         /* The match highlight: a tinted background per severity, carried by the
            shared --hostile/--suspicious/--notable palette. mark resets the UA
@@ -1051,6 +1054,7 @@
             border-radius: 8px;
             margin-bottom: 18px;
             overflow: hidden;
+            background: var(--white);
         }
         .file-card:last-child { margin-bottom: 0; }
         .file-card-head {
@@ -1114,6 +1118,14 @@
            severity color matches the highlight color of its span in the code
            below. Windows sit flush inside the file card, divided by a hairline —
            no nested box. */
+        /* Footnote when the file cap dropped some files. */
+        .content-limit-note {
+            margin: 4px 2px 0;
+            padding: 10px 14px;
+            border-top: 1px solid var(--border);
+            color: var(--iron);
+            font-size: 12.5px;
+        }
         .win-section { padding: 3px 14px 5px; }
         .win-section + .win-section { border-top: 1px solid var(--mist); }
         /* The win-section already supplies the left inset, so the line-number
@@ -1124,6 +1136,24 @@
         .win-section .ctx-loc { padding-left: 0 !important; }
         .win-section .ctx-src .ctx-loc { width: calc(var(--ctx-loc-src-ch, 3) * 1ch); }
         .win-section .ctx-hex .ctx-loc { width: calc(var(--ctx-loc-hex-ch, 6) * 1ch); }
+        /* Freeze the line-number gutter and the trait annotation as sticky
+           columns so only the code scrolls horizontally — a long minified line
+           never pushes its description off-screen. They mask the scrolling code
+           with the card background (a hair greyer on a matched row, to match the
+           has-hit tint); a soft shadow marks where the code slides under. */
+        .win-section .ctx-loc,
+        .win-section .ctx-anno {
+            position: sticky;
+            z-index: 1;
+            background: var(--white);
+        }
+        .win-section .ctx-loc { left: 0; }
+        .win-section .ctx-anno {
+            right: 0;
+            box-shadow: -10px 0 8px -8px rgba(0, 0, 0, 0.07);
+        }
+        .win-section .ctx-row.has-hit .ctx-loc,
+        .win-section .ctx-row.has-hit .ctx-anno { background: var(--cream); }
         /* Inline trait annotation — cleave's trailing `// desc`, on the line its
            match begins. A severity dot + the description, dimmed and pushed to
            the right so the code stays the focus. Replaces the chip header, so a
@@ -1136,7 +1166,7 @@
             vertical-align: baseline;
         }
         .anno {
-            font-size: 11.5px;
+            font-size: 12.5px;
             color: var(--iron);
         }
         .anno + .anno { margin-left: 14px; }
@@ -1787,6 +1817,9 @@
                     {{end}}
                 </section>
                 {{end}}
+                {{end}}
+                {{if .FilesOmitted}}
+                <p class="content-limit-note">Showing the top {{.FilesShownLimit}} files for legibility — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}result{{else}}results{{end}}) hidden. Open a file directly to see its full context.</p>
                 {{end}}
             </div>
             {{end}}

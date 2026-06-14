@@ -26,9 +26,22 @@ import (
 // note for them, which already encodes its own threshold.)
 const minFileCrit = 3
 
-// maxFileWindows bounds how many context windows the tab renders across all
-// files, allocated in criticality order so the page stays focused.
-const maxFileWindows = 14
+// maxWindowsPerFile caps the context windows shown for a single file — its
+// strongest, in file order. maxFilesShown caps how many files render at all;
+// the rest (lower criticality) are omitted with a note, so a large archive
+// stays legible instead of rendering hundreds of windows.
+const (
+	maxWindowsPerFile = 12
+	maxFilesShown     = 10
+)
+
+// contentOmitted counts what the file cap dropped from the Content tab: how many
+// files, and how many results (context windows + composite findings) those files
+// held — both surfaced in the "results limited" note.
+type contentOmitted struct {
+	Files   int
+	Results int
+}
 
 // fileView is one file's section in the Content tab.
 type fileView struct {
@@ -69,8 +82,10 @@ type compositeLink struct {
 }
 
 // buildFileViews assembles the Content tab from cleave's per-file context and
-// findings. Returns nil when no file carries current-format context.
-func buildFileViews(files []cleaveFile) []fileView {
+// findings. The second return reports what the maxFilesShown cap dropped, for
+// the "results limited" note. Returns nil when no file carries current-format
+// context.
+func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 	rich := false
 	for i := range files {
 		if hasRichContext(&files[i]) {
@@ -79,7 +94,7 @@ func buildFileViews(files []cleaveFile) []fileView {
 		}
 	}
 	if !rich {
-		return nil
+		return nil, contentOmitted{}
 	}
 
 	idToFile := make(map[int]*cleaveFile, len(files))
@@ -89,7 +104,7 @@ func buildFileViews(files []cleaveFile) []fileView {
 
 	type fileData struct {
 		file       *cleaveFile
-		windows    []fileWindow
+		lws        []labeledWindow
 		composites []*finding
 		maxCrit    int
 	}
@@ -104,7 +119,7 @@ func buildFileViews(files []cleaveFile) []fileView {
 			for _, n := range lw.Notes {
 				shown[n.ID] = true // covered by a window; skip as a bare composite
 			}
-			fd.windows = append(fd.windows, fileWindow{Blocks: []contextBlock{lw.Block}})
+			fd.lws = append(fd.lws, lw)
 			if lw.Crit > fd.maxCrit {
 				fd.maxCrit = lw.Crit
 			}
@@ -126,35 +141,38 @@ func buildFileViews(files []cleaveFile) []fileView {
 			return fd.composites[a].Crit > fd.composites[b].Crit
 		})
 
-		if len(fd.windows) > 0 || len(fd.composites) > 0 {
+		if len(fd.lws) > 0 || len(fd.composites) > 0 {
 			datas = append(datas, fd)
 		}
 	}
 	if len(datas) == 0 {
-		return nil
+		return nil, contentOmitted{}
 	}
 
 	sort.SliceStable(datas, func(a, b int) bool { return datas[a].maxCrit > datas[b].maxCrit })
 
-	// Allocate the window budget across files in criticality order, then record
-	// which files actually render so composite links never dangle.
-	budget := maxFileWindows
+	// Show the top maxFilesShown files (by criticality); the rest are omitted
+	// with a note tallying the files and the results (windows + composites) they
+	// held. Cap each shown file to its strongest maxWindowsPerFile windows.
+	// Record which files render first so composite member links only point at
+	// sections that exist.
+	var omitted contentOmitted
+	if len(datas) > maxFilesShown {
+		for _, fd := range datas[maxFilesShown:] {
+			omitted.Files++
+			omitted.Results += len(fd.lws) + len(fd.composites)
+		}
+		datas = datas[:maxFilesShown]
+	}
 	rendered := make(map[string]bool)
 	for d := range datas {
-		n := min(len(datas[d].windows), budget)
-		datas[d].windows = datas[d].windows[:n]
-		budget -= n
-		if len(datas[d].windows) > 0 || len(datas[d].composites) > 0 {
-			rendered[datas[d].file.SHA256] = true
-		}
+		datas[d].lws = capWindows(datas[d].lws)
+		rendered[datas[d].file.SHA256] = true
 	}
 
 	views := make([]fileView, 0, len(datas))
 	for d := range datas {
 		fd := &datas[d]
-		if len(fd.windows) == 0 && len(fd.composites) == 0 {
-			continue
-		}
 		view := fileView{
 			Path:     displayPath(fd.file.Path),
 			Filename: extractBasename(fd.file.Path),
@@ -162,7 +180,9 @@ func buildFileViews(files []cleaveFile) []fileView {
 			SHA256:   fd.file.SHA256,
 			Anchor:   "file-" + fd.file.SHA256,
 			Crit:     critIntToString(fd.maxCrit),
-			Windows:  fd.windows,
+		}
+		for _, lw := range fd.lws {
+			view.Windows = append(view.Windows, fileWindow{Blocks: []contextBlock{lw.Block}})
 		}
 		for _, f := range fd.composites {
 			view.Composites = append(view.Composites, compositeFinding{
@@ -174,7 +194,20 @@ func buildFileViews(files []cleaveFile) []fileView {
 		}
 		views = append(views, view)
 	}
-	return views
+	return views, omitted
+}
+
+// capWindows keeps a file's strongest maxWindowsPerFile windows but renders them
+// in file order, so the most important context survives the cap while the view
+// still reads top-to-bottom by offset.
+func capWindows(lws []labeledWindow) []labeledWindow {
+	if len(lws) <= maxWindowsPerFile {
+		return lws
+	}
+	sort.SliceStable(lws, func(i, j int) bool { return lws[i].Crit > lws[j].Crit })
+	lws = lws[:maxWindowsPerFile]
+	sort.SliceStable(lws, func(i, j int) bool { return lws[i].Start < lws[j].Start })
+	return lws
 }
 
 // contentLocCh returns the widest Loc string for source line numbers and for

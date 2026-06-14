@@ -35,7 +35,7 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 		},
 	}
 
-	views := buildFileViews(files)
+	views, _ := buildFileViews(files)
 	if len(views) != 2 {
 		t.Fatalf("want 2 file views, got %d: %+v", len(views), views)
 	}
@@ -84,7 +84,7 @@ func TestFileViewsDropsContextless(t *testing.T) {
 			Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: 5}},
 		}},
 	}
-	views := buildFileViews([]cleaveFile{file})
+	views, _ := buildFileViews([]cleaveFile{file})
 	if len(views) != 1 {
 		t.Fatalf("want 1 view, got %d", len(views))
 	}
@@ -109,6 +109,38 @@ func windowAnnos(w fileWindow) []string {
 	return out
 }
 
+// TestFileViewsFileCap confirms the Content tab shows at most maxFilesShown
+// files (by criticality) and reports the omitted files and their results.
+func TestFileViewsFileCap(t *testing.T) {
+	total := maxFilesShown + 3
+	files := make([]cleaveFile, 0, total)
+	for i := range total {
+		sha := "sha" + itoaTest(i)
+		// Higher index → higher criticality, so the first maxFilesShown by
+		// criticality are the last ones built; the rest are omitted.
+		crit := 3 + i%3
+		files = append(files, cleaveFile{
+			ID: i, Depth: 1, SHA256: sha, Path: "a.zip!!f" + itoaTest(i) + ".py", FileType: "python",
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9}},
+			Ctx: []contextWindow{{
+				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
+				Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: crit}},
+			}},
+		})
+	}
+	views, omitted := buildFileViews(files)
+	if len(views) != maxFilesShown {
+		t.Errorf("rendered %d files, want the cap of %d", len(views), maxFilesShown)
+	}
+	if omitted.Files != total-maxFilesShown {
+		t.Errorf("omitted.Files = %d, want %d", omitted.Files, total-maxFilesShown)
+	}
+	// Each omitted file held exactly one window (one result).
+	if omitted.Results != total-maxFilesShown {
+		t.Errorf("omitted.Results = %d, want %d", omitted.Results, total-maxFilesShown)
+	}
+}
+
 // TestFileViewsNoContextNil confirms a legacy report with no current-format
 // context yields no File tab, so the page keeps Traits as its default.
 func TestFileViewsNoContextNil(t *testing.T) {
@@ -116,7 +148,7 @@ func TestFileViewsNoContextNil(t *testing.T) {
 		ID: 0, Depth: 0, SHA256: "aaa", Path: "x.py",
 		Findings: []finding{{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9}},
 	}}
-	if views := buildFileViews(files); views != nil {
+	if views, _ := buildFileViews(files); views != nil {
 		t.Errorf("no rich context should yield nil views, got %+v", views)
 	}
 }

@@ -765,6 +765,13 @@ type resultData struct {
 	// hex-offset column shares one width and the columns line up within and
 	// between files. Empty when there are no file views.
 	ContentLocStyle template.HTMLAttr
+	// FilesOmitted / ResultsOmitted count the files and the results (windows +
+	// composites) the Content tab dropped to stay legible; FilesShownLimit is
+	// the per-page file cap. When FilesOmitted > 0 the tab shows a "results
+	// limited" note tallying both.
+	FilesOmitted    int
+	ResultsOmitted  int
+	FilesShownLimit int
 	// Provenance is the grouped origin record shown in the Provenance tab:
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
@@ -5719,7 +5726,13 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// The File tab renders cleave's per-file context view and, when present,
 	// becomes the default tab. It is populated only for reports carrying
 	// current-format context, so legacy samples keep Traits as the default.
-	data.FileViews = buildFileViews(report.Files)
+	var omitted contentOmitted
+	data.FileViews, omitted = buildFileViews(report.Files)
+	if omitted.Files > 0 {
+		data.FilesOmitted = omitted.Files
+		data.ResultsOmitted = omitted.Results
+		data.FilesShownLimit = maxFilesShown
+	}
 	if src, hex := contentLocCh(data.FileViews); src > 0 || hex > 0 {
 		data.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, src, hex))
 	}
