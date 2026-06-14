@@ -48,6 +48,7 @@ func TestResultTemplateParses(t *testing.T) {
 		{name: "file_view", data: fileViewData(), want: []string{
 			"tab-content", "file-card", "ctx-hit hostile", "composed from",
 			`href="#file-cafe"`, "loader.js",
+			`file-finding hostile`, `sev-tag hostile`,
 		}},
 	}
 	for _, c := range cases {

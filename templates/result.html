@@ -1055,7 +1055,7 @@
             background: var(--mist);
             border-bottom: 1px solid var(--border);
         }
-        .file-name {
+        .fcard-name {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 13px;
             font-weight: 600;
@@ -1064,28 +1064,50 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        .file-type {
+        .fcard-type {
             margin-left: auto;
             font-size: 11px;
             letter-spacing: 0.04em;
             color: var(--iron);
             text-transform: uppercase;
         }
+        /* Each finding carries a severity accent — a colored left rail plus a
+           small severity tag — so the eye groups hostile / suspicious / notable
+           as it scans down the card. The tag also names the severity, so the
+           cue isn't carried by color alone. */
         .file-finding {
-            padding: 12px 16px;
+            padding: 11px 16px 12px;
             border-top: 1px solid var(--mist);
+            border-left: 3px solid var(--border);
         }
         .file-finding:first-of-type { border-top: none; }
+        .file-finding.hostile { border-left-color: var(--hostile); }
+        .file-finding.suspicious { border-left-color: var(--suspicious); }
+        .file-finding.notable { border-left-color: var(--notable); }
         .file-finding-head {
             display: grid;
-            grid-template-columns: 24em 1fr;
-            gap: 14px;
+            grid-template-columns: auto minmax(12em, 22em) 1fr;
+            gap: 6px 12px;
             align-items: baseline;
             margin-bottom: 8px;
         }
         @media (max-width: 640px) {
-            .file-finding-head { grid-template-columns: 1fr; gap: 2px; }
+            .file-finding-head { grid-template-columns: auto 1fr; }
+            .file-finding .trait-desc { grid-column: 1 / -1; }
         }
+        .sev-tag {
+            align-self: center;
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            padding: 1px 6px;
+            border-radius: 3px;
+            color: #fff;
+        }
+        .sev-tag.hostile { background: var(--hostile); }
+        .sev-tag.suspicious { background: var(--suspicious); color: #422006; }
+        .sev-tag.notable { background: var(--notable); }
         .file-finding .trait-id {
             font-family: 'SF Mono', Consolas, monospace;
             font-size: 12px;
@@ -1731,12 +1753,13 @@
                 <section class="file-card" id="{{.Anchor}}">
                     <header class="file-card-head">
                         <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-                        <span class="file-name" title="{{.Path}}">{{.Filename}}</span>
-                        {{if .FileType}}<span class="file-type">{{.FileType}}</span>{{end}}
+                        <span class="fcard-name" title="{{.Path}}">{{.Filename}}</span>
+                        {{if .FileType}}<span class="fcard-type">{{.FileType}}</span>{{end}}
                     </header>
                     {{range .Findings}}
-                    <div class="file-finding">
+                    <div class="file-finding {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
                         <div class="file-finding-head">
+                            <span class="sev-tag {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span>
                             <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                             <span class="trait-desc">{{.Desc}}</span>
                         </div>
