@@ -634,6 +634,9 @@
         .tab-content.active {
             display: block;
         }
+        /* Breathing room between the tab strip and the first card so a tinted
+           composite doesn't crowd the tab indicator. */
+        #tab-content { padding-top: 16px; }
 
         .findings-output {
             background: var(--carbon);
@@ -1052,6 +1055,7 @@
             align-items: center;
             gap: 10px;
             padding: 11px 16px;
+            margin-bottom: 4px; /* override the global header { margin-bottom: 40px } */
             background: var(--mist);
             border-bottom: 1px solid var(--border);
         }
@@ -1071,74 +1075,81 @@
             color: var(--iron);
             text-transform: uppercase;
         }
-        /* Each finding carries a severity accent — a colored left rail plus a
-           small severity tag — so the eye groups hostile / suspicious / notable
-           as it scans down the card. The tag also names the severity, so the
-           cue isn't carried by color alone. */
-        .file-finding {
-            padding: 11px 16px 12px;
-            border-top: 1px solid var(--mist);
+        /* Composite card — a cross-file conclusion with no code of its own. One
+           tight line: the description, then the members it drew from as
+           "file:line". Carries its severity as a soft tint plus a left rail,
+           inset slightly so it reads as the archive-level summary, not just
+           another file. Tints match the verdict-bar / galaxy palette. */
+        .comp-card {
+            padding: 9px 14px;
+            margin: 0 10px 14px;
+            background: var(--white);
+            border: 1px solid var(--border);
             border-left: 3px solid var(--border);
+            border-radius: 8px;
+            font-size: 12.5px;
+            line-height: 1.5;
         }
-        .file-finding:first-of-type { border-top: none; }
-        .file-finding.hostile { border-left-color: var(--hostile); }
-        .file-finding.suspicious { border-left-color: var(--suspicious); }
-        .file-finding.notable { border-left-color: var(--notable); }
-        .file-finding-head {
-            display: grid;
-            grid-template-columns: auto minmax(12em, 22em) 1fr;
-            gap: 6px 12px;
-            align-items: baseline;
-            margin-bottom: 8px;
-        }
-        @media (max-width: 640px) {
-            .file-finding-head { grid-template-columns: auto 1fr; }
-            .file-finding .trait-desc { grid-column: 1 / -1; }
-        }
-        .sev-tag {
-            align-self: center;
-            font-size: 9.5px;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            padding: 1px 6px;
-            border-radius: 3px;
-            color: #fff;
-        }
-        .sev-tag.hostile { background: var(--hostile); }
-        .sev-tag.suspicious { background: var(--suspicious); color: #422006; }
-        .sev-tag.notable { background: var(--notable); }
-        .file-finding .trait-id {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--carbon);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .file-finding .trait-desc { font-size: 13px; color: var(--iron); }
-        /* Composite trail: the members a cross-file conclusion drew from. */
+        .comp-card.hostile { border-left-color: var(--hostile); border-color: rgba(239, 68, 68, 0.22); background: rgba(239, 68, 68, 0.07); }
+        .comp-card.suspicious { border-left-color: var(--suspicious); border-color: rgba(234, 179, 8, 0.26); background: rgba(234, 179, 8, 0.09); }
+        .comp-card.notable { border-left-color: var(--notable); border-color: rgba(59, 130, 246, 0.22); background: rgba(59, 130, 246, 0.06); }
+        .comp-desc { color: var(--carbon); }
+        /* Composite trail: the members a cross-file conclusion drew from, inline
+           after the description — "file:line, file:line". */
         .composite-trail {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: baseline;
-            gap: 6px 10px;
-            margin-bottom: 8px;
-            font-size: 12px;
-        }
-        .composite-label {
-            color: var(--slate);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-size: 10.5px;
-        }
-        .composite-src {
             font-family: 'SF Mono', Consolas, monospace;
-            color: var(--carbon);
+            font-size: 11.5px;
+            color: var(--slate);
         }
+        .composite-src { color: var(--slate); }
         .composite-src a { color: var(--notable); text-decoration: none; }
         .composite-src a:hover { text-decoration: underline; }
-        .composite-loc { margin-left: 5px; color: var(--slate); }
+        .composite-loc { color: var(--slate); }
+
+        /* Content window: cleave's content-centric unit — one context window
+           headed by chips for the traits whose notes land inside it. Each chip's
+           severity color matches the highlight color of its span in the code
+           below. Windows sit flush inside the file card, divided by a hairline —
+           no nested box. */
+        .win-section { padding: 3px 14px 5px; }
+        .win-section + .win-section { border-top: 1px solid var(--mist); }
+        /* The win-section already supplies the left inset, so the line-number
+           column hugs it — no doubled-up gutter before the code. */
+        .win-section .ctx-loc { padding-left: 0 !important; }
+        /* Inline trait annotation — cleave's trailing `// desc`, on the line its
+           match begins. A severity dot + the description, dimmed and pushed to
+           the right so the code stays the focus. Replaces the chip header, so a
+           window carries no vertical header cost at all. */
+        .ctx-anno {
+            width: 1%;
+            white-space: nowrap;
+            padding: 0 0 0 28px !important;
+            text-align: right;
+            vertical-align: baseline;
+        }
+        .anno {
+            font-size: 11.5px;
+            color: var(--iron);
+        }
+        .anno + .anno { margin-left: 14px; }
+        .anno::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .anno.hostile::before { background: var(--hostile); }
+        .anno.suspicious::before { background: var(--suspicious); }
+        .anno.notable::before { background: var(--notable); }
+        /* The code sits flush inside the file card — drop the block's own frame
+           and background so it reads as part of the card, not a box-in-box. The
+           code column takes the slack so annotations align to the right edge. */
+        .win-section .ctx-view { gap: 0; padding: 0; }
+        .win-section .ctx-block { border: none; border-radius: 0; background: transparent; }
+        .win-section .ctx-code { width: 100%; }
         .crit-badge {
             display: inline-block;
             width: 14px;
@@ -1750,29 +1761,24 @@
             {{if .FileViews}}
             <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0">
                 {{range .FileViews}}
+                {{range .Composites}}
+                <div class="comp-card {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
+                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity cross-file finding. </span>
+                    <span class="comp-desc" title="{{.ID}}">{{if .Desc}}{{.Desc}}{{else}}{{.ID}}{{end}}</span>{{if .Sources}}<span class="composite-trail">{{range $i, $s := .Sources}}{{if $i}}, {{else}}: {{end}}<span class="composite-src">{{if $s.Anchor}}<a href="#{{$s.Anchor}}">{{$s.Label}}</a>{{else}}{{$s.Label}}{{end}}{{if $s.Loc}}<span class="composite-loc">:{{$s.Loc}}</span>{{end}}</span>{{end}}</span>{{end}}
+                </div>
+                {{end}}
+                {{if .Windows}}
                 <section class="file-card" id="{{.Anchor}}">
                     <header class="file-card-head">
                         <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
                         <span class="fcard-name" title="{{.Path}}">{{.Filename}}</span>
                         {{if .FileType}}<span class="fcard-type">{{.FileType}}</span>{{end}}
                     </header>
-                    {{range .Findings}}
-                    <div class="file-finding {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
-                        <div class="file-finding-head">
-                            <span class="sev-tag {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">{{if .Crit}}{{.Crit}}{{else}}notable{{end}}</span>
-                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
-                            <span class="trait-desc">{{.Desc}}</span>
-                        </div>
-                        {{if .Sources}}
-                        <div class="composite-trail">
-                            <span class="composite-label">composed from</span>
-                            {{range .Sources}}<span class="composite-src">{{if .Anchor}}<a href="#{{.Anchor}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}{{if .Loc}}<span class="composite-loc">{{.Loc}}</span>{{end}}</span>{{end}}
-                        </div>
-                        {{end}}
-                        {{if .Context}}{{template "ctxblocks" .Context}}{{end}}
-                    </div>
+                    {{range .Windows}}
+                    <div class="win-section">{{template "ctxblocks" .Blocks}}</div>
                     {{end}}
                 </section>
+                {{end}}
                 {{end}}
             </div>
             {{end}}
@@ -2083,6 +2089,7 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
 </body>
 </html>
+{{define "ctxanno"}}{{range .}}<span class="anno {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">{{.Desc}}</span>{{end}}{{end}}
 {{define "ctxblocks"}}
 <div class="ctx-view">
     {{range .}}
@@ -2093,6 +2100,7 @@
             <td class="ctx-loc">{{.Loc}}</td>
             <td class="ctx-bytes">{{range .Segs}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
             <td class="ctx-ascii">{{range .ASCII}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
+            <td class="ctx-anno">{{template "ctxanno" .Annos}}</td>
         </tr>
         {{end}}
     </tbody></table>
@@ -2102,6 +2110,7 @@
         <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
             <td class="ctx-loc">{{.Loc}}</td>
             <td class="ctx-code chroma">{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</td>
+            <td class="ctx-anno">{{template "ctxanno" .Annos}}</td>
         </tr>
         {{end}}
     </tbody></table>

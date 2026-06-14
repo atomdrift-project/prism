@@ -46,9 +46,10 @@ func TestResultTemplateParses(t *testing.T) {
 		{name: "archive_with_children", data: archiveData(), want: []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"}},
 		// File tab: per-file card, lit context span, and a linkable composite trail.
 		{name: "file_view", data: fileViewData(), want: []string{
-			"tab-content", "file-card", "ctx-hit hostile", "composed from",
+			"tab-content", "file-card", "ctx-hit hostile", "composite-trail",
 			`href="#file-cafe"`, "loader.js",
-			`file-finding hostile`, `sev-tag hostile`,
+			"win-section", "ctx-anno", `anno hostile`, "spawns a child process",
+			`comp-card hostile`, "beacons to a remote host", "loader.js",
 		}},
 	}
 	for _, c := range cases {
@@ -79,13 +80,17 @@ func fileViewData() resultData {
 	d.FileViews = []fileView{{
 		Path: "package/postinstall.js", Filename: "postinstall.js", FileType: "JS",
 		SHA256: "deadbeef", Anchor: "file-deadbeef", Crit: "hostile",
-		Findings: []fileFinding{{
-			ID: "execution/spawn", Desc: "spawns a child process", Crit: "hostile",
-			Context: []contextBlock{{Rows: []contextRow{{
-				Loc: "12", Crit: "hostile",
-				Segs: []contextSeg{{Text: "exec(", Crit: "hostile"}, {Text: "cmd)"}},
+		Composites: []compositeFinding{{
+			ID: "c2/beacon", Desc: "beacons to a remote host", Crit: "hostile",
+			Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "3"}},
+		}},
+		Windows: []fileWindow{{
+			Blocks: []contextBlock{{Rows: []contextRow{{
+				Loc:   "12",
+				Crit:  "hostile",
+				Segs:  []contextSeg{{Text: "exec(", Crit: "hostile"}, {Text: "cmd)"}},
+				Annos: []rowAnno{{Desc: "spawns a child process", Crit: "hostile"}},
 			}}}},
-			Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "line 3"}},
 		}},
 	}}
 	return d

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -76,12 +77,22 @@ type contextBlock struct {
 // number (source) or the byte offset (hex). Crit is the severity class of the
 // strongest match on the row, empty for a pure-context row. Segs holds the
 // source text split into plain/highlighted runs, or the hex byte cells; ASCII
-// holds the hex row's printable gutter.
+// holds the hex row's printable gutter. Annos are the trailing trait
+// annotations for matches that begin on this row (File view only).
 type contextRow struct {
 	Loc   string
 	Crit  string
 	Segs  []contextSeg
 	ASCII []contextSeg
+	Annos []rowAnno
+}
+
+// rowAnno is one trailing annotation on a context row: a trait's description in
+// its severity color, shown once on the line where its match begins — cleave's
+// inline `// desc` comment, brought to the web.
+type rowAnno struct {
+	Desc string
+	Crit string
 }
 
 // contextSeg is one run of row content. A non-empty Crit marks it as part of a
@@ -100,44 +111,135 @@ const hexStride = 16
 // can't blow up the page. Comfortably above cleave's per-match line budgets.
 const maxContextRows = 48
 
+// groupCtxWindows splits a file's `ctx` into render groups: contiguous source
+// lines (matching line numbers) merge into one group; hex units and minified
+// text slices each stand alone. Entries with no decoded bytes (legacy windows)
+// are skipped. Each returned slice is a sub-slice of file.Ctx in file order.
+func groupCtxWindows(ctx []contextWindow) [][]contextWindow {
+	var groups [][]contextWindow
+	for i := 0; i < len(ctx); {
+		if ctx[i].Data == nil {
+			i++
+			continue
+		}
+		if ctx[i].Hex || ctx[i].Addr == nil {
+			groups = append(groups, ctx[i:i+1])
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(ctx) && ctx[j].Data != nil && !ctx[j].Hex &&
+			ctx[j].Addr != nil && ctx[j].Offset == ctx[j-1].Offset+1 {
+			j++
+		}
+		groups = append(groups, ctx[i:j])
+		i = j
+	}
+	return groups
+}
+
 // buildContextBlocks renders a file's `ctx` windows. When filterID is non-empty
 // only windows carrying a note for that trait are kept and only that trait's
-// spans are lit; an empty filterID keeps every window and lights every note
-// (the File-tab view). Returns nil when the file has no current-format context,
-// so callers fall back to the legacy inline-evidence path.
+// spans are lit; an empty filterID keeps every window and lights every note.
+// Returns nil when the file has no current-format context, so callers fall back
+// to the legacy inline-evidence path.
 func buildContextBlocks(file *cleaveFile, filterID string) []contextBlock {
 	if !hasRichContext(file) {
 		return nil
 	}
 	filename := extractBasename(file.Path)
 	var blocks []contextBlock
-	for i := 0; i < len(file.Ctx); {
-		win := &file.Ctx[i]
-		if win.Data == nil {
-			i++
-			continue
-		}
-		// Source lines (Addr set, not hex) merge into one block while their line
-		// numbers stay contiguous; hex units and minified text slices each stand
-		// alone.
-		if win.Hex || win.Addr == nil {
-			if block, ok := renderWindow(file.Ctx[i:i+1], filterID, filename); ok {
-				blocks = append(blocks, block)
-			}
-			i++
-			continue
-		}
-		j := i + 1
-		for j < len(file.Ctx) && file.Ctx[j].Data != nil && !file.Ctx[j].Hex &&
-			file.Ctx[j].Addr != nil && file.Ctx[j].Offset == file.Ctx[j-1].Offset+1 {
-			j++
-		}
-		if block, ok := renderWindow(file.Ctx[i:j], filterID, filename); ok {
+	for _, g := range groupCtxWindows(file.Ctx) {
+		if block, ok := renderWindow(g, filterID, filename, nil); ok {
 			blocks = append(blocks, block)
 		}
-		i = j
 	}
 	return blocks
+}
+
+// ctxNoteRef is one trait whose notes fall inside a context window: its full id,
+// the strongest severity it carries there, and a description when the note (or
+// caller) supplies one.
+type ctxNoteRef struct {
+	ID   string
+	Desc string
+	Crit int
+}
+
+// labeledWindow is a rendered context window plus the traits annotating it — the
+// content-centric unit the File tab renders: show the content once, label it
+// with every trait whose note lands inside.
+type labeledWindow struct {
+	Notes []ctxNoteRef
+	Block contextBlock
+	Start int64 // first window offset, for file-order placement
+	Crit  int   // strongest note severity in the window
+}
+
+// labeledWindows renders a file's context windows once each, every note lit, and
+// pairs each with the distinct traits whose notes fall inside it (severity-desc).
+// Windows that carry no note are dropped — pure surrounding context belongs to a
+// neighboring matched window, not on its own. Returns nil without rich context.
+func labeledWindows(file *cleaveFile) []labeledWindow {
+	if !hasRichContext(file) {
+		return nil
+	}
+	filename := extractBasename(file.Path)
+	// Description fallback for a note that carries none: the finding's own desc.
+	descByID := make(map[string]string, len(file.Findings))
+	for i := range file.Findings {
+		if file.Findings[i].Desc != "" {
+			descByID[file.Findings[i].ID] = file.Findings[i].Desc
+		}
+	}
+	var out []labeledWindow
+	for _, g := range groupCtxWindows(file.Ctx) {
+		notes := windowNotes(g)
+		if len(notes) == 0 {
+			continue
+		}
+		block, ok := renderWindow(g, "", filename, descByID)
+		if !ok {
+			continue
+		}
+		out = append(out, labeledWindow{Notes: notes, Block: block, Start: g[0].Offset, Crit: notes[0].Crit})
+	}
+	return out
+}
+
+// windowNotes collects the distinct traits annotating a window group, keeping
+// the strongest severity and first non-empty description per trait, ordered
+// severity-desc then id-asc for a stable, scannable header.
+func windowNotes(group []contextWindow) []ctxNoteRef {
+	byID := make(map[string]*ctxNoteRef)
+	var order []string
+	for w := range group {
+		for _, n := range group[w].Notes {
+			ref, ok := byID[n.ID]
+			if !ok {
+				order = append(order, n.ID)
+				byID[n.ID] = &ctxNoteRef{ID: n.ID, Desc: n.Desc, Crit: n.Crit}
+				continue
+			}
+			if n.Crit > ref.Crit {
+				ref.Crit = n.Crit
+			}
+			if ref.Desc == "" {
+				ref.Desc = n.Desc
+			}
+		}
+	}
+	refs := make([]ctxNoteRef, 0, len(order))
+	for _, id := range order {
+		refs = append(refs, *byID[id])
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Crit != refs[j].Crit {
+			return refs[i].Crit > refs[j].Crit
+		}
+		return refs[i].ID < refs[j].ID
+	})
+	return refs
 }
 
 // contextForTraits gathers the rendered context windows for a set of full trait
@@ -190,14 +292,51 @@ func hasRichContext(file *cleaveFile) bool {
 
 // renderWindow renders one window (a run of source lines, or a single hex/text
 // unit). It reports false when filtering to a trait the window never mentions.
-func renderWindow(windows []contextWindow, filterID, filename string) (contextBlock, bool) {
+// descByID, when non-nil, enables trailing trait annotations (the File view);
+// the Traits-tab expansion passes nil since its card already names the trait.
+func renderWindow(windows []contextWindow, filterID, filename string, descByID map[string]string) (contextBlock, bool) {
 	if filterID != "" && !windowsMatchTrait(windows, filterID) {
 		return contextBlock{}, false
 	}
+	annotated := map[string]bool{} // a trait annotates once per window, on its first line
 	if windows[0].Hex {
-		return renderHexWindow(&windows[0], filterID), true
+		return renderHexWindow(&windows[0], filterID, descByID, annotated), true
 	}
-	return renderSourceWindow(windows, filterID, filename), true
+	return renderSourceWindow(windows, filterID, filename, descByID, annotated), true
+}
+
+// rowAnnos collects the trailing annotations for matches that begin within a
+// row's byte range [base, base+n). Each trait annotates at most once per window
+// (tracked in annotated), strongest-severity first. desc falls back to the
+// finding's description (descByID) and finally the trait's short id. Returns nil
+// when descByID is nil (annotations disabled).
+func rowAnnos(notes []contextNote, base int64, n int, descByID map[string]string, annotated map[string]bool) []rowAnno {
+	if descByID == nil {
+		return nil
+	}
+	sorted := make([]contextNote, 0, len(notes))
+	for _, note := range notes {
+		if off := note.Offset - base; off >= 0 && off < int64(n) {
+			sorted = append(sorted, note)
+		}
+	}
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Crit > sorted[j].Crit })
+	var out []rowAnno
+	for _, note := range sorted {
+		if annotated[note.ID] {
+			continue
+		}
+		annotated[note.ID] = true
+		desc := note.Desc
+		if desc == "" {
+			desc = descByID[note.ID]
+		}
+		if desc == "" {
+			desc = traitDisplayID(note.ID)
+		}
+		out = append(out, rowAnno{Desc: desc, Crit: critIntToString(note.Crit)})
+	}
+	return out
 }
 
 func windowsMatchTrait(windows []contextWindow, filterID string) bool {
@@ -214,7 +353,7 @@ func windowsMatchTrait(windows []contextWindow, filterID string) bool {
 // renderSourceWindow renders a run of source lines: each line numbered, its
 // code syntax-highlighted, and its matched span(s) lit by severity. Lit notes
 // are restricted to filterID when set; filename selects the chroma lexer.
-func renderSourceWindow(windows []contextWindow, filterID, filename string) contextBlock {
+func renderSourceWindow(windows []contextWindow, filterID, filename string, descByID map[string]string, annotated map[string]bool) contextBlock {
 	block := contextBlock{}
 	for w := range windows {
 		if len(block.Rows) >= maxContextRows {
@@ -227,9 +366,10 @@ func renderSourceWindow(windows []contextWindow, filterID, filename string) cont
 		}
 		spans, crit := spansForRow(win.Notes, base, len(win.Data), filterID)
 		block.Rows = append(block.Rows, contextRow{
-			Loc:  strconv.FormatInt(win.Offset, 10),
-			Crit: crit,
-			Segs: highlightedSegs(string(win.Data), spans, filename),
+			Loc:   strconv.FormatInt(win.Offset, 10),
+			Crit:  crit,
+			Segs:  highlightedSegs(string(win.Data), spans, filename),
+			Annos: rowAnnos(win.Notes, base, len(win.Data), descByID, annotated),
 		})
 	}
 	return block
@@ -284,7 +424,7 @@ func appendSpanSegs(segs []contextSeg, text string, spans []rowSpan, start, end 
 
 // renderHexWindow renders one hex unit as `hexStride`-byte rows with the matched
 // bytes lit. The unit's bytes begin at win.Offset.
-func renderHexWindow(win *contextWindow, filterID string) contextBlock {
+func renderHexWindow(win *contextWindow, filterID string, descByID map[string]string, annotated map[string]bool) contextBlock {
 	block := contextBlock{Hex: true}
 	for start := 0; start < len(win.Data); start += hexStride {
 		if len(block.Rows) >= maxContextRows {
@@ -305,6 +445,7 @@ func renderHexWindow(win *contextWindow, filterID string) contextBlock {
 			Crit:  crit,
 			Segs:  hexCells,
 			ASCII: asciiCells,
+			Annos: rowAnnos(win.Notes, rowBase, len(row), descByID, annotated),
 		})
 	}
 	return block
