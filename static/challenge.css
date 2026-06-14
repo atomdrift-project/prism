@@ -9,6 +9,7 @@
   --card: #161b22;
   --border: #30363d;
   --accent: #58a6ff;
+  --answer: #fff3b0;
 }
 
 * {
@@ -18,6 +19,8 @@
 body {
   margin: 0;
   min-height: 100vh;
+  /* Clip the spinning card's corners so it never spawns scrollbars. */
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -28,8 +31,8 @@ body {
   text-align: center;
 }
 
-/* The whole card does one slow 360° spin-in on arrival — the "page spins
-   around" — then settles upright and usable. */
+/* The whole page spins, slowly, forever — but pauses the moment you hover it
+   (desktop) or focus the answer box (mobile), so a human can actually solve it. */
 main {
   max-width: 28rem;
   padding: 2.5rem 2rem;
@@ -37,15 +40,18 @@ main {
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  animation: spin-in 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: spin 16s linear infinite;
 }
 
-/* The robot keeps spinning, slowly, forever — it's a little dizzy. */
+main:hover,
+main:focus-within {
+  animation-play-state: paused;
+}
+
 img {
-  width: 200px;
+  width: 160px;
   height: auto;
   border-radius: 12px;
-  animation: spin 7s linear infinite;
 }
 
 h1 {
@@ -60,27 +66,48 @@ p {
   line-height: 1.5;
 }
 
-label {
-  display: block;
-  margin: 1.4rem 0;
-  font-size: 1.15rem;
+/* The big, funky math problem. */
+.equation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 1.6rem 0;
+  font-family: "Comic Sans MS", "Chalkboard SE", ui-rounded, system-ui, sans-serif;
+  font-size: clamp(1.9rem, 9vw, 2.8rem);
+  font-weight: 800;
 }
 
-input[type="text"] {
-  width: 5rem;
-  margin-top: 0.6rem;
-  padding: 0.5rem 0.7rem;
-  font-size: 1.15rem;
+.num {
+  display: inline-block;
+  color: var(--accent);
+  text-shadow: 0 0 14px rgba(88, 166, 255, 0.6);
+  transform: rotate(-5deg);
+}
+
+.num:last-of-type {
+  transform: rotate(5deg);
+}
+
+.op {
+  color: var(--muted);
+}
+
+.equation input {
+  width: 4.5rem;
+  padding: 0.1rem 0.4rem;
+  font: inherit;
   text-align: center;
-  color: var(--fg);
+  color: var(--answer);
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 3px dashed var(--accent);
+  border-radius: 12px;
 }
 
 button {
-  padding: 0.6rem 1.4rem;
-  font-size: 1rem;
+  margin-top: 0.4rem;
+  padding: 0.7rem 1.6rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: #08111f;
   background: var(--accent);
@@ -99,21 +126,9 @@ button:hover {
   }
 }
 
-@keyframes spin-in {
-  from {
-    transform: rotate(-360deg) scale(0.6);
-    opacity: 0;
-  }
-  to {
-    transform: rotate(0) scale(1);
-    opacity: 1;
-  }
-}
-
-/* Respect users who ask for less motion: hold everything still. */
+/* Respect users who ask for less motion: hold the page still. */
 @media (prefers-reduced-motion: reduce) {
-  main,
-  img {
+  main {
     animation: none;
   }
 }

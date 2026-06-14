@@ -196,8 +196,14 @@ it's gotten dizzy. Prove there's a human at the wheel and we'll wave you through
 <form method="POST" action="/_/challenge">
 <input type="hidden" name="token" value="{{.Token}}">
 <input type="hidden" name="next" value="{{.Next}}">
-<label>Quick, while the robot recovers — what is {{.A}} + {{.B}}?
-<input type="text" name="answer" inputmode="numeric" autocomplete="off" autofocus></label>
+<p>Quick, while the robot recovers:</p>
+<div class="equation">
+<span class="num">{{.A}}</span>
+<span class="op">+</span>
+<span class="num">{{.B}}</span>
+<span class="op">=</span>
+<input type="text" name="answer" inputmode="numeric" autocomplete="off" aria-label="Your answer">
+</div>
 <button type="submit">I'm (probably) human</button>
 </form>
 </main>

@@ -1004,6 +1004,9 @@
             border: 1px solid var(--border);
             border-radius: 6px;
             overflow: hidden;
+            /* Monospace so the hex/ascii grid lines up; source rows bring their
+               own monospace via the chroma class, but the hex rows do not. */
+            font-family: 'SF Mono', Consolas, monospace;
         }
         .ctx-row td {
             padding: 1px 0;
@@ -1033,9 +1036,13 @@
         .ctx-hex .ctx-loc { font-size: 11px; }
         .ctx-hex .ctx-bytes { padding: 1px 4px 1px 14px !important; color: var(--iron); }
         .ctx-hex .ctx-ascii { padding: 1px 14px 1px 0 !important; color: var(--slate); }
-        .ctx-hex .ctx-bytes .ctx-cell { margin-right: 6px; }
-        .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 14px; }
+        /* Fixed-width cells make the grid a function of layout, not glyph
+           metrics: each hex pair is a 2ch box, each ascii char a 1ch box, so the
+           columns line up within a window and across files regardless of font. */
+        .ctx-hex .ctx-bytes .ctx-cell { display: inline-block; width: 2ch; margin-right: 0.5ch; }
+        .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 1.25ch; }
         .ctx-hex .ctx-bytes .ctx-cell:last-child { margin-right: 0; }
+        .ctx-hex .ctx-ascii .ctx-cell { display: inline-block; width: 1ch; }
         .ctx-cell { color: inherit; }
         /* The match highlight: a tinted background per severity, carried by the
            shared --hostile/--suspicious/--notable palette. mark resets the UA
@@ -1129,13 +1136,15 @@
         .win-section { padding: 3px 14px 5px; }
         .win-section + .win-section { border-top: 1px solid var(--mist); }
         /* The win-section already supplies the left inset, so the line-number
-           column hugs it — no doubled-up gutter before the code. The fixed
-           width (widest loc on the page, via --ctx-loc-ch) makes every window's
-           loc column the same size, so columns line up within and between files;
-           the values stay right-aligned against the divider. */
+           column hugs it — no doubled-up gutter before the code. Source loc
+           columns size to the widest loc on the page (--ctx-loc-src-ch) so every
+           window in a file lines up. The hex offset uses a fixed width instead, so
+           the bytes/ascii grid starts at the same place across different files
+           too; an unusually large offset simply widens that one file's column.
+           Values stay right-aligned against the divider. */
         .win-section .ctx-loc { padding-left: 0 !important; }
         .win-section .ctx-src .ctx-loc { width: calc(var(--ctx-loc-src-ch, 3) * 1ch); }
-        .win-section .ctx-hex .ctx-loc { width: calc(var(--ctx-loc-hex-ch, 6) * 1ch); }
+        .win-section .ctx-hex .ctx-loc { width: 9ch; }
         /* Freeze the line-number gutter and the trait annotation as sticky
            columns so only the code scrolls horizontally — a long minified line
            never pushes its description off-screen. They mask the scrolling code
