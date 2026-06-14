@@ -132,6 +132,42 @@ func TestLitmusMlResponseV7Verdict(t *testing.T) {
 	}
 }
 
+// TestLitmusMlResponseLLM confirms the optional `llm` interpretation object is
+// parsed when present and left nil otherwise (the common case).
+func TestLitmusMlResponseLLM(t *testing.T) {
+	raw := `{"v":"7","prob":0.37,"lvl":-1,"conf":0,` +
+		`"llm":{"grade":"benign","outcome":"benign","conf":0.5623,"review":false,` +
+		`"interpretation":"Legitimate Harbor database container image","model":"test-model"},` +
+		`"files":[{"id":0,"prob":0.37,"lvl":-1}]}`
+	var ml litmusMlResponse
+	if err := json.Unmarshal([]byte(raw), &ml); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ml.LLM == nil {
+		t.Fatal("LLM should be parsed from the llm object")
+	}
+	if ml.LLM.Interpretation != "Legitimate Harbor database container image" {
+		t.Errorf("Interpretation = %q", ml.LLM.Interpretation)
+	}
+	if ml.LLM.Grade != "benign" || ml.LLM.Outcome != "benign" {
+		t.Errorf("grade/outcome = %q/%q, want benign/benign", ml.LLM.Grade, ml.LLM.Outcome)
+	}
+	if ml.LLM.Review {
+		t.Error("review should be false")
+	}
+	if ml.LLM.Conf < 0.56 || ml.LLM.Conf > 0.57 {
+		t.Errorf("conf = %v, want ~0.5623", ml.LLM.Conf)
+	}
+
+	var bare litmusMlResponse
+	if err := json.Unmarshal([]byte(`{"v":"7","prob":0.1,"lvl":-1}`), &bare); err != nil {
+		t.Fatalf("unmarshal bare: %v", err)
+	}
+	if bare.LLM != nil {
+		t.Errorf("LLM should be nil when no llm object is present, got %+v", bare.LLM)
+	}
+}
+
 // TestClassFromLevel exercises the consumer-side level policy directly,
 // including the band boundaries. A nil l models v=6's manual-threshold case.
 func TestClassFromLevel(t *testing.T) {

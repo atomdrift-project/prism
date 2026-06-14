@@ -331,6 +331,37 @@
             transition: color 0.12s, border-color 0.12s;
         }
         .verdict-meta a:hover { color: var(--carbon); border-bottom-color: var(--carbon); }
+        /* LLM interpretation — a one-line, human-readable rationale, shown only
+           when an interpretation pass ran (a subset of samples, typically
+           suspicious/hostile). Sits just under the SHA, above the collapsible
+           body, so it stays visible even when the hero is collapsed. */
+        .hero-llm {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            padding: 8px 26px 2px;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--carbon);
+        }
+        .hero-llm-tag {
+            flex: none;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            background: var(--mist);
+            color: var(--slate);
+        }
+        .hero-llm-text { font-style: italic; }
+        .hero-llm-review {
+            flex: none;
+            font-size: 11px;
+            font-weight: 600;
+            color: #b45309;
+        }
+        .hero-llm.needs-review .hero-llm-tag { background: rgba(234, 179, 8, 0.22); color: #713f12; }
         /* Verdict pill — small chip in the hero head corner, tinted by severity. */
         .verdict {
             display: inline-flex;
@@ -1698,6 +1729,13 @@
                 </button>
             </div>
             <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="{{.LevelConfidence}}% calibrated confidence from level L{{deref .Level}} on the per-100M-benigns scale. Lower levels are stricter; off-grid L25001/L25002 mark litmus trait-floor overrides.">&nbsp;·&nbsp;{{.LevelConfidence}}%</span>{{end}}{{end}}</div>
+            {{if .LLMInterpretation}}
+            <div class="hero-llm{{if .LLMReview}} needs-review{{end}}">
+                <span class="hero-llm-tag" title="AI interpretation{{if .LLMConfidence}} · {{.LLMConfidence}}% confidence{{end}}">AI</span>
+                <span class="hero-llm-text">{{.LLMInterpretation}}</span>
+                {{if .LLMReview}}<span class="hero-llm-review" title="The LLM and the ML classifier disagree — flagged for a human to review">⚠ needs review</span>{{end}}
+            </div>
+            {{end}}
             <div class="hero-body" id="hero-details">
             <div class="molecule-viz">
                 <div class="molecule-container">

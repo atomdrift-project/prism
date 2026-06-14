@@ -730,8 +730,17 @@ type resultData struct {
 	// already-stale result.
 	AnalyzedAtMillis int64
 	RiskLabel        string
-	FirstSeenAgo     string
-	FirstSeenAt      string
+	// LLMInterpretation is the one-sentence rationale from the optional LLM
+	// interpretation pass (litmus `llm.interpretation`), shown in the hero when
+	// present — typically only on suspicious/hostile samples. LLMReview is set
+	// when the model and ML disagreed, so the hero can flag it for review.
+	// LLMConfidence is the blended confidence as a percentage. All empty/zero
+	// when no interpretation ran (the common case).
+	LLMInterpretation string
+	LLMReview         bool
+	LLMConfidence     int
+	FirstSeenAgo      string
+	FirstSeenAt       string
 	// SourceURL is the full canonical download URL forager recorded when
 	// the bytes first landed in hopper. Used as the link href; empty for
 	// uploads and legacy rows without provenance.
@@ -5527,6 +5536,15 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		logger.Debug("failed to parse ml section", "sha256", sha256Hex, "error", err)
 	}
 
+	// Surface the optional LLM interpretation in the hero when one ran (only a
+	// subset of samples get it). Gate on a non-empty rationale so a pass that
+	// failed (carries only `error`) doesn't render an empty line.
+	if llm := mlResp.LLM; llm != nil && llm.Interpretation != "" {
+		data.LLMInterpretation = llm.Interpretation
+		data.LLMReview = llm.Review
+		data.LLMConfidence = int(llm.Conf*100 + 0.5)
+	}
+
 	// Use thresholds from litmus response, with sensible defaults.
 	data.SuspiciousT = mlResp.suspiciousT()
 	data.HostileT = mlResp.hostileT()
@@ -7017,6 +7035,22 @@ type litmusFullResponse struct {
 	Raw json.RawMessage `json:"raw"`
 }
 
+// llmInterpretation is the optional `llm` object a litmus envelope carries when
+// the LLM interpretation pass ran. The pass is gated (on ML probability), so it
+// is present only for a subset of samples — typically suspicious/hostile.
+// Interpretation is the human-readable rationale shown in the hero; Review flags
+// ML/LLM disagreement; the rest mirror scan's interpret::Interpretation. All
+// fields are absent (zero) when no pass ran.
+type llmInterpretation struct {
+	Grade          string  `json:"grade"`   // LLM's raw verdict; "" when the call failed
+	Outcome        string  `json:"outcome"` // final blended verdict
+	Interpretation string  `json:"interpretation"`
+	Model          string  `json:"model"`
+	Error          string  `json:"error"`  // failure reason; "" on success
+	Conf           float64 `json:"conf"`   // blended confidence [0,1]
+	Review         bool    `json:"review"` // ML and LLM disagree → human review
+}
+
 // litmusMlResponse matches the ml section of the litmus response. Accepts
 // v=4 (Thresholds pair), v=5 (single Threshold + Level), and v=6/v7 (L plus
 // optional Conf; `class` and `threshold` removed; benign signaled by L == -1).
@@ -7054,6 +7088,9 @@ type litmusMlResponse struct {
 	Level          *int       `json:"-"` // v=5 only; kept for back-compat parsing
 	Classification int        `json:"-"`
 	Probability    float64    `json:"-"`
+	// LLM is the optional interpretation pass (envelope `llm`), nil for the
+	// majority of samples that did not get one.
+	LLM *llmInterpretation `json:"-"`
 }
 
 // UnmarshalJSON parses a litmus ml-section envelope. It accepts v=7 (the
@@ -7067,12 +7104,13 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	// that FPR level), or null (hostile via manual threshold). `conf` is the
 	// optional level-derived display/export confidence.
 	var current struct {
-		Conf       *int   `json:"conf"`
-		L          *int   `json:"lvl"`
-		OldL       *int   `json:"l"`
-		V          string `json:"v"`
-		Version    string `json:"version"`
-		AnalyzedAt string `json:"analyzed_at"`
+		Conf       *int               `json:"conf"`
+		L          *int               `json:"lvl"`
+		OldL       *int               `json:"l"`
+		LLM        *llmInterpretation `json:"llm"` // optional interpretation pass
+		V          string             `json:"v"`
+		Version    string             `json:"version"`
+		AnalyzedAt string             `json:"analyzed_at"`
 		Files      []struct {
 			Conf *int    `json:"conf"`
 			L    *int    `json:"lvl"`
@@ -7130,6 +7168,7 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	r.Version = current.Version
 	r.AnalyzedAt = current.AnalyzedAt
 	r.Probability = current.Prob
+	r.LLM = current.LLM
 	r.L = current.L
 	r.Level = legacy.Level
 	r.Thresholds = legacy.Thresholds
