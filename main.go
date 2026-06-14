@@ -108,20 +108,29 @@ const (
 	// filtered, and free-text ?q= searches). Every feed query goes through
 	// the cache — even untyped filter combinations and one-off searches — to
 	// avoid thundering-herd hopper hits when many users request the same
-	// view at once. The 5-minute envelope keeps the long tail of distinct
-	// search terms cheap; the high-traffic default and criticality views are
-	// kept fresher than this by feedPrecacheLoop.
-	feedCacheTTL = 5 * time.Minute
-	// feedPrecacheInterval is how often the background goroutine
-	// re-warms the pre-cached variants (frontpage default + three
-	// criticality views). Shorter than feedCacheTTL so high-traffic
-	// keys never serve a fully cold loader to a real request.
-	feedPrecacheInterval = 90 * time.Second
+	// view at once. The 30-minute envelope keeps the long tail of distinct
+	// search terms cheap and gives the pre-cache loop a wide safety margin: at
+	// a 5-minute refresh, a hot key survives several missed ticks before it can
+	// expire. The high-traffic default and criticality views are kept fresher
+	// than this by refreshFeedCacheLoop.
+	feedCacheTTL = 30 * time.Minute
+	// The feed pre-cache runs in two tiers. The hot tier re-warms the views
+	// people actually hit (the top feedHotPrecacheCount structured pivots, by
+	// observed traffic) every feedHotPrecacheInterval, so popular ecosystem and
+	// severity pages stay fresh. The static tier sweeps a fixed baseline set —
+	// the frontpage, the criticality views, and a static ecosystem list — every
+	// feedStaticPrecacheInterval so even a rarely-visited page is reasonably
+	// warm. Both are well under feedCacheTTL, so a key is rebuilt several times
+	// within its lifetime and never serves a fully cold loader.
+	feedHotPrecacheInterval    = 5 * time.Minute
+	feedStaticPrecacheInterval = 15 * time.Minute
+	feedHotPrecacheCount       = 10
 	// auxCacheTTL is the TTL for ancillary per-SHA caches (report, parent
-	// archives, etc.). These key off an immutable SHA-256, so the TTL is just a
-	// freshness bound on derived fields; it's aligned with feedCacheTTL so the
-	// whole request-path cache layer ages on one 5-minute envelope.
-	auxCacheTTL = 5 * time.Minute
+	// archives, etc.). They key off an immutable SHA-256, and a rescan
+	// explicitly invalidates them (see requestRescan), so the only thing this
+	// bounds is drift for a sample nobody rescans — hence a long 24-hour
+	// envelope. A hard refresh (Cache-Control: no-cache) bypasses it on demand.
+	auxCacheTTL = 24 * time.Hour
 	// rescanCooldown is the minimum age of the most recent analysis
 	// before another rescan request is accepted. Enforced both
 	// client-side (button hidden) and server-side (atomic check in the
@@ -1998,7 +2007,8 @@ func feedCacheKey(a feedQueryArgs) string {
 // hit a cold loader on the request path. The returned queryDiag reports
 // whether the data came from cache, how long the fetch took, the snapshot's
 // age, and its row/byte counts.
-func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (cachedFeedSnapshot, queryDiag, error) {
+func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger, bypass bool) (cachedFeedSnapshot, queryDiag, error) {
+	feedPopular.record(a) // learn which views to keep hot
 	start := time.Now()
 	diag := queryDiag{Name: "index", Source: "postgres", Params: feedDiagParams(a)}
 	var snapshot cachedFeedSnapshot
@@ -2006,6 +2016,13 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 	if feedCache == nil {
 		snapshot, err = buildFeedSnapshot(ctx, a, reqLogger)
 	} else {
+		// A hard refresh drops the cached entry first so FetchTTL rebuilds it
+		// live and repopulates the cache for the next visitor.
+		if bypass {
+			if delErr := feedCache.Delete(ctx, feedCacheKey(a)); delErr != nil {
+				reqLogger.Debug("hard refresh: feed cache invalidation failed", "error", delErr)
+			}
+		}
 		fromCache := true
 		snapshot, err = feedCache.FetchTTL(ctx, feedCacheKey(a), feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
 			fromCache = false
@@ -2221,59 +2238,101 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 	return rows
 }
 
-// feedPrecacheVariants enumerates the high-traffic feed views kept hot by
-// the background refresher. The default (all empty) handles unfiltered
-// frontpage; the three criticality views handle the most common filter
-// pivots. Everything else is cached on demand by loadFeedRows.
-var feedPrecacheVariants = []feedQueryArgs{
-	{},
-	{criticality: "hostile"},
-	{criticality: "suspicious"},
-	{criticality: ">=1"},
-	{criticality: "benign"},
-	{feedsOnly: true},
+// feedStaticPrecacheEcosystems is the baseline set of ecosystem feeds the static
+// tier keeps warm regardless of traffic — the high-volume language ecosystems,
+// so their landing pages are never cold for a first visitor. Lower-traffic
+// ecosystems rely on the hot tier (once visited) and the on-demand cache.
+var feedStaticPrecacheEcosystems = []string{
+	"javascript", "python", "ruby", "rust", "go", "java", "php",
 }
 
-// refreshFeedCacheLoop keeps the pre-cached variants warm. Each tick
-// rebuilds any variant older than feedPrecacheInterval and writes it
-// back with feedCacheTTL — so steady-state, every pre-cached key has a
-// snapshot under feedPrecacheInterval seconds old, well inside its TTL.
-// Variants are refreshed sequentially per tick so a slow hopper doesn't
-// pile up concurrent queries.
+// feedPrecacheVariants enumerates the baseline feed views the static tier sweeps:
+// the unfiltered frontpage, the criticality views, the feeds-only view, and the
+// per-ecosystem default for each static ecosystem. The hot tier adds whatever
+// pivots real traffic favors; everything else is cached on demand.
+var feedPrecacheVariants = func() []feedQueryArgs {
+	v := []feedQueryArgs{
+		{},
+		{criticality: "hostile"},
+		{criticality: "suspicious"},
+		{criticality: ">=1"},
+		{criticality: "benign"},
+		{feedsOnly: true},
+	}
+	for _, eco := range feedStaticPrecacheEcosystems {
+		v = append(v, feedQueryArgs{ecosystem: eco})
+	}
+	return v
+}()
+
+// refreshFeedCacheLoop runs the two-tier feed pre-cache: a hot loop that keeps
+// the most-visited views fresh, and a static loop that sweeps the baseline set.
+// It is the single entry point launched at startup; each tier runs in its own
+// goroutine so a slow sweep in one can't stall the other.
 func refreshFeedCacheLoop(ctx context.Context) {
 	if feedCache == nil {
 		return
 	}
-	refreshAll := func() {
+	go feedHotPrecacheLoop(ctx)
+	feedStaticPrecacheLoop(ctx)
+}
+
+// feedStaticPrecacheLoop sweeps feedPrecacheVariants — the frontpage, the
+// criticality views, and the static ecosystem list — every
+// feedStaticPrecacheInterval, refreshing any entry older than that. Runs once
+// immediately so the baseline is warm at startup.
+func feedStaticPrecacheLoop(ctx context.Context) {
+	sweep := func() {
 		for _, v := range feedPrecacheVariants {
-			if err := refreshFeedCacheEntry(ctx, v); err != nil {
-				logger.Warn("feed pre-cache refresh failed",
-					"criticality", v.criticality, "error", err)
+			if err := refreshFeedCacheEntry(ctx, v, feedStaticPrecacheInterval); err != nil {
+				logger.Warn("feed static pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
 			}
 		}
 	}
-	refreshAll()
-	ticker := time.NewTicker(feedPrecacheInterval)
+	sweep()
+	ticker := time.NewTicker(feedStaticPrecacheInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshAll()
+			sweep()
 		}
 	}
 }
 
-// refreshFeedCacheEntry no-ops when the cached entry is younger than
-// feedPrecacheInterval. Otherwise it runs the live hopper query and
-// writes a fresh snapshot. On-demand requests for the same key may race
-// this loader through their own fido.Fetch path; both calls produce
-// consistent snapshots, so the rare duplicate hopper query is benign.
-func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs) error {
+// feedHotPrecacheLoop refreshes the top feedHotPrecacheCount most-requested
+// structured pivots every feedHotPrecacheInterval. It waits for the first tick
+// rather than running immediately — there is no traffic to rank at startup, and
+// the static loop already warms the baseline.
+func feedHotPrecacheLoop(ctx context.Context) {
+	ticker := time.NewTicker(feedHotPrecacheInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, v := range feedPopular.top(feedHotPrecacheCount) {
+				if err := refreshFeedCacheEntry(ctx, v, feedHotPrecacheInterval); err != nil {
+					logger.Warn("feed hot pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
+				}
+			}
+		}
+	}
+}
+
+// refreshFeedCacheEntry no-ops when the cached entry is younger than maxAge —
+// the tier's refresh interval — so the hot and static loops don't rebuild a key
+// the other just warmed. Otherwise it runs the live hopper query and writes a
+// fresh snapshot. On-demand requests for the same key may race this loader
+// through their own fido.Fetch path; both produce consistent snapshots, so the
+// rare duplicate hopper query is benign.
+func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Duration) error {
 	key := feedCacheKey(a)
 	if snapshot, found, err := feedCache.Get(ctx, key); err == nil && found {
-		if time.Since(snapshot.GeneratedAt) <= feedPrecacheInterval {
+		if time.Since(snapshot.GeneratedAt) <= maxAge {
 			return nil
 		}
 	}
@@ -2284,9 +2343,71 @@ func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs) error {
 	if err := feedCache.SetTTL(ctx, key, snapshot, feedCacheTTL); err != nil {
 		return err
 	}
-	logger.Debug("feed pre-cache refreshed",
-		"criticality", a.criticality, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
+	logger.Debug("feed pre-cache refreshed", "key", key, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
 	return nil
+}
+
+// feedPopularity tracks how often each structured feed pivot is requested, so
+// the hot pre-cache tier can keep genuinely-popular ecosystem and severity views
+// warm. Free-text searches and formula filters are excluded — their key space is
+// unbounded and one-off, not worth pre-warming — as is the domain dimension, so
+// a /npm/ visit with any domain filter still counts toward the plain /npm/ view.
+type feedPopularity struct {
+	mu     sync.Mutex
+	counts map[feedQueryArgs]uint64
+}
+
+// feedPopularityCap bounds the tracked key set so cycling through distinct
+// pivots can't grow it without bound; past the cap only already-seen keys keep
+// counting. The real structured key space (ecosystems × criticalities × feeds)
+// is well under this.
+const feedPopularityCap = 512
+
+var feedPopular = &feedPopularity{counts: make(map[feedQueryArgs]uint64)}
+
+// record bumps the visit count for the structured form of a, ignoring free-text
+// and domain dimensions. A no-op for search/formula queries.
+func (p *feedPopularity) record(a feedQueryArgs) {
+	if a.search != "" || a.formula != "" {
+		return
+	}
+	key := feedQueryArgs{ecosystem: a.ecosystem, criticality: a.criticality, feedsOnly: a.feedsOnly}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.counts[key] == 0 && len(p.counts) >= feedPopularityCap {
+		return
+	}
+	p.counts[key]++
+}
+
+// top returns the n most-requested pivots, most-popular first (ties broken by
+// cache key for a stable order).
+func (p *feedPopularity) top(n int) []feedQueryArgs {
+	p.mu.Lock()
+	type entry struct {
+		args  feedQueryArgs
+		count uint64
+	}
+	entries := make([]entry, 0, len(p.counts))
+	for a, c := range p.counts {
+		entries = append(entries, entry{a, c})
+	}
+	p.mu.Unlock()
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].count != entries[j].count {
+			return entries[i].count > entries[j].count
+		}
+		return feedCacheKey(entries[i].args) < feedCacheKey(entries[j].args)
+	})
+	if len(entries) > n {
+		entries = entries[:n]
+	}
+	out := make([]feedQueryArgs, len(entries))
+	for i, e := range entries {
+		out[i] = e.args
+	}
+	return out
 }
 
 func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
@@ -2407,13 +2528,44 @@ func requestRescan(ctx context.Context, sha string) error {
 		}
 		return fmt.Errorf("hopper rescan: %w", err)
 	}
-	// Invalidate prism's local result cache so the next GET /file/<sha>
-	// doesn't serve the stale rendered view. Failure is not fatal — the
-	// next refresh window picks up the new state — but worth logging.
-	if delErr := cache.Delete(ctx, sha); delErr != nil {
-		logger.Debug("rescan: cache invalidation failed", "sha256", sha, "error", delErr)
-	}
+	// Invalidate every prism-local cache keyed on this sha so the next
+	// GET /file/<sha> rebuilds the whole page from the re-queued state
+	// instead of serving the stale rendered view. The aux caches now hold a
+	// 24-hour TTL, so without this a rescan wouldn't surface for a day.
+	// Failures are not fatal — the next refresh window picks up the new
+	// state — but worth logging.
+	invalidateSampleCaches(ctx, sha, "rescan")
 	return nil
+}
+
+// isHardRefresh reports whether the request is a browser hard reload
+// (Cmd-Shift-R / Ctrl-F5). Browsers send Cache-Control: no-cache on a hard
+// reload (Chrome and friends also send Pragma: no-cache); we honor that as the
+// user's explicit "skip the cache, rebuild, and repopulate" signal. A normal
+// reload sends max-age=0, which we deliberately ignore so it still hits cache.
+func isHardRefresh(r *http.Request) bool {
+	if strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("Pragma"), "no-cache")
+}
+
+// invalidateSampleCaches drops every per-sha cache entry for sha: the rendered
+// result, its external report, and its parent-archive list. Used by rescan and
+// by a hard refresh, so a forced reload rebuilds the page top to bottom.
+func invalidateSampleCaches(ctx context.Context, sha, reason string) {
+	for _, c := range []struct {
+		name string
+		del  func(context.Context, string) error
+	}{
+		{"result", cache.Delete},
+		{"report", reportCache.Delete},
+		{"parents", parentArchiveCache.Delete},
+	} {
+		if err := c.del(ctx, sha); err != nil {
+			logger.Debug("sample cache invalidation failed", "sha256", sha, "cache", c.name, "reason", reason, "error", err)
+		}
+	}
 }
 
 func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger *slog.Logger) (storedResult, error) {
@@ -3167,6 +3319,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 				feedsOnly:   data.FeedsOnly,
 			},
 			logger,
+			isHardRefresh(r),
 		)
 		if err != nil {
 			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
@@ -3298,6 +3451,13 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 	reqLogger.Info("file request received")
+
+	// A hard refresh (Cmd-Shift-R) drops every per-sha cache up front so the
+	// lookups below rebuild the page from the current hopper state.
+	if isHardRefresh(r) {
+		reqLogger.Info("hard refresh: bypassing sample caches")
+		invalidateSampleCaches(r.Context(), sha, "hard-refresh")
+	}
 
 	cacheHit, res, err := lookupResult(r.Context(), sha, reqLogger)
 	if err != nil {
