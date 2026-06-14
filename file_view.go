@@ -26,6 +26,13 @@ import (
 // note for them, which already encodes its own threshold.)
 const minFileCrit = 3
 
+// minContentCrit is the criticality floor for rendering an archive member's
+// content (hex/source context) at all. Members whose top trait is below baseline
+// (component/filtered) are noise inside a large archive, so their content view is
+// skipped entirely. The top-level file the user navigated to (depth 0) is always
+// shown regardless.
+const minContentCrit = 2
+
 // maxWindowsPerFile caps the context windows shown for a single file — its
 // strongest, in file order. maxFilesShown caps how many files render at all;
 // the rest (lower criticality) are omitted with a note, so a large archive
@@ -141,7 +148,11 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 			return fd.composites[a].Crit > fd.composites[b].Crit
 		})
 
-		if len(fd.lws) > 0 || len(fd.composites) > 0 {
+		// Inside-archive members below the content-criticality floor are noise;
+		// skip building their content view entirely. The top-level file (depth 0)
+		// is what the user navigated to, so it always renders.
+		lowCrit := file.Depth > 0 && maxCritInFile(file) < minContentCrit
+		if !lowCrit && (len(fd.lws) > 0 || len(fd.composites) > 0) {
 			datas = append(datas, fd)
 		}
 	}

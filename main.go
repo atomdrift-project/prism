@@ -5711,9 +5711,14 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		)
 	}
 
-	// Sort archive files by ML probability so all tabs show the most interesting
-	// files at the top. Depth-0 (the archive container itself) stays first
-	// regardless of score.
+	// Sort archive files by trait criticality first, then ML probability as a
+	// tiebreak, so every tab leads with the most dangerous member files — not the
+	// ones that merely scored high on the ML model while carrying only
+	// baseline/component traits. (Criticality and probability are distinct
+	// signals; sorting on probability alone buried notable/suspicious members
+	// below low-criticality spam and could even truncate them away.) Depth-0 (the
+	// archive container itself) stays first regardless. maxCritInFile re-scans the
+	// file's findings; the archive's file count is bounded, so this stays cheap.
 	sort.SliceStable(report.Files, func(i, j int) bool {
 		if report.Files[i].Depth == 0 {
 			return true
@@ -5721,11 +5726,16 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		if report.Files[j].Depth == 0 {
 			return false
 		}
+		ci, cj := maxCritInFile(&report.Files[i]), maxCritInFile(&report.Files[j])
+		if ci != cj {
+			return ci > cj
+		}
 		return report.Files[i].Probability > report.Files[j].Probability
 	})
 
-	// For large archives, truncate to the top 100 most critical files.
-	// The depth-0 container is always first (guaranteed by the sort above).
+	// For large archives, truncate to the top 100 files — now genuinely the most
+	// critical, since the sort above leads with criticality. The depth-0
+	// container is always first (guaranteed by the sort above).
 	const maxArchiveFiles = 100
 	if len(report.Files) > maxArchiveFiles {
 		report.Files = report.Files[:maxArchiveFiles]

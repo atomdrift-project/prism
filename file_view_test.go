@@ -152,3 +152,38 @@ func TestFileViewsNoContextNil(t *testing.T) {
 		t.Errorf("no rich context should yield nil views, got %+v", views)
 	}
 }
+
+// TestFileViewsDropsLowCritMembers confirms archive members below the content
+// criticality floor (component/filtered) get no content view, while the depth-0
+// file and members at/above the floor still render.
+func TestFileViewsDropsLowCritMembers(t *testing.T) {
+	mk := func(id, depth, crit int, sha string) cleaveFile {
+		return cleaveFile{
+			ID: id, Depth: depth, SHA256: sha, Path: "a.zip!!f" + itoaTest(id) + ".py", FileType: "python",
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9}},
+			Ctx: []contextWindow{{
+				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
+				Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: crit}},
+			}},
+		}
+	}
+	files := []cleaveFile{
+		mk(0, 0, 1, "container"),  // depth-0 container, low crit — always shown
+		mk(1, 1, 1, "lowmember"),  // component (crit 1) member — dropped
+		mk(2, 1, 3, "highmember"), // notable (crit 3) member — kept
+	}
+	views, _ := buildFileViews(files)
+	shown := make(map[string]bool, len(views))
+	for _, v := range views {
+		shown[v.SHA256] = true
+	}
+	if !shown["container"] {
+		t.Error("depth-0 file should always render content regardless of crit")
+	}
+	if shown["lowmember"] {
+		t.Error("archive member below the content-crit floor should be dropped")
+	}
+	if !shown["highmember"] {
+		t.Error("archive member at/above the content-crit floor should render")
+	}
+}
