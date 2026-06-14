@@ -1,0 +1,119 @@
+/* Styling for the rate-limit challenge interstitial (see challenge.go).
+   Linked rather than inlined so it satisfies prism's strict CSP
+   (style-src 'self'); pure CSS, no JS, so no script nonce is needed. */
+
+:root {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #9da7b3;
+  --card: #161b22;
+  --border: #30363d;
+  --accent: #58a6ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 25%, #1b2330, #0d1117 70%);
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-align: center;
+}
+
+/* The whole card does one slow 360° spin-in on arrival — the "page spins
+   around" — then settles upright and usable. */
+main {
+  max-width: 28rem;
+  padding: 2.5rem 2rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: spin-in 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The robot keeps spinning, slowly, forever — it's a little dizzy. */
+img {
+  width: 200px;
+  height: auto;
+  border-radius: 12px;
+  animation: spin 7s linear infinite;
+}
+
+h1 {
+  margin: 1.3rem 0 0.4rem;
+  font-size: 1.45rem;
+}
+
+p {
+  margin: 0 auto;
+  max-width: 24rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+label {
+  display: block;
+  margin: 1.4rem 0;
+  font-size: 1.15rem;
+}
+
+input[type="text"] {
+  width: 5rem;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 1.15rem;
+  text-align: center;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+button {
+  padding: 0.6rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #08111f;
+  background: var(--accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #79b8ff;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spin-in {
+  from {
+    transform: rotate(-360deg) scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* Respect users who ask for less motion: hold everything still. */
+@media (prefers-reduced-motion: reduce) {
+  main,
+  img {
+    animation: none;
+  }
+}

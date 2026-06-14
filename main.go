@@ -1431,6 +1431,10 @@ func main() {
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
 	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "litmus analysis server host:port (also reads LITMUS_ADDR env; empty disables, falling back to hopper-only analysis)")
+	var rateLimit int
+	var rateWindow time.Duration
+	cli.IntVar(&rateLimit, "rate-limit", 2, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
+	cli.DurationVar(&rateWindow, "rate-window", 30*time.Minute, "window over which --rate-limit applies, as a sustained token-bucket rate with a burst of --rate-limit")
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
@@ -1598,9 +1602,20 @@ func main() {
 
 	mux := newMux()
 
+	// Shed per-client request floods (aggressive crawlers, runaway scrapers)
+	// before they reach the handlers or hopper-db. Traffic is served freely up
+	// to the configured rate; only the excess gets 429 + Retry-After, which
+	// well-behaved clients honor. nil when disabled (--rate-limit 0) — limit()
+	// is then a pass-through. Keyed on the real client IP via clientIP.
+	rl := newRateLimiter(rateLimit, rateWindow)
+	if rl != nil {
+		go rl.sweepIdle(ctx)
+		logger.Info("rate limiting enabled", "limit", rateLimit, "window", rateWindow.String())
+	}
+
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           obs.Middleware(requestLogger(securityHeaders(mux))),
+		Handler:           obs.Middleware(requestLogger(rl.limit(securityHeaders(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
@@ -1724,6 +1739,8 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /help/query", handleHelpQuery)
+	mux.HandleFunc("GET /_/challenge", handleChallenge)
+	mux.HandleFunc("POST /_/challenge", handleChallenge)
 	mux.HandleFunc("GET /_/health", handleHealth)
 	mux.Handle("GET /_/metrik", obs.MetricsHandler())
 	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
