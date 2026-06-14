@@ -1433,8 +1433,8 @@ func main() {
 	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "litmus analysis server host:port (also reads LITMUS_ADDR env; empty disables, falling back to hopper-only analysis)")
 	var rateLimit int
 	var rateWindow time.Duration
-	cli.IntVar(&rateLimit, "rate-limit", 2, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
-	cli.DurationVar(&rateWindow, "rate-window", 30*time.Minute, "window over which --rate-limit applies, as a sustained token-bucket rate with a burst of --rate-limit")
+	cli.IntVar(&rateLimit, "rate-limit", 10, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
+	cli.DurationVar(&rateWindow, "rate-window", 10*time.Minute, "window over which --rate-limit applies, as a sustained token-bucket rate with a burst of --rate-limit")
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
