@@ -1023,10 +1023,13 @@
         .ctx-code {
             padding-left: 14px !important;
             color: var(--iron);
-            white-space: pre-wrap;
-            word-break: break-word;
+            white-space: pre; /* lines are clipped server-side, so don't wrap */
         }
-        .ctx-hex .ctx-bytes { padding: 1px 14px !important; color: var(--iron); }
+        .ctx-clip { color: var(--slate); user-select: none; }
+        /* Hex offset reads smaller and sits closer to the bytes than a source
+           line number does — it is an address, not the focus. */
+        .ctx-hex .ctx-loc { font-size: 11px; padding-right: 7px !important; }
+        .ctx-hex .ctx-bytes { padding: 1px 12px 1px 7px !important; color: var(--iron); }
         .ctx-hex .ctx-ascii { padding: 1px 14px 1px 0 !important; color: var(--slate); }
         .ctx-hex .ctx-bytes .ctx-cell { margin-right: 6px; }
         .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 14px; }
@@ -1114,8 +1117,13 @@
         .win-section { padding: 3px 14px 5px; }
         .win-section + .win-section { border-top: 1px solid var(--mist); }
         /* The win-section already supplies the left inset, so the line-number
-           column hugs it — no doubled-up gutter before the code. */
+           column hugs it — no doubled-up gutter before the code. The fixed
+           width (widest loc on the page, via --ctx-loc-ch) makes every window's
+           loc column the same size, so columns line up within and between files;
+           the values stay right-aligned against the divider. */
         .win-section .ctx-loc { padding-left: 0 !important; }
+        .win-section .ctx-src .ctx-loc { width: calc(var(--ctx-loc-src-ch, 3) * 1ch); }
+        .win-section .ctx-hex .ctx-loc { width: calc(var(--ctx-loc-hex-ch, 6) * 1ch); }
         /* Inline trait annotation — cleave's trailing `// desc`, on the line its
            match begins. A severity dot + the description, dimmed and pushed to
            the right so the code stays the focus. Replaces the chip header, so a
@@ -1147,7 +1155,7 @@
         /* The code sits flush inside the file card — drop the block's own frame
            and background so it reads as part of the card, not a box-in-box. The
            code column takes the slack so annotations align to the right edge. */
-        .win-section .ctx-view { gap: 0; padding: 0; }
+        .win-section .ctx-view { gap: 0; padding: 0; overflow-x: auto; }
         .win-section .ctx-block { border: none; border-radius: 0; background: transparent; }
         .win-section .ctx-code { width: 100%; }
         .crit-badge {
@@ -1759,7 +1767,7 @@
             </div>
 
             {{if .FileViews}}
-            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0">
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>
                 {{range .FileViews}}
                 {{range .Composites}}
                 <div class="comp-card {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
@@ -2109,7 +2117,7 @@
         {{range .Rows}}
         <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
             <td class="ctx-loc">{{.Loc}}</td>
-            <td class="ctx-code chroma">{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</td>
+            <td class="ctx-code chroma">{{if .Lead}}<span class="ctx-clip">…</span>{{end}}{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="ctx-clip">…</span>{{end}}</td>
             <td class="ctx-anno">{{template "ctxanno" .Annos}}</td>
         </tr>
         {{end}}

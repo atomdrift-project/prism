@@ -177,6 +177,29 @@ func buildFileViews(files []cleaveFile) []fileView {
 	return views
 }
 
+// contentLocCh returns the widest Loc string for source line numbers and for
+// hex offsets separately, across every rendered context row. The Content tab
+// applies each as the loc-column width for its kind, so columns align within and
+// between files of the same kind without a hex offset bloating source gutters.
+func contentLocCh(views []fileView) (src, hex int) {
+	for i := range views {
+		for _, w := range views[i].Windows {
+			for _, b := range w.Blocks {
+				n := &src
+				if b.Hex {
+					n = &hex
+				}
+				for _, r := range b.Rows {
+					if len(r.Loc) > *n {
+						*n = len(r.Loc)
+					}
+				}
+			}
+		}
+	}
+	return src, hex
+}
+
 // compositeLinks resolves a composite's member sources into display rows,
 // linking to a member's section when it is itself rendered.
 func compositeLinks(sources []compactSource, idToFile map[int]*cleaveFile, rendered map[string]bool) []compositeLink {

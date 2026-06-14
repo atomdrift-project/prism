@@ -105,6 +105,81 @@ func TestHighlightedSegsReconstructsLine(t *testing.T) {
 	}
 }
 
+// TestRowAnnoSingleStrongest locks in cleave's rule: a row carries at most one
+// trailing annotation — the strongest match that begins on it — even when two
+// traits match the same line. Both spans still highlight; only one label shows.
+func TestRowAnnoSingleStrongest(t *testing.T) {
+	file := &cleaveFile{Path: "x.js", FileType: "javascript", Ctx: []contextWindow{{
+		Offset: 7,
+		Addr:   ptrInt64(0),
+		Data:   []byte("getnameinfo(); lookupAccountName();"),
+		Notes: []contextNote{
+			{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Offset: 0, Size: 11, Crit: 3},
+			{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Offset: 15, Size: 17, Crit: 4},
+		},
+	}}}
+	blocks := buildContextBlocksForFileView(t, file)
+	if len(blocks) != 1 || len(blocks[0].Rows) != 1 {
+		t.Fatalf("want one block/row, got %+v", blocks)
+	}
+	annos := blocks[0].Rows[0].Annos
+	if len(annos) != 1 {
+		t.Fatalf("want exactly one annotation on the row, got %d: %+v", len(annos), annos)
+	}
+	if annos[0].Desc != "Enumerate account names from IDs" || annos[0].Crit != "suspicious" {
+		t.Errorf("annotation = %+v, want the stronger (suspicious) trait", annos[0])
+	}
+}
+
+// TestLongLineClipsAroundMatch confirms a long minified line is clipped to a
+// window holding its match, with leading/trailing ellipsis, and the match stays
+// highlighted at the right place after the shift.
+func TestLongLineClipsAroundMatch(t *testing.T) {
+	prefix := strings.Repeat("a", 400)
+	suffix := strings.Repeat("b", 400)
+	line := prefix + "eval(x)" + suffix
+	matchOff := int64(len(prefix))
+	file := &cleaveFile{Path: "min.js", FileType: "javascript", Ctx: []contextWindow{{
+		Offset: 1,
+		Addr:   ptrInt64(0),
+		Data:   []byte(line),
+		Notes:  []contextNote{{ID: "t/x", Desc: "dynamic eval", Offset: matchOff, Size: 4, Crit: 5}},
+	}}}
+	blocks := buildContextBlocksForFileView(t, file)
+	row := blocks[0].Rows[0]
+	if !row.Lead || !row.Trail {
+		t.Errorf("a match mid-line should clip both sides: lead=%v trail=%v", row.Lead, row.Trail)
+	}
+	var text string
+	var litEval bool
+	for _, s := range row.Segs {
+		text += s.Text
+		if s.Text == "eval" && s.Crit == "hostile" {
+			litEval = true
+		}
+	}
+	if len(text) > maxSrcCols+8 {
+		t.Errorf("clipped text too long: %d chars", len(text))
+	}
+	if !strings.Contains(text, "eval(x)") {
+		t.Errorf("clip dropped the match; got %q", text)
+	}
+	if !litEval {
+		t.Error("the matched 'eval' should stay highlighted after the clip shift")
+	}
+}
+
+// buildContextBlocksForFileView renders a file's windows the way the Content tab
+// does (every note lit, inline annotations on), for tests.
+func buildContextBlocksForFileView(t *testing.T, file *cleaveFile) []contextBlock {
+	t.Helper()
+	var out []contextBlock
+	for _, lw := range labeledWindows(file) {
+		out = append(out, lw.Block)
+	}
+	return out
+}
+
 // TestHexContextHighlights confirms a hex unit wraps into rows and lights only
 // the matched bytes, with a dotted ascii gutter for non-printables.
 func TestHexContextHighlights(t *testing.T) {

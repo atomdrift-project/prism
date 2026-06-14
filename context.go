@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // This file renders cleave's per-line context (`ctx`) into the source and hex
@@ -85,6 +86,11 @@ type contextRow struct {
 	Segs  []contextSeg
 	ASCII []contextSeg
 	Annos []rowAnno
+	// Lead/Trail mark a source line clipped to a window around its match — the
+	// template renders a leading/trailing ellipsis so a long minified line stays
+	// focused on the match instead of burying the annotation off-screen.
+	Lead  bool
+	Trail bool
 }
 
 // rowAnno is one trailing annotation on a context row: a trait's description in
@@ -305,38 +311,41 @@ func renderWindow(windows []contextWindow, filterID, filename string, descByID m
 	return renderSourceWindow(windows, filterID, filename, descByID, annotated), true
 }
 
-// rowAnnos collects the trailing annotations for matches that begin within a
-// row's byte range [base, base+n). Each trait annotates at most once per window
-// (tracked in annotated), strongest-severity first. desc falls back to the
-// finding's description (descByID) and finally the trait's short id. Returns nil
-// when descByID is nil (annotations disabled).
+// rowAnnos returns the single trailing annotation for a row — cleave's rule: one
+// comment per line, the strongest match that begins within [base, base+n), even
+// though every match on the line stays highlighted. A trait annotates at most
+// once per window (tracked in annotated), so a match spanning rows or repeating
+// doesn't echo. desc falls back finding-desc → short id. Returns nil when
+// descByID is nil (annotations disabled) or no fresh match begins on the row.
 func rowAnnos(notes []contextNote, base int64, n int, descByID map[string]string, annotated map[string]bool) []rowAnno {
 	if descByID == nil {
 		return nil
 	}
-	sorted := make([]contextNote, 0, len(notes))
-	for _, note := range notes {
-		if off := note.Offset - base; off >= 0 && off < int64(n) {
-			sorted = append(sorted, note)
+	var best *contextNote
+	for i := range notes {
+		note := &notes[i]
+		if off := note.Offset - base; off < 0 || off >= int64(n) {
+			continue // match doesn't begin on this row
 		}
-	}
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Crit > sorted[j].Crit })
-	var out []rowAnno
-	for _, note := range sorted {
 		if annotated[note.ID] {
-			continue
+			continue // already labeled on an earlier row
 		}
-		annotated[note.ID] = true
-		desc := note.Desc
-		if desc == "" {
-			desc = descByID[note.ID]
+		if best == nil || note.Crit > best.Crit {
+			best = note
 		}
-		if desc == "" {
-			desc = traitDisplayID(note.ID)
-		}
-		out = append(out, rowAnno{Desc: desc, Crit: critIntToString(note.Crit)})
 	}
-	return out
+	if best == nil {
+		return nil
+	}
+	annotated[best.ID] = true
+	desc := best.Desc
+	if desc == "" {
+		desc = descByID[best.ID]
+	}
+	if desc == "" {
+		desc = traitDisplayID(best.ID)
+	}
+	return []rowAnno{{Desc: desc, Crit: critIntToString(best.Crit)}}
 }
 
 func windowsMatchTrait(windows []contextWindow, filterID string) bool {
@@ -365,14 +374,93 @@ func renderSourceWindow(windows []contextWindow, filterID, filename string, desc
 			base = *win.Addr
 		}
 		spans, crit := spansForRow(win.Notes, base, len(win.Data), filterID)
+		// Clip a long line to a window around its match so the highlighted span
+		// (and the trailing annotation) stay in view; short lines pass through.
+		text, off, lead, trail := clipSourceLine(string(win.Data), primaryMatchCol(win.Notes, base, len(win.Data), filterID))
+		spans = shiftSpans(spans, off, len(text))
 		block.Rows = append(block.Rows, contextRow{
 			Loc:   strconv.FormatInt(win.Offset, 10),
 			Crit:  crit,
-			Segs:  highlightedSegs(string(win.Data), spans, filename),
+			Segs:  highlightedSegs(text, spans, filename),
 			Annos: rowAnnos(win.Notes, base, len(win.Data), descByID, annotated),
+			Lead:  lead,
+			Trail: trail,
 		})
 	}
 	return block
+}
+
+// maxSrcCols caps the displayed width of a source line; longer lines clip to a
+// window around the match. srcLeadCols is the minimum lead kept before it, so
+// the match isn't flush against the left ellipsis.
+const (
+	maxSrcCols  = 100
+	srcLeadCols = 28
+)
+
+// clipSourceLine returns a view of text bounded to maxSrcCols. When the line is
+// longer it clips to a window holding the match (matchCol, a byte index, or -1
+// for a context line with none), keeping ≥srcLeadCols of lead where possible.
+// off is the byte the view starts at; lead/trail report whether content was
+// elided on each side (the template renders an ellipsis). Clip points snap to
+// rune boundaries so multibyte characters are never split.
+func clipSourceLine(text string, matchCol int) (clipped string, off int, lead, trail bool) {
+	if len(text) <= maxSrcCols {
+		return text, 0, false, false
+	}
+	w0 := 0
+	if matchCol >= 0 {
+		w0 = max(matchCol-srcLeadCols, 0)
+	}
+	w1 := w0 + maxSrcCols
+	if w1 >= len(text) {
+		w1 = len(text)
+		w0 = max(len(text)-maxSrcCols, 0)
+	}
+	for w0 > 0 && !utf8.RuneStart(text[w0]) {
+		w0--
+	}
+	for w1 < len(text) && !utf8.RuneStart(text[w1]) {
+		w1++
+	}
+	return text[w0:w1], w0, w0 > 0, w1 < len(text)
+}
+
+// primaryMatchCol returns the byte index, within a line of length n starting at
+// base, of the strongest match that begins on it — the anchor the clip centers
+// on. Returns -1 when the line carries no (matching) note.
+func primaryMatchCol(notes []contextNote, base int64, n int, filterID string) int {
+	best, bestCrit := -1, -1
+	for _, note := range notes {
+		if filterID != "" && note.ID != filterID {
+			continue
+		}
+		off := int(note.Offset - base)
+		if off < 0 || off >= n {
+			continue
+		}
+		if note.Crit > bestCrit {
+			bestCrit, best = note.Crit, off
+		}
+	}
+	return best
+}
+
+// shiftSpans rebases match spans onto a clipped line: each span moves left by
+// off and is clamped to [0, n); spans fully outside the window drop out.
+func shiftSpans(spans []rowSpan, off, n int) []rowSpan {
+	if off == 0 && len(spans) == 0 {
+		return spans
+	}
+	out := make([]rowSpan, 0, len(spans))
+	for _, s := range spans {
+		st, en := s.Start-off, s.End-off
+		if en <= 0 || st >= n {
+			continue
+		}
+		out = append(out, rowSpan{Crit: s.Crit, Start: max(st, 0), End: min(en, n)})
+	}
+	return out
 }
 
 // highlightedSegs lexes a source line with chroma and overlays the match spans,

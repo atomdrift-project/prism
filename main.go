@@ -751,6 +751,11 @@ type resultData struct {
 	// non-empty the File tab renders and is the page's default tab; empty for
 	// legacy reports without current-format context, which keep Traits default.
 	FileViews []fileView
+	// ContentLocStyle sets the --ctx-loc-ch CSS variable (the widest loc string
+	// across every window) on the Content tab, so each window's line-number /
+	// hex-offset column shares one width and the columns line up within and
+	// between files. Empty when there are no file views.
+	ContentLocStyle template.HTMLAttr
 	// Provenance is the grouped origin record shown in the Provenance tab:
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
@@ -5555,6 +5560,9 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// becomes the default tab. It is populated only for reports carrying
 	// current-format context, so legacy samples keep Traits as the default.
 	data.FileViews = buildFileViews(report.Files)
+	if src, hex := contentLocCh(data.FileViews); src > 0 || hex > 0 {
+		data.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, src, hex))
+	}
 
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
