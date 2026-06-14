@@ -238,6 +238,11 @@ func renderSourceWindow(windows []contextWindow, filterID, filename string) cont
 // highlightedSegs lexes a source line with chroma and overlays the match spans,
 // so each run carries both its syntax class and (when matched) its severity. It
 // falls back to a plain match-only split when no lexer matches the filename.
+//
+// Chroma can emit slightly more or fewer bytes than the input line — most
+// lexers append a trailing newline — so token offsets are clamped to the line's
+// own length and any unlexed remainder is rendered plain. Trusting the token
+// lengths verbatim panicked on every such line (slice out of range).
 func highlightedSegs(text string, spans []rowSpan, filename string) []contextSeg {
 	tokens := highlightEvidence(text, filename)
 	if len(tokens) == 0 {
@@ -246,19 +251,33 @@ func highlightedSegs(text string, spans []rowSpan, filename string) []contextSeg
 	var segs []contextSeg
 	pos := 0
 	for _, tok := range tokens {
-		end := pos + len(tok.Text)
-		// Within a syntax token, break at every change in match severity so a
-		// matched span can be lit without losing the token's syntax color.
-		for i := pos; i < end; {
-			sev := spanSeverityAt(spans, i)
-			j := i
-			for j < end && spanSeverityAt(spans, j) == sev {
-				j++
-			}
-			segs = append(segs, contextSeg{Text: text[i:j], Crit: sev, Class: tok.Class})
-			i = j
+		if pos >= len(text) {
+			break
 		}
+		end := min(pos+len(tok.Text), len(text))
+		segs = appendSpanSegs(segs, text, spans, pos, end, tok.Class)
 		pos = end
+	}
+	// Chroma reproduced fewer bytes than the line: render the tail uncolored
+	// but still match-lit, so no content is dropped.
+	if pos < len(text) {
+		segs = appendSpanSegs(segs, text, spans, pos, len(text), "")
+	}
+	return segs
+}
+
+// appendSpanSegs splits text[start:end) into runs at each change in match
+// severity, tagging every run with class, and appends them to segs. Callers
+// guarantee 0 <= start <= end <= len(text).
+func appendSpanSegs(segs []contextSeg, text string, spans []rowSpan, start, end int, class string) []contextSeg {
+	for i := start; i < end; {
+		sev := spanSeverityAt(spans, i)
+		j := i
+		for j < end && spanSeverityAt(spans, j) == sev {
+			j++
+		}
+		segs = append(segs, contextSeg{Text: text[i:j], Crit: sev, Class: class})
+		i = j
 	}
 	return segs
 }

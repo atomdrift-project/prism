@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,34 @@ func TestSourceContextSyntaxHighlight(t *testing.T) {
 	}
 	if !classed {
 		t.Errorf("no chroma syntax classes applied: %+v", segs)
+	}
+}
+
+// TestHighlightedSegsReconstructsLine guards the production panic where chroma
+// emitted a trailing newline (token bytes > line bytes) and the renderer sliced
+// out of range. The segments must always rebuild the original line exactly —
+// no dropped or leaked bytes — for any lexer, with or without a match span.
+func TestHighlightedSegsReconstructsLine(t *testing.T) {
+	cases := []struct {
+		filename string
+		line     string
+	}{
+		{"a.py", "    data = base64.b64decode(payload).decode(\"utf-8\").strip()"},
+		{"x.js", "const x = require('child_process').exec(cmd);"},
+		{"x.toml", "name = \"mureo\""},
+		{"setup.cfg", "[metadata]"},
+		{"unknown.zzz", "no lexer matches this filename at all"},
+	}
+	for _, tc := range cases {
+		spans := []rowSpan{{Crit: "hostile", Start: 0, End: 4}}
+		segs := highlightedSegs(tc.line, spans, tc.filename) // must not panic
+		var b strings.Builder
+		for _, s := range segs {
+			b.WriteString(s.Text)
+		}
+		if b.String() != tc.line {
+			t.Errorf("%s: reconstructed %q, want %q", tc.filename, b.String(), tc.line)
+		}
 	}
 }
 
