@@ -39,10 +39,16 @@ func TestResultTemplateParses(t *testing.T) {
 		dontWant string
 		data     resultData
 	}{
-		{name: "single_file", data: singleFileData(), dontWant: "verdict-level"}, // benign: badge hidden
+		{name: "single_file", data: singleFileData(), dontWant: "verdict-level", // benign: badge hidden
+			want: []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org"}},
 		// Archive: confidence badge plus a full trait match row
 		// (filename — location — highlighted evidence).
 		{name: "archive_with_children", data: archiveData(), want: []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"}},
+		// File tab: per-file card, lit context span, and a linkable composite trail.
+		{name: "file_view", data: fileViewData(), want: []string{
+			"tab-content", "file-card", "ctx-hit hostile", "composed from",
+			`href="#file-cafe"`, "loader.js",
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -65,6 +71,25 @@ func TestResultTemplateParses(t *testing.T) {
 	}
 }
 
+// fileViewData drives the File tab: one file card with a lit source-context
+// span and a finding whose composite trail links to another file's section.
+func fileViewData() resultData {
+	d := singleFileData()
+	d.FileViews = []fileView{{
+		Path: "package/postinstall.js", Filename: "postinstall.js", FileType: "JS",
+		SHA256: "deadbeef", Anchor: "file-deadbeef", Crit: "hostile",
+		Findings: []fileFinding{{
+			ID: "execution/spawn", Desc: "spawns a child process", Crit: "hostile",
+			Context: []contextBlock{{Rows: []contextRow{{
+				Loc: "12", Crit: "hostile",
+				Segs: []contextSeg{{Text: "exec(", Crit: "hostile"}, {Text: "cmd)"}},
+			}}}},
+			Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "line 3"}},
+		}},
+	}}
+	return d
+}
+
 func singleFileData() resultData {
 	return resultData{
 		Filename:     "x.exe",
@@ -83,6 +108,16 @@ func singleFileData() resultData {
 		HostileT:     0.887,
 		Nonce:        "n",
 		Level:        testInt(-1), // benign sentinel: badge must be hidden, not crash
+		Provenance: []ProvenanceGroup{
+			{Title: "Identity", Rows: []ProvenanceRow{
+				{Label: "SHA-256", Value: strings.Repeat("a", 64), Mono: true},
+				{Label: "Package", Value: "lodash"},
+				{Label: "Version", Value: "4.17.21", Mono: true},
+			}},
+			{Title: "Origin", Rows: []ProvenanceRow{
+				{Label: "Source", Value: "registry.npmjs.org", Href: "https://registry.npmjs.org/lodash", Mono: true, External: true},
+			}},
+		},
 	}
 }
 

@@ -424,7 +424,7 @@ func waitRelease(ip string) {
 // Browsers that have to fight through Cloudflare on a multi-hundred-MB
 // stream are not the target audience here; larger samples are CLI-only
 // via litmus.
-const maxDownloadSize int64 = 150 * 1024 * 1024
+const maxDownloadSize int64 = 400 * 1024 * 1024
 
 // clientIP extracts the client IP from the request.
 //
@@ -482,6 +482,11 @@ type FindingDisplay struct {
 	Crit    string
 	Desc    string
 	Matches []FindingMatch
+	// Context holds the rendered source/hex windows for this trait, from
+	// cleave's current per-line `ctx`. When present the expansion shows it in
+	// place of the Matches rows; Matches remains the fallback for legacy
+	// reports and uploads that carry no rich context.
+	Context []contextBlock
 	ConfPct int
 }
 
@@ -742,6 +747,14 @@ type resultData struct {
 	FileStrings  []FileStringsDisplay
 	FileFindings []FileFindingsDisplay
 	FileKVs      []FileKVDisplay
+	// FileViews is the per-file context view shown in the File tab. When
+	// non-empty the File tab renders and is the page's default tab; empty for
+	// legacy reports without current-format context, which keep Traits default.
+	FileViews []fileView
+	// Provenance is the grouped origin record shown in the Provenance tab:
+	// what hopper's database knows about where this sample came from. Empty
+	// for samples with no recorded provenance beyond their own identity.
+	Provenance []ProvenanceGroup
 	// Parents lists archives that contain this file. Populated only on
 	// standalone child pages (non-archive views) so the user can navigate
 	// up to the archive context the file came from.
@@ -810,6 +823,35 @@ type storedResult struct {
 	// compacted and pre-v7 root entries, so size must not be re-derived
 	// from the report when this is available.
 	SizeBytes int64
+	// The fields below carry the rest of hopper's provenance record for the
+	// Provenance tab. All are empty/zero for uploads (which arrive without
+	// provenance) and for legacy rows hopper never attributed; the tab
+	// drops empty rows so absent fields simply don't appear.
+	//
+	// Source is hopper's ingest source column (the harvester or importer that
+	// first recorded the bytes); Feed is the threat-intel or registry feed
+	// the sample arrived on (e.g. "npmjs.org", "malshare").
+	Source string
+	Feed   string
+	// Package and Version identify the software release the bytes belong to
+	// (e.g. "lodash" / "4.17.21") when hopper attributed one.
+	Package string
+	Version string
+	// Label is hopper's ground-truth verdict ("bad"/"good"/"unknown") and
+	// LabelSource records who or what assigned it.
+	Label       string
+	LabelSource string
+	// TraitsVersion is the short traits-repo commit prefix used for the most
+	// recent analysis.
+	TraitsVersion string
+	// CanonicalSHA256 is the min SHA256 across the sample and its embedded
+	// files — the identity hopper uses for train/test dedup. Shown only when
+	// it differs from the sample's own SHA256.
+	CanonicalSHA256 string
+	// UpdatedAt and FirstAnalyzedAt round out the provenance timeline
+	// alongside CreatedAt (first seen) and AnalyzedAt (last analyzed).
+	UpdatedAt       time.Time
+	FirstAnalyzedAt time.Time
 }
 
 type feedRow struct {
@@ -1199,15 +1241,48 @@ type sectionInfo struct {
 	Entropy float64 `json:"entropy,omitempty"`
 }
 
-// contextWindow is one entry in a file's v7 `ctx` array: a slice of file
-// content (Text) at byte offset Offset, optionally a hex dump (Hex), with
-// Notes naming the traits that matched inside it. v7 reports carry match
-// evidence here instead of inline on each finding.
+// contextWindow is one entry in a file's `ctx` array. Two wire formats coexist:
+//
+//   - Legacy: a pre-rendered slice of file content in Text ("t") at byte offset
+//     Offset, with Hex marking a hex dump. Notes name the traits that matched.
+//   - Current (cleave rc.6+): one entry per source line or hex unit, carrying
+//     the raw matched bytes in Data (Z85-decoded from "b") with Addr ("a") the
+//     byte start of a source line's content. Offset ("l") is then a 1-based line
+//     number (source) or a byte offset (hex/minified). The richer File and
+//     per-trait context views render from this; legacy Text is the fallback.
+//
+// Data is non-nil exactly when the entry used the current format, so it is the
+// flag the renderer keys on.
 type contextWindow struct {
 	Text   string        `json:"t"`
 	Notes  []contextNote `json:"n,omitempty"`
 	Offset int64         `json:"l"`
 	Hex    bool          `json:"x,omitempty"`
+	Addr   *int64        `json:"-"`
+	Data   []byte        `json:"-"`
+}
+
+func (w *contextWindow) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Text   string        `json:"t"`
+		Bytes  string        `json:"b"`
+		Notes  []contextNote `json:"n"`
+		Offset int64         `json:"l"`
+		Addr   *int64        `json:"a"`
+		Hex    bool          `json:"x"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*w = contextWindow{Text: raw.Text, Notes: raw.Notes, Offset: raw.Offset, Hex: raw.Hex, Addr: raw.Addr}
+	if raw.Bytes != "" {
+		decoded, err := z85Decode(raw.Bytes)
+		if err != nil {
+			return fmt.Errorf("ctx window z85: %w", err)
+		}
+		w.Data = decoded
+	}
+	return nil
 }
 
 // contextNote attributes a span of a contextWindow to a single trait by its
@@ -1233,28 +1308,49 @@ type finding struct {
 	// inside archives. Used by aggregateArchiveCategories to point the
 	// user at the inner file a container-level trait actually matched.
 	Locations []string `json:"loc,omitempty"`
-	Crit      int      `json:"crit"`
-	Conf      float64  `json:"conf,omitempty"`
+	// Src is the origin member's files[] index when this finding was inherited
+	// from an embedded file; nil when the finding is native to this file. The
+	// archive (top-level) view shows only native findings — inherited ones are
+	// rendered within the member that actually produced them.
+	Src *int `json:"src,omitempty"`
+	// Sources lists the archive members a cross-file composite fired on, each
+	// with the component's anchor. Non-empty marks a composite; the File view
+	// links each entry to the member's own section.
+	Sources []compactSource `json:"srcs,omitempty"`
+	Crit    int             `json:"crit"`
+	Conf    float64         `json:"conf,omitempty"`
+}
+
+// compactSource is one member a cross-file composite drew from: the member's
+// files[] id and the component match's line/offset, when known.
+type compactSource struct {
+	Line   *int64 `json:"ln,omitempty"`
+	Offset *int64 `json:"o,omitempty"`
+	File   int    `json:"f"`
 }
 
 func (f *finding) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		ID           string   `json:"id"`
-		OldID        string   `json:"i"`
-		Desc         string   `json:"desc,omitempty"`
-		OldDesc      string   `json:"d,omitempty"`
-		Evidence     []string `json:"ev,omitempty"`
-		OldEvidence  []string `json:"e,omitempty"`
-		Locations    []string `json:"loc,omitempty"`
-		OldLocations []string `json:"el,omitempty"`
-		Crit         int      `json:"crit"`
-		OldCrit      int      `json:"l"`
-		Conf         float64  `json:"conf,omitempty"`
-		OldConf      float64  `json:"c,omitempty"`
+		ID           string          `json:"id"`
+		OldID        string          `json:"i"`
+		Desc         string          `json:"desc,omitempty"`
+		OldDesc      string          `json:"d,omitempty"`
+		Evidence     []string        `json:"ev,omitempty"`
+		OldEvidence  []string        `json:"e,omitempty"`
+		Locations    []string        `json:"loc,omitempty"`
+		OldLocations []string        `json:"el,omitempty"`
+		Src          *int            `json:"src,omitempty"`
+		Sources      []compactSource `json:"srcs,omitempty"`
+		Crit         int             `json:"crit"`
+		OldCrit      int             `json:"l"`
+		Conf         float64         `json:"conf,omitempty"`
+		OldConf      float64         `json:"c,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	f.Src = raw.Src
+	f.Sources = raw.Sources
 	f.ID = raw.ID
 	if f.ID == "" {
 		f.ID = raw.OldID
@@ -2023,11 +2119,11 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 		q.Label = "bad"
 	}
 
-	samples, err := db.FeedSamples(ctx, q)
+	samples, err := db.FeedSamples(ctx, &q)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
-	total, err = db.FeedSamplesCount(ctx, q)
+	total, err = db.FeedSamplesCount(ctx, &q)
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -2513,20 +2609,34 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 	if sample.AnalyzedAt != nil {
 		analyzedAt = *sample.AnalyzedAt
 	}
+	var firstAnalyzedAt time.Time
+	if sample.FirstAnalyzedAt != nil {
+		firstAnalyzedAt = *sample.FirstAnalyzedAt
+	}
 
 	return storedResult{
-		Filename:       firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
-		RawLitmus:      string(rawLitmus),
-		Classification: classification,
-		Formula:        sample.Formula,
-		FileType:       sample.FileType,
-		CachedAt:       cachedAt,
-		CreatedAt:      sample.CreatedAt,
-		AnalyzedAt:     analyzedAt,
-		SourceURL:      sample.URL,
-		SourceDomain:   sample.Domain,
-		Ecosystem:      sample.Ecosystem,
-		SizeBytes:      sample.SizeBytes,
+		Filename:        firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
+		RawLitmus:       string(rawLitmus),
+		Classification:  classification,
+		Formula:         sample.Formula,
+		FileType:        sample.FileType,
+		CachedAt:        cachedAt,
+		CreatedAt:       sample.CreatedAt,
+		AnalyzedAt:      analyzedAt,
+		SourceURL:       sample.URL,
+		SourceDomain:    sample.Domain,
+		Ecosystem:       sample.Ecosystem,
+		SizeBytes:       sample.SizeBytes,
+		Source:          sample.Source,
+		Feed:            sample.Feed,
+		Package:         sample.Package,
+		Version:         sample.Version,
+		Label:           sample.Label,
+		LabelSource:     sample.LabelSource,
+		TraitsVersion:   sample.TraitsVersion,
+		CanonicalSHA256: sample.CanonicalSHA256,
+		UpdatedAt:       sample.UpdatedAt,
+		FirstAnalyzedAt: firstAnalyzedAt,
 	}, nil
 }
 
@@ -2550,6 +2660,88 @@ func sourceDisplay(sourceURL, domain string) (href, label string) {
 		return "", domain
 	}
 	return "", ""
+}
+
+// ProvenanceRow is one label→value fact in the Provenance tab. Href, when
+// set, renders the value as a link (External adds target/rel for off-site
+// URLs); Mono selects the monospace face for hashes and versions. A row with
+// an empty Value is dropped before its group is rendered.
+type ProvenanceRow struct {
+	Label    string
+	Value    string
+	Href     string
+	Mono     bool
+	External bool
+}
+
+// ProvenanceGroup is a titled cluster of provenance rows. A group with no
+// surviving rows is omitted so the tab never shows a bare heading.
+type ProvenanceGroup struct {
+	Title string
+	Rows  []ProvenanceRow
+}
+
+// provenanceGroups assembles the Provenance tab's record from the stored
+// sample. Every fact originates in hopper's database (res), so this never
+// depends on the litmus envelope parse: uploads, which carry no provenance,
+// degrade to just the identity rows. Empty rows and empty groups are dropped
+// so absent fields simply don't appear.
+func provenanceGroups(sha256Hex, filename string, res *storedResult) []ProvenanceGroup {
+	ts := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.Format("2 Jan 2006 15:04 UTC")
+	}
+	// Only surface the canonical hash when it actually differs — for a
+	// standalone file it equals the sample's own SHA256 and adds noise.
+	canonical := ""
+	if res.CanonicalSHA256 != "" && res.CanonicalSHA256 != sha256Hex {
+		canonical = res.CanonicalSHA256
+	}
+
+	groups := []ProvenanceGroup{
+		{Title: "Identity", Rows: []ProvenanceRow{
+			{Label: "SHA-256", Value: sha256Hex, Mono: true},
+			{Label: "Canonical SHA-256", Value: canonical, Mono: true},
+			{Label: "Filename", Value: filename},
+			{Label: "Package", Value: res.Package},
+			{Label: "Version", Value: res.Version, Mono: true},
+		}},
+		{Title: "Origin", Rows: []ProvenanceRow{
+			{Label: "Source", Value: res.Source},
+			{Label: "Feed", Value: res.Feed},
+			{Label: "Ecosystem", Value: res.Ecosystem, Href: ecosystemURL(res.Ecosystem)},
+			{Label: "Domain", Value: res.SourceDomain},
+			{Label: "URL", Value: res.SourceURL, Href: res.SourceURL, Mono: true, External: true},
+		}},
+		{Title: "Timeline", Rows: []ProvenanceRow{
+			{Label: "First seen", Value: ts(res.CreatedAt)},
+			{Label: "First analyzed", Value: ts(res.FirstAnalyzedAt)},
+			{Label: "Last analyzed", Value: ts(res.AnalyzedAt)},
+			{Label: "Last updated", Value: ts(res.UpdatedAt)},
+		}},
+		{Title: "Labeling", Rows: []ProvenanceRow{
+			{Label: "Label", Value: res.Label},
+			{Label: "Label source", Value: res.LabelSource},
+			{Label: "Traits version", Value: res.TraitsVersion, Mono: true},
+		}},
+	}
+
+	out := groups[:0]
+	for _, g := range groups {
+		rows := g.Rows[:0]
+		for _, r := range g.Rows {
+			if r.Value != "" {
+				rows = append(rows, r)
+			}
+		}
+		if len(rows) > 0 {
+			g.Rows = rows
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func sampleTime(sample *hopper.Sample) time.Time {
@@ -3831,7 +4023,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 	if size > maxDownloadSize {
 		reqLogger.Info("download rejected: file too large", "size_bytes", size, "max_bytes", maxDownloadSize)
-		http.Error(w, "file exceeds the 150 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
+		http.Error(w, "file exceeds the 400 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -5129,6 +5321,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))
 	}
+	// Provenance draws only on the stored sample fields above, so it is
+	// built here — before the litmus parse — and survives the parse-failure
+	// early return below. filename is passed raw; the template escapes it.
+	data.Provenance = provenanceGroups(sha256Hex, filename, res)
 
 	// Parse raw litmus response envelope: {"ml": {...}, "raw": {...}}.
 	var fullResp litmusFullResponse
@@ -5354,6 +5550,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FileMetrics = buildStructuredMetrics(report.Files)
 	data.FileKVs = buildStructuredKV(report.Files)
 	data.ArchiveCategories, data.ArchiveTraitTotal, data.ArchiveTraitShown = aggregateArchiveCategories(report.Files)
+
+	// The File tab renders cleave's per-file context view and, when present,
+	// becomes the default tab. It is populated only for reports carrying
+	// current-format context, so legacy samples keep Traits as the default.
+	data.FileViews = buildFileViews(report.Files)
 
 	// IsArchive reflects the underlying file set, not the findings count: an
 	// archive whose children are all clean still has multiple files and
@@ -6030,6 +6231,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			topLevel string
 			desc     string
 			order    []string
+			fullIDs  []string
 			crit     int
 			conf     float64
 		}
@@ -6098,6 +6300,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				agg.conf = f.Conf
 				agg.desc = f.Desc
 			}
+			agg.fullIDs = append(agg.fullIDs, f.ID)
 			for _, row := range evidenceRows(f, ctxIdx) {
 				addMatch(agg, row)
 			}
@@ -6134,6 +6337,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 					Desc:    agg.desc,
 					ConfPct: confPct(agg.conf),
 					Matches: matches,
+					Context: contextForTraits(file, agg.fullIDs),
 				},
 			})
 		}

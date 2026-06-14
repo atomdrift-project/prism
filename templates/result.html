@@ -501,7 +501,7 @@
             cursor: default;
         }
         /* Download-original-bytes button, shown next to Size. Only rendered
-           server-side when SizeBytes is in (0, 150 MB] and the download
+           server-side when SizeBytes is in (0, 400 MB] and the download
            rate limit hasn't fired. Same visual weight as .rescan-btn so
            they share the inline-meta look. */
         .download-btn {
@@ -838,7 +838,7 @@
         .finding-card-toggle {
             grid-column: 1 / -1;
             display: grid;
-            grid-template-columns: auto 1fr auto;
+            grid-template-columns: auto auto 1fr auto;
             gap: 12px;
             align-items: center;
             background: none;
@@ -850,6 +850,18 @@
             padding: 0;
             cursor: pointer;
         }
+        /* Disclosure triangle: the obvious accordion affordance. It leads the
+           row and rotates a quarter-turn when the card opens. Only expandable
+           cards carry a toggle, so only they show a caret. */
+        .finding-card-toggle::before {
+            content: "\25B8"; /* ▸ */
+            color: var(--iron);
+            font-size: 11px;
+            line-height: 1;
+            transition: transform 0.12s ease;
+        }
+        .finding-card-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+        .finding-card-toggle:hover::before { color: var(--carbon); }
         .finding-card-toggle .trait-body {
             display: grid;
             grid-template-columns: 24em 1fr;
@@ -969,6 +981,142 @@
             font-size: 12px;
             font-variant-numeric: tabular-nums;
         }
+
+        /* Context view — cleave's source/hex windows. A source block is numbered
+           lines with the matched span lit by severity; a hex block is an
+           offset / bytes / ascii grid with the matched bytes lit. Quiet gray
+           context, so the highlight is what the eye lands on. */
+        .ctx-view {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            line-height: 1.55;
+        }
+        .ctx-block {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fafafa;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .ctx-row td {
+            padding: 1px 0;
+            vertical-align: top;
+            white-space: pre;
+        }
+        .ctx-row.has-hit { background: rgba(0, 0, 0, 0.015); }
+        .ctx-loc {
+            width: 1%;
+            padding: 1px 14px 1px 12px !important;
+            text-align: right;
+            color: var(--slate);
+            user-select: none;
+            font-variant-numeric: tabular-nums;
+            border-right: 1px solid var(--mist);
+        }
+        .ctx-code {
+            padding-left: 14px !important;
+            color: var(--iron);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .ctx-hex .ctx-bytes { padding: 1px 14px !important; color: var(--iron); }
+        .ctx-hex .ctx-ascii { padding: 1px 14px 1px 0 !important; color: var(--slate); }
+        .ctx-hex .ctx-bytes .ctx-cell { margin-right: 6px; }
+        .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 14px; }
+        .ctx-cell { color: inherit; }
+        /* The match highlight: a tinted background per severity, carried by the
+           shared --hostile/--suspicious/--notable palette. mark resets the UA
+           yellow so only our tint shows. */
+        mark.ctx-hit { background: none; color: inherit; }
+        .ctx-hit.hostile { background: rgba(239, 68, 68, 0.20); color: #7f1d1d; border-radius: 2px; }
+        .ctx-hit.suspicious { background: rgba(234, 179, 8, 0.22); color: #713f12; border-radius: 2px; }
+        .ctx-hit.notable { background: rgba(59, 130, 246, 0.18); color: #1e3a8a; border-radius: 2px; }
+        .ctx-hit.baseline,
+        .ctx-hit.component { background: rgba(0, 0, 0, 0.08); border-radius: 2px; }
+
+        /* File tab — one card per file, ordered by criticality, each listing its
+           top findings with their context. The default view for current reports. */
+        .file-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 18px;
+            overflow: hidden;
+        }
+        .file-card:last-child { margin-bottom: 0; }
+        .file-card-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 16px;
+            background: var(--mist);
+            border-bottom: 1px solid var(--border);
+        }
+        .file-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--carbon);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-type {
+            margin-left: auto;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            color: var(--iron);
+            text-transform: uppercase;
+        }
+        .file-finding {
+            padding: 12px 16px;
+            border-top: 1px solid var(--mist);
+        }
+        .file-finding:first-of-type { border-top: none; }
+        .file-finding-head {
+            display: grid;
+            grid-template-columns: 24em 1fr;
+            gap: 14px;
+            align-items: baseline;
+            margin-bottom: 8px;
+        }
+        @media (max-width: 640px) {
+            .file-finding-head { grid-template-columns: 1fr; gap: 2px; }
+        }
+        .file-finding .trait-id {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--carbon);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-finding .trait-desc { font-size: 13px; color: var(--iron); }
+        /* Composite trail: the members a cross-file conclusion drew from. */
+        .composite-trail {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 6px 10px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .composite-label {
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 10.5px;
+        }
+        .composite-src {
+            font-family: 'SF Mono', Consolas, monospace;
+            color: var(--carbon);
+        }
+        .composite-src a { color: var(--notable); text-decoration: none; }
+        .composite-src a:hover { text-decoration: underline; }
+        .composite-loc { margin-left: 5px; color: var(--slate); }
         .crit-badge {
             display: inline-block;
             width: 14px;
@@ -1315,6 +1463,67 @@
             color: var(--carbon);
             word-break: break-word;
         }
+
+        /* Provenance tab — the sample's origin record, grouped into titled
+           clusters (Identity / Origin / Timeline / Labeling). Each cluster is
+           a quiet two-column row table; values that are hashes/versions/URLs
+           render in the monospace face. */
+        .prov-group {
+            margin-bottom: 24px;
+        }
+        .prov-group:last-child {
+            margin-bottom: 0;
+        }
+        .prov-group-title {
+            margin: 0 0 8px;
+            padding: 0 14px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--iron);
+        }
+        .prov-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .prov-table td,
+        .prov-table th {
+            padding: 7px 14px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+            text-align: left;
+            font-weight: 400;
+        }
+        .prov-table tr:last-child td,
+        .prov-table tr:last-child th {
+            border-bottom: none;
+        }
+        .prov-table tr:hover {
+            background: rgba(0, 0, 0, 0.02);
+        }
+        .prov-key {
+            color: var(--iron);
+            white-space: nowrap;
+            width: 1%;
+            padding-right: 28px;
+        }
+        .prov-value {
+            color: var(--carbon);
+            word-break: break-word;
+        }
+        .prov-value.mono {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+        }
+        .prov-link {
+            color: var(--notable);
+            text-decoration: none;
+        }
+        .prov-link:hover {
+            text-decoration: underline;
+        }
         .report-meta {
             display: flex;
             gap: 12px;
@@ -1436,7 +1645,7 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 157286400)}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 150 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}
@@ -1503,7 +1712,8 @@
 
         <section class="tabs-section" aria-label="Analysis details">
             <div class="tabs" role="tablist" aria-label="Analysis sections">
-                <button type="button" class="tab active" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="true" aria-controls="tab-traits" tabindex="0">Traits</button>
+                {{if .FileViews}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
+                <button type="button" class="tab{{if not .FileViews}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if .FileViews}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if .FileViews}}-1{{else}}0{{end}}">Traits</button>
                 {{if not .IsArchive}}
                 <button type="button" class="tab" role="tab" id="tabbtn-strings" data-tab="strings" aria-selected="false" aria-controls="tab-strings" tabindex="-1">Strings</button>
                 <button type="button" class="tab" role="tab" id="tabbtn-symbols" data-tab="symbols" aria-selected="false" aria-controls="tab-symbols" tabindex="-1">Symbols</button>
@@ -1511,10 +1721,40 @@
                 <button type="button" class="tab" role="tab" id="tabbtn-metrics" data-tab="metrics" aria-selected="false" aria-controls="tab-metrics" tabindex="-1">Metrics</button>
                 <button type="button" class="tab" role="tab" id="tabbtn-kv" data-tab="kv" aria-selected="false" aria-controls="tab-kv" tabindex="-1">Metadata</button>
                 {{end}}
+                {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
 
-            <div class="tab-content active" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">
+            {{if .FileViews}}
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0">
+                {{range .FileViews}}
+                <section class="file-card" id="{{.Anchor}}">
+                    <header class="file-card-head">
+                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                        <span class="file-name" title="{{.Path}}">{{.Filename}}</span>
+                        {{if .FileType}}<span class="file-type">{{.FileType}}</span>{{end}}
+                    </header>
+                    {{range .Findings}}
+                    <div class="file-finding">
+                        <div class="file-finding-head">
+                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                            <span class="trait-desc">{{.Desc}}</span>
+                        </div>
+                        {{if .Sources}}
+                        <div class="composite-trail">
+                            <span class="composite-label">composed from</span>
+                            {{range .Sources}}<span class="composite-src">{{if .Anchor}}<a href="#{{.Anchor}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}{{if .Loc}}<span class="composite-loc">{{.Loc}}</span>{{end}}</span>{{end}}
+                        </div>
+                        {{end}}
+                        {{if .Context}}{{template "ctxblocks" .Context}}{{end}}
+                    </div>
+                    {{end}}
+                </section>
+                {{end}}
+            </div>
+            {{end}}
+
+            <div class="tab-content{{if not .FileViews}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">
                 {{if .IsArchive}}
                     {{if .ArchiveCategories}}
                         {{range .ArchiveCategories}}
@@ -1531,7 +1771,7 @@
                                             <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                             <span class="trait-desc">{{.Desc}}</span>
                                         </span>
-                                        <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                        <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}</span>
                                     </button>
                                     <div class="finding-detail" hidden>
                                         <ul class="finding-matches">
@@ -1582,9 +1822,12 @@
                                         <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
                                         <span class="trait-desc">{{.Desc}}</span>
                                     </span>
-                                    <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}<span aria-hidden="true"> ▾</span></span>
+                                    <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}</span>
                                 </button>
                                 <div class="finding-detail" hidden>
+                                    {{if .Context}}
+                                    {{template "ctxblocks" .Context}}
+                                    {{else}}
                                     <ul class="finding-matches">
                                         {{range .Matches}}
                                         <li class="finding-match">
@@ -1595,6 +1838,7 @@
                                         </li>
                                         {{end}}
                                     </ul>
+                                    {{end}}
                                 </div>
                                 {{else}}
                                 <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
@@ -1768,6 +2012,25 @@
                 {{end}}
             </div>
             {{end}}
+            {{if .Provenance}}
+            <div class="tab-content" id="tab-provenance" role="tabpanel" aria-labelledby="tabbtn-provenance" tabindex="0">
+                {{range .Provenance}}
+                <div class="prov-group">
+                    <h3 class="prov-group-title">{{.Title}}</h3>
+                    <table class="prov-table">
+                        <tbody>
+                            {{range .Rows}}
+                            <tr>
+                                <th scope="row" class="prov-key">{{.Label}}</th>
+                                <td class="prov-value{{if .Mono}} mono{{end}}">{{if .Href}}<a class="prov-link" href="{{.Href}}"{{if .External}} target="_blank" rel="noopener noreferrer"{{end}}>{{.Value}}{{if .External}}<span aria-hidden="true"> ↗</span>{{end}}</a>{{else}}{{.Value}}{{end}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
             {{if .ReportContent}}
             <div class="tab-content" id="tab-report" role="tabpanel" aria-labelledby="tabbtn-report" tabindex="0">
                 {{if or .ReportProvider .ReportCreated}}
@@ -1797,3 +2060,29 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
 </body>
 </html>
+{{define "ctxblocks"}}
+<div class="ctx-view">
+    {{range .}}
+    {{if .Hex}}
+    <table class="ctx-block ctx-hex"><tbody>
+        {{range .Rows}}
+        <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
+            <td class="ctx-loc">{{.Loc}}</td>
+            <td class="ctx-bytes">{{range .Segs}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
+            <td class="ctx-ascii">{{range .ASCII}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
+        </tr>
+        {{end}}
+    </tbody></table>
+    {{else}}
+    <table class="ctx-block ctx-src"><tbody>
+        {{range .Rows}}
+        <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
+            <td class="ctx-loc">{{.Loc}}</td>
+            <td class="ctx-code chroma">{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}</td>
+        </tr>
+        {{end}}
+    </tbody></table>
+    {{end}}
+    {{end}}
+</div>
+{{end}}
