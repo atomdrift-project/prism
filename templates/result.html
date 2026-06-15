@@ -331,31 +331,53 @@
            when an interpretation pass ran (a subset of samples, typically
            suspicious/hostile). Sits just under the SHA, above the collapsible
            body, so it stays visible even when the hero is collapsed. */
+        /* AI interpretation — a quiet callout under the SHA line. Sits on a soft
+           surface with rounded corners so it reads as an intentional panel rather
+           than floating text, matching the card idiom used elsewhere on the page.
+           The "AI" chip carries the carbon/toxic brand accent; the needs-review
+           state tints the whole callout amber and recolors the chip to match. */
         .hero-llm {
             display: flex;
-            align-items: baseline;
-            gap: 8px;
-            padding: 8px 26px 2px;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 12px 26px 4px;
+            padding: 8px 12px;
+            background: var(--mist);
+            border-radius: 6px;
             font-size: 13px;
-            line-height: 1.45;
+            line-height: 1.5;
             color: var(--carbon);
         }
         .hero-llm-tag {
             flex: none;
-            padding: 1px 6px;
+            padding: 2px 7px;
             border-radius: 4px;
             font-size: 10px;
             font-weight: 700;
-            letter-spacing: 0.04em;
-            background: var(--mist);
-            color: var(--slate);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--carbon);
+            color: var(--toxic);
         }
-        .hero-llm-text { font-style: italic; }
+        .hero-llm-text {
+            flex: 1 1 200px;
+            min-width: 0;
+            font-style: italic;
+            color: var(--iron);
+        }
         .hero-llm-review {
             flex: none;
+            margin-left: auto;
+            padding: 2px 9px;
+            border-radius: 999px;
             font-size: 11px;
             font-weight: 600;
-            color: #b45309;
+            background: rgba(234, 179, 8, 0.18);
+            color: #854d0e;
+        }
+        .hero-llm.needs-review {
+            background: rgba(234, 179, 8, 0.08);
         }
         .hero-llm.needs-review .hero-llm-tag { background: rgba(234, 179, 8, 0.22); color: #713f12; }
         /* Verdict pill — small chip in the hero head corner, tinted by severity. */
@@ -397,8 +419,8 @@
         /* Litmus band — two-color gradient square */
         .band {
             display: inline-block;
-            width: 14px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             border-radius: 2px;
         }
         /* The hero stamp is colored by verdict, not by the level gradient, so it
@@ -1180,33 +1202,35 @@
         .win-section .ctx-loc { padding-left: 0 !important; }
         .win-section .ctx-src .ctx-loc { width: calc(var(--ctx-loc-src-ch, 3) * 1ch); }
         .win-section .ctx-hex .ctx-loc { width: 9ch; }
-        /* Freeze the line-number gutter and the trait annotation as sticky
-           columns so only the code scrolls horizontally — a long minified line
-           never pushes its description off-screen. They mask the scrolling code
-           with the card background (a hair greyer on a matched row, to match the
-           has-hit tint); a soft shadow marks where the code slides under. */
-        .win-section .ctx-loc,
-        .win-section .ctx-anno {
+        /* Freeze only the line-number gutter so it never scrolls away. The trait
+           annotation is no longer its own column — it rides the right edge of the
+           row it annotates (see .ctx-anno below), so it covers only as much code
+           as its own text needs and code-only rows are never masked. */
+        .win-section .ctx-loc {
             position: sticky;
+            left: 0;
             z-index: 1;
             background: var(--white);
         }
-        .win-section .ctx-loc { left: 0; }
-        .win-section .ctx-anno {
-            right: 0;
-            box-shadow: -10px 0 8px -8px rgba(0, 0, 0, 0.07);
-        }
-        .win-section .ctx-row.has-hit .ctx-loc,
-        .win-section .ctx-row.has-hit .ctx-anno { background: var(--cream); }
+        .win-section .ctx-row.has-hit .ctx-loc { background: var(--cream); }
         /* Inline trait annotation — cleave's trailing `// desc`, on the line its
-           match begins. A severity dot + the description, dimmed and pushed to
-           the right so the code stays the focus. Replaces the chip header, so a
-           window carries no vertical header cost at all. */
+           match begins. The code cell is a flex row: the code (.ctx-srctext)
+           takes the slack while the annotation sits flush right, sized to its own
+           text and clipped with an ellipsis so a long description can never crowd
+           out the code. A severity dot + the description, dimmed so the code stays
+           the focus. Replaces the chip header, so a window carries no vertical
+           header cost at all. */
+        .ctx-code { display: flex; align-items: baseline; }
+        .ctx-srctext { flex: 1 1 auto; min-width: 0; overflow: hidden; }
         .ctx-anno {
-            width: 1%;
+            display: inline-block;
+            flex: 0 1 auto;
+            margin-left: auto;
+            max-width: 60ch;
+            padding-left: 24px;
             white-space: nowrap;
-            padding: 0 0 0 28px !important;
-            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
             vertical-align: baseline;
         }
         .anno {
@@ -1234,7 +1258,7 @@
         .win-section .ctx-code { width: 100%; }
         .crit-badge {
             display: inline-block;
-            width: 14px;
+            width: 12px;
             height: 12px;
             border-radius: 2px;
             vertical-align: middle;
@@ -1674,6 +1698,7 @@
             }
             .verdict-bar { padding: 18px 18px 4px; }
             .verdict-meta { padding: 0 18px 12px; }
+            .hero-llm { margin-left: 18px; margin-right: 18px; }
             .hero-body { padding: 8px 18px 20px; }
             /* Bump primary controls to ~44px touch targets on small screens
                (Apple HIG / WCAG 2.5.5). Keeps the desktop density we like
@@ -2191,8 +2216,7 @@
         <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
             <td class="ctx-loc">{{.Loc}}</td>
             <td class="ctx-bytes">{{range .Segs}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
-            <td class="ctx-ascii">{{range .ASCII}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
-            <td class="ctx-anno">{{template "ctxanno" .Annos}}</td>
+            <td class="ctx-ascii">{{range .ASCII}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}{{if .Annos}}<span class="ctx-anno">{{template "ctxanno" .Annos}}</span>{{end}}</td>
         </tr>
         {{end}}
     </tbody></table>
@@ -2201,8 +2225,7 @@
         {{range .Rows}}
         <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
             <td class="ctx-loc">{{.Loc}}</td>
-            <td class="ctx-code chroma">{{if .Lead}}<span class="ctx-clip">…</span>{{end}}{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="ctx-clip">…</span>{{end}}</td>
-            <td class="ctx-anno">{{template "ctxanno" .Annos}}</td>
+            <td class="ctx-code chroma"><span class="ctx-srctext">{{if .Lead}}<span class="ctx-clip">…</span>{{end}}{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="ctx-clip">…</span>{{end}}</span>{{if .Annos}}<span class="ctx-anno">{{template "ctxanno" .Annos}}</span>{{end}}</td>
         </tr>
         {{end}}
     </tbody></table>
