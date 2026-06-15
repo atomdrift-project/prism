@@ -4,6 +4,8 @@ codeberg.org/atomdrift/hopper v0.0.0-20260614160627-e7acd47a2fbb h1:zMgC8y/YHIP2
 codeberg.org/atomdrift/hopper v0.0.0-20260614160627-e7acd47a2fbb/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
 codeberg.org/atomdrift/hopper v0.0.0-20260615105256-3047bf2fcb22 h1:H6cfRaKVoMZeFlDK9i6ng/aXQ/gjh0rQllRWQHlIihc=
 codeberg.org/atomdrift/hopper v0.0.0-20260615105256-3047bf2fcb22/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
+codeberg.org/atomdrift/hopper v0.0.0-20260615144155-55d34881571d h1:EKmkIFqGcTfMcozue++/FUctWQQdgvGkx3bW5bToBZM=
+codeberg.org/atomdrift/hopper v0.0.0-20260615144155-55d34881571d/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594 h1:AXMuGXL69gliKDSudWK7Yn6dvCKvlJUv8dhI+WUeXNU=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594/go.mod h1:N3CvSuq9LM9bAt7dwB6s6sQxnEJZdliK5+2eRCcwHCA=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
