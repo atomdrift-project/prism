@@ -239,11 +239,9 @@
         }
         .hero-nav-prev { left: 8px; }
         .hero-nav-next { right: 8px; }
-        .hero-has-nav .verdict-bar-left { padding-left: 24px; }
         .hero-has-nav .verdict { padding-right: 24px; }
         @media (max-width: 768px) {
             .hero-nav { width: 36px; height: 36px; font-size: 22px; }
-            .hero-has-nav .verdict-bar-left { padding-left: 32px; }
             .hero-has-nav .verdict { padding-right: 32px; }
         }
         /* Compact hero: collapses the molecule + formula block so the tabs
@@ -310,8 +308,6 @@
             text-overflow: ellipsis;
             white-space: nowrap;
             max-width: min(128ch, 100%);
-            border-left: 3px solid var(--toxic);
-            padding-left: 10px;
         }
         .verdict-meta {
             font-family: 'SF Mono', Consolas, monospace;
@@ -405,6 +401,14 @@
             height: 10px;
             border-radius: 2px;
         }
+        /* The hero stamp is colored by verdict, not by the level gradient, so it
+           matches the verdict pill beside it and the classification bands on the
+           index listing. Hex values mirror the index .band palette verbatim so
+           the same sample reads the same color on both pages. */
+        .verdict-bar.sev-hostile .band { background: #ef4444; }
+        .verdict-bar.sev-suspicious .band { background: #facc15; }
+        .verdict-bar.sev-notable .band { background: #3b82f6; }
+        .verdict-bar.sev-benign .band { background: #22c55e; }
         /* Formula lives at the top of the right-column meta panel.
            Compact (15px Oxanium) so it fits the narrow column alongside
            the size/first-seen/analyzed rows below it. Long formulas
@@ -1718,7 +1722,7 @@
         <section class="hero" aria-labelledby="hero-filename">
             <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
                 <div class="verdict-bar-left">
-                    <span class="band" data-gradient="{{.StampGradient}}" aria-hidden="true"></span>
+                    <span class="band" aria-hidden="true"></span>
                     <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Filename}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                 </div>
                 <div class="verdict">

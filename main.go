@@ -807,9 +807,6 @@ type resultData struct {
 	Threshold float64
 	Class     int
 	Level     *int
-	// StampGradient is the verdict-stamp CSS gradient for the top-level file,
-	// precomputed per envelope version (v6/v7 colors by level; v4/v5 by threshold).
-	StampGradient template.CSS
 	// LevelConfidence is the level-derived "how confident this is hostile"
 	// percentage shown on the litmus badge (from ml.conf, falling back to
 	// levelConfidence for cached envelopes).
@@ -5754,9 +5751,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		}
 	}
 
-	// Verdict-stamp gradient for the top-level file. v6/v7 color by level; older
-	// envelopes fall back to the threshold-based band.
-	data.StampGradient = stampGradient(mlResp.V, data.Level, data.Probability, data.Threshold, data.SuspiciousT, data.HostileT, data.Class)
+	// LevelConfidence is the level-derived hostile-confidence percentage shown on
+	// the litmus badge for v4/v5 envelopes (v6/v7 carry it directly).
 	if mlResp.V != "6" && mlResp.V != "7" {
 		data.LevelConfidence = levelConfidence(data.Level)
 	}
