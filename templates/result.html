@@ -1216,21 +1216,22 @@
         /* Inline trait annotation — cleave's trailing `// desc`, on the line its
            match begins. The code cell is a flex row: the code (.ctx-srctext)
            takes the slack while the annotation sits flush right, sized to its own
-           text and clipped with an ellipsis so a long description can never crowd
-           out the code. A severity dot + the description, dimmed so the code stays
-           the focus. Replaces the chip header, so a window carries no vertical
-           header cost at all. */
+           text. A long description wraps onto as many lines as it needs (capped
+           to a readable column width) so the whole note is always legible — the
+           code keeps its own line and clips itself with the … lead/trail marks,
+           so the annotation never crowds it out. A severity dot + the
+           description, dimmed so the code stays the focus. Replaces the chip
+           header, so a window carries no vertical header cost at all. */
         .ctx-code { display: flex; align-items: baseline; }
         .ctx-srctext { flex: 1 1 auto; min-width: 0; overflow: hidden; }
         .ctx-anno {
             display: inline-block;
             flex: 0 1 auto;
             margin-left: auto;
-            max-width: 60ch;
+            max-width: 80ch;
             padding-left: 24px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: normal;
+            overflow-wrap: anywhere;
             vertical-align: baseline;
         }
         .anno {
