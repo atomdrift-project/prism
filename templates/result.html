@@ -1396,50 +1396,6 @@
             color: var(--carbon);
         }
 
-        /* Strings Tab */
-        .strings-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .strings-table th {
-            text-align: left;
-            font-weight: 500;
-            color: var(--slate);
-            padding: 10px 16px;
-            background: var(--mist);
-            border-bottom: 1px solid var(--border);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-        .strings-table td {
-            padding: 8px 16px;
-            border-bottom: 1px solid var(--mist);
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            color: var(--graphite);
-            word-break: break-all;
-        }
-        .string-offset {
-            color: var(--slate);
-            font-size: 12px;
-            white-space: nowrap;
-            width: 80px;
-            word-break: normal;
-        }
-        .strings-table tr:hover {
-            background: rgba(0, 0, 0, 0.01);
-        }
-        .section-badge {
-            display: inline-block;
-            font-size: 12px;
-            padding: 2px 6px;
-            background: var(--isotope-dim);
-            color: var(--isotope);
-            border-radius: 3px;
-            margin-left: 8px;
-        }
         .filetype-tag {
             font-size: 12px;
             font-weight: 600;
@@ -1449,158 +1405,6 @@
             border-radius: 3px;
             letter-spacing: 0.3px;
             text-transform: uppercase;
-        }
-
-        /* Symbols Tab */
-        .symbols-section {
-            margin-bottom: 16px;
-        }
-        .symbols-type {
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--slate);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 6px 16px;
-            background: rgba(0, 0, 0, 0.02);
-        }
-        .symbols-list {
-            display: flex;
-            flex-direction: column;
-        }
-        .symbol-item {
-            padding: 6px 16px;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            color: var(--graphite);
-            border-bottom: 1px solid var(--mist);
-        }
-        .symbol-item:last-child {
-            border-bottom: none;
-        }
-        .symbol-item:hover {
-            background: rgba(0, 0, 0, 0.01);
-        }
-        .symbol-library {
-            font-size: 12px;
-            color: var(--iron);
-            margin-left: 8px;
-        }
-
-        /* Sections Tab */
-        .sections-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .sections-table th {
-            text-align: left;
-            font-weight: 500;
-            color: var(--slate);
-            padding: 10px 16px;
-            background: var(--mist);
-            border-bottom: 1px solid var(--border);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-        .sections-table td {
-            padding: 10px 16px;
-            border-bottom: 1px solid var(--mist);
-        }
-        .sections-table tr:hover {
-            background: rgba(0, 0, 0, 0.01);
-        }
-        .section-name {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            color: var(--carbon);
-        }
-        .section-size {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            color: var(--graphite);
-        }
-        .entropy-bar {
-            width: 60px;
-            height: 6px;
-            background: var(--mist);
-            border-radius: 3px;
-            overflow: hidden;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
-        }
-        .entropy-fill {
-            height: 100%;
-            border-radius: 3px;
-        }
-        .entropy-normal { background: var(--toxic-muted); }
-        .entropy-high { background: var(--hostile); }
-        .entropy-value {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--slate);
-        }
-        .section-flags {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--iron);
-        }
-
-        /* Metrics Tab */
-        .metrics-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .metrics-table td {
-            padding: 8px 16px;
-            border-bottom: 1px solid var(--mist);
-        }
-        .metrics-table tr:last-child td {
-            border-bottom: none;
-        }
-        .metrics-table tr:hover {
-            background: rgba(0, 0, 0, 0.01);
-        }
-        .metric-label {
-            color: var(--iron);
-            font-size: 13px;
-            width: 200px;
-        }
-        .metric-value {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--carbon);
-        }
-
-        /* KV tab — flat structural key→value rows */
-        .kv-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        .kv-table td {
-            padding: 6px 14px;
-            border-bottom: 1px solid var(--mist);
-            vertical-align: top;
-        }
-        .kv-table tr:last-child td { border-bottom: none; }
-        .kv-table tr:hover { background: rgba(0, 0, 0, 0.02); }
-        .kv-key {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12px;
-            color: var(--iron);
-            white-space: nowrap;
-            width: 1%;
-        }
-        .kv-value {
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 12.5px;
-            color: var(--carbon);
-            word-break: break-word;
         }
 
         /* Provenance tab — the sample's origin record, grouped into titled
@@ -1859,21 +1663,14 @@
 
         <section class="tabs-section" aria-label="Analysis details">
             <div class="tabs" role="tablist" aria-label="Analysis sections">
-                {{if .FileViews}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
-                <button type="button" class="tab{{if not .FileViews}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if .FileViews}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if .FileViews}}-1{{else}}0{{end}}">Traits</button>
-                {{if not .IsArchive}}
-                <button type="button" class="tab" role="tab" id="tabbtn-strings" data-tab="strings" aria-selected="false" aria-controls="tab-strings" tabindex="-1">Strings</button>
-                <button type="button" class="tab" role="tab" id="tabbtn-symbols" data-tab="symbols" aria-selected="false" aria-controls="tab-symbols" tabindex="-1">Symbols</button>
-                {{if .FileSections}}<button type="button" class="tab" role="tab" id="tabbtn-sections" data-tab="sections" aria-selected="false" aria-controls="tab-sections" tabindex="-1">Sections</button>{{end}}
-                <button type="button" class="tab" role="tab" id="tabbtn-metrics" data-tab="metrics" aria-selected="false" aria-controls="tab-metrics" tabindex="-1">Metrics</button>
-                <button type="button" class="tab" role="tab" id="tabbtn-kv" data-tab="kv" aria-selected="false" aria-controls="tab-kv" tabindex="-1">Metadata</button>
-                {{end}}
+                <button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>
+                <button type="button" class="tab" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="false" aria-controls="tab-traits" tabindex="-1">Traits</button>
                 {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
 
-            {{if .FileViews}}
             <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>
+                {{if .FileViews}}
                 {{range .FileViews}}
                 {{range .Composites}}
                 <div class="comp-card {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
@@ -1897,10 +1694,15 @@
                 {{if .FilesOmitted}}
                 <p class="content-limit-note">Showing the top {{.FilesShownLimit}} files for legibility — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}result{{else}}results{{end}}) hidden. Open a file directly to see its full context.</p>
                 {{end}}
+                {{else}}
+                {{/* No per-line context (legacy or context-free data): fall back to
+                     the evidence each trait matched on — filename, location, snippet. */}}
+                {{template "findingsbody" .}}
+                {{end}}
             </div>
-            {{end}}
 
-            <div class="tab-content{{if not .FileViews}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">
+            <div class="tab-content" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{template "findingsbody" .}}</div>
+{{define "findingsbody"}}
                 {{if .IsArchive}}
                     {{if .ArchiveCategories}}
                         {{range .ArchiveCategories}}
@@ -2010,154 +1812,8 @@
                     <div class="no-findings">No notable behaviors detected — this file appears clean.</div>
                     {{end}}
                 {{end}}
-            </div>
+{{end}}
 
-            {{if not .IsArchive}}
-            <div class="tab-content" id="tab-strings" role="tabpanel" aria-labelledby="tabbtn-strings" tabindex="0">
-                {{if .FileStrings}}
-                    {{range .FileStrings}}
-                    {{if .HasSections}}
-                        {{range .Sections}}
-                        <div class="category-section">
-                            <h2 class="category-title">{{.Section}}</h2>
-                            <table class="strings-table">
-                                <tbody>
-                                    {{range .Strings}}
-                                    <tr>
-                                        {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
-                                        <td>{{.Value}}</td>
-                                    </tr>
-                                    {{end}}
-                                </tbody>
-                            </table>
-                        </div>
-                        {{end}}
-                    {{else}}
-                        <table class="strings-table">
-                            <tbody>
-                                {{range .Strings}}
-                                <tr>
-                                    {{if .Offset}}<td class="string-offset">{{.Offset}}</td>{{end}}
-                                    <td>{{.Value}}</td>
-                                </tr>
-                                {{end}}
-                            </tbody>
-                        </table>
-                    {{end}}
-                    {{end}}
-                {{else}}
-                    <div class="no-findings">No strings extracted</div>
-                {{end}}
-            </div>
-
-            <div class="tab-content" id="tab-symbols" role="tabpanel" aria-labelledby="tabbtn-symbols" tabindex="0">
-                {{if .FileSymbols}}
-                    {{range .FileSymbols}}
-                    {{if .Imports}}
-                    <div class="category-section">
-                        <h2 class="category-title">Imports</h2>
-                        <div class="symbols-list">
-                            {{range .Imports}}
-                            <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
-                            {{end}}
-                        </div>
-                    </div>
-                    {{end}}
-                    {{if .Exports}}
-                    <div class="category-section">
-                        <h2 class="category-title">Exports</h2>
-                        <div class="symbols-list">
-                            {{range .Exports}}
-                            <div class="symbol-item">{{.Name}}{{if .Library}}<span class="symbol-library">{{.Library}}</span>{{end}}</div>
-                            {{end}}
-                        </div>
-                    </div>
-                    {{end}}
-                    {{end}}
-                {{else}}
-                    <div class="no-findings">No symbols found</div>
-                {{end}}
-            </div>
-
-            <div class="tab-content" id="tab-sections" role="tabpanel" aria-labelledby="tabbtn-sections" tabindex="0">
-                {{if .FileSections}}
-                    {{range .FileSections}}
-                    <table class="sections-table">
-                        <thead>
-                            <tr>
-                                <th>Section</th>
-                                <th>Offset</th>
-                                <th>Size</th>
-                                <th>Entropy</th>
-                                <th>Flags</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {{range .Sections}}
-                            <tr>
-                                <td class="section-name">{{.Name}}</td>
-                                <td class="string-offset">{{.Offset}}</td>
-                                <td class="section-size">{{.Size}} B</td>
-                                <td>
-                                    <span class="entropy-bar"><span class="entropy-fill {{if lt .Entropy 7.0}}entropy-normal{{else}}entropy-high{{end}}" data-width="{{printf "%.0f" (mul .Entropy 12.5)}}%"></span></span>
-                                    <span class="entropy-value">{{printf "%.2f" .Entropy}}</span>
-                                </td>
-                                <td class="section-flags">{{.Flags}}</td>
-                            </tr>
-                            {{end}}
-                        </tbody>
-                    </table>
-                    {{end}}
-                {{else}}
-                    <div class="no-findings">No sections found</div>
-                {{end}}
-            </div>
-
-            <div class="tab-content" id="tab-metrics" role="tabpanel" aria-labelledby="tabbtn-metrics" tabindex="0">
-                {{if .FileMetrics}}
-                    {{range .FileMetrics}}
-                    {{range .Groups}}
-                    <div class="category-section">
-                        <h2 class="category-title">{{.Name}}</h2>
-                        <table class="metrics-table">
-                            <tbody>
-                                {{range .Fields}}
-                                <tr>
-                                    <td class="metric-label">{{.Label}}</td>
-                                    <td class="metric-value">{{.Value}}</td>
-                                </tr>
-                                {{end}}
-                            </tbody>
-                        </table>
-                    </div>
-                    {{end}}
-                    {{end}}
-                {{else}}
-                    <div class="no-findings">No metrics available</div>
-                {{end}}
-            </div>
-            {{end}}{{/* end if not .IsArchive */}}
-
-            {{if not .IsArchive}}
-            <div class="tab-content" id="tab-kv" role="tabpanel" aria-labelledby="tabbtn-kv" tabindex="0">
-                {{if .FileKVs}}
-                    {{range .FileKVs}}
-                    <table class="kv-table">
-                        <tbody>
-                            {{range .Pairs}}
-                            <tr>
-                                <td class="kv-key">{{.Key}}</td>
-                                <td class="kv-value">{{.Value}}</td>
-                            </tr>
-                            {{end}}
-                        </tbody>
-                    </table>
-                    {{end}}
-                {{else}}
-                    <div class="no-findings">No key/value data available for this file.</div>
-                {{end}}
-            </div>
-            {{end}}
             {{if .Provenance}}
             <div class="tab-content" id="tab-provenance" role="tabpanel" aria-labelledby="tabbtn-provenance" tabindex="0">
                 {{range .Provenance}}

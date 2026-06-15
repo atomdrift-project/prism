@@ -10,52 +10,6 @@ import (
 	"codeberg.org/atomdrift/hopper"
 )
 
-func TestBuildStructuredKV(t *testing.T) {
-	files := []cleaveFile{
-		{
-			Path:   "package.json",
-			SHA256: "abc",
-			KV: map[string]json.RawMessage{
-				"package.name":          json.RawMessage(`"left-pad"`),
-				"package.version":       json.RawMessage(`"1.3.0"`),
-				"package.scripts.count": json.RawMessage(`3`),
-				"package.private":       json.RawMessage(`false`),
-				"package.deps":          json.RawMessage(`["foo","bar"]`),
-				"empty":                 json.RawMessage(`null`),
-			},
-		},
-		{Path: "no-kv.js", SHA256: "def"}, // skipped
-	}
-	got := buildStructuredKV(files)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 file with kv, got %d", len(got))
-	}
-	pairs := got[0].Pairs
-	if len(pairs) != 6 {
-		t.Fatalf("expected 6 pairs, got %d", len(pairs))
-	}
-	// Sorted by key.
-	wantOrder := []string{"empty", "package.deps", "package.name", "package.private", "package.scripts.count", "package.version"}
-	for i, p := range pairs {
-		if p.Key != wantOrder[i] {
-			t.Errorf("pair[%d].Key = %q, want %q", i, p.Key, wantOrder[i])
-		}
-	}
-	want := map[string]string{
-		"package.name":          "left-pad",
-		"package.version":       "1.3.0",
-		"package.scripts.count": "3",
-		"package.private":       "false",
-		"package.deps":          `["foo","bar"]`,
-		"empty":                 "",
-	}
-	for _, p := range pairs {
-		if p.Value != want[p.Key] {
-			t.Errorf("kv[%s] = %q, want %q", p.Key, p.Value, want[p.Key])
-		}
-	}
-}
-
 func TestHopperWasCompacted(t *testing.T) {
 	cases := []struct {
 		name string

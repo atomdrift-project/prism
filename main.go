@@ -549,117 +549,6 @@ type FileFindingsDisplay struct {
 	TraitShown int
 }
 
-// FileStringsDisplay represents strings for a single file.
-type FileStringsDisplay struct {
-	Basename       string
-	Risk           string
-	Classification string
-	SHA256         string
-	Formula        string
-	FileType       string
-	Gradient       template.CSS
-	Strings        []StringDisplay
-	Sections       []StringSectionGroup
-	Probability    float64
-	HasSections    bool
-}
-
-type StringDisplay struct {
-	Value   string
-	Section string
-	Offset  string
-}
-
-// StringSectionGroup groups strings by their binary section.
-type StringSectionGroup struct {
-	Section string
-	Strings []StringDisplay
-}
-
-// FileSymbolsDisplay represents symbols for a single file.
-type FileSymbolsDisplay struct {
-	Basename       string
-	Risk           string
-	Classification string
-	SHA256         string
-	Formula        string
-	FileType       string
-	Gradient       template.CSS
-	Imports        []SymbolDisplay
-	Exports        []SymbolDisplay
-	Probability    float64
-}
-
-type SymbolDisplay struct {
-	Name    string
-	Library string
-}
-
-// FileSectionsDisplay represents sections for a single file.
-type FileSectionsDisplay struct {
-	Basename       string
-	Risk           string
-	Classification string
-	SHA256         string
-	Formula        string
-	FileType       string
-	Gradient       template.CSS
-	Sections       []SectionDisplay
-	Probability    float64
-}
-
-type SectionDisplay struct {
-	Name    string
-	Offset  string
-	Flags   string
-	Entropy float64
-	Size    int64
-}
-
-// MetricField is a single labelled metric value for display.
-type metricField struct {
-	Label string
-	Value string
-}
-
-// MetricGroup is a named collection of metric fields for display.
-type metricGroup struct {
-	Name   string
-	Fields []metricField
-}
-
-// FileMetricsDisplay represents metrics for a single file.
-type FileMetricsDisplay struct {
-	Basename       string
-	Risk           string
-	Classification string
-	SHA256         string
-	Formula        string
-	FileType       string
-	Gradient       template.CSS
-	Groups         []metricGroup
-	Probability    float64
-}
-
-// KVPair is a single row in the KV tab: dotted-path key ("package.name",
-// "archive.member_count[0]") → string-rendered value.
-type KVPair struct {
-	Key   string
-	Value string
-}
-
-// FileKVDisplay holds a single file's flat structural kv map for display.
-type FileKVDisplay struct {
-	Basename       string
-	Risk           string
-	Classification string
-	SHA256         string
-	Formula        string
-	FileType       string
-	Pairs          []KVPair
-	Probability    float64
-}
-
 // ParentArchive is one archive that contains the currently-viewed file. It
 // powers the "found in" backlinks shown on standalone child pages so users
 // can navigate up to the archive context they came from.
@@ -759,12 +648,7 @@ type resultData struct {
 	EcosystemURL string
 	Layout       string
 	BuildCommit  string
-	FileMetrics  []FileMetricsDisplay
-	FileSections []FileSectionsDisplay
-	FileSymbols  []FileSymbolsDisplay
-	FileStrings  []FileStringsDisplay
 	FileFindings []FileFindingsDisplay
-	FileKVs      []FileKVDisplay
 	// FileViews is the per-file context view shown in the File tab. When
 	// non-empty the File tab renders and is the page's default tab; empty for
 	// legacy reports without current-format context, which keep Traits default.
@@ -3836,12 +3720,23 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		children, total, cerr := db.TopMembersByParent(ctx, sha, archiveMemberFetchLimit)
-		if cerr != nil {
-			logger.Debug("top members by parent failed", "sha", sha, "error", cerr)
-		} else if len(children) > 0 {
-			enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename, total)
-			if eerr != nil {
+		// List the archive's members from sample_locations (the authoritative,
+		// dedup-correct edge table) ranked by score, then load the heavy
+		// cleave/litmus blobs only for the top-N we'll actually render. The
+		// light list + total drives the member count and the omitted tally;
+		// the heavy fetch feeds reassembleEnvelope.
+		members, total, merr := db.MembersByParent(ctx, sha, archiveMemberFetchLimit)
+		if merr != nil {
+			logger.Debug("members by parent failed", "sha", sha, "error", merr)
+		} else if len(members) > 0 {
+			shas := make([]string, len(members))
+			for i := range members {
+				shas[i] = members[i].SHA256
+			}
+			children, cerr := db.SamplesBySHAs(ctx, shas)
+			if cerr != nil {
+				logger.Debug("samples by shas failed", "sha", sha, "error", cerr)
+			} else if enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename, total); eerr != nil {
 				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
 			} else {
 				res.RawLitmus = string(enriched)
@@ -5798,13 +5693,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		report.Files = report.Files[:maxArchiveFiles]
 	}
 
-	// Build structured data for table display
+	// Build structured data for the Traits tab.
 	data.FileFindings = buildStructuredFindings(report.Files)
-	data.FileStrings = buildStructuredStrings(report.Files)
-	data.FileSymbols = buildStructuredSymbols(report.Files)
-	data.FileSections = buildStructuredSections(report.Files)
-	data.FileMetrics = buildStructuredMetrics(report.Files)
-	data.FileKVs = buildStructuredKV(report.Files)
 	data.ArchiveCategories, data.ArchiveTraitTotal, data.ArchiveTraitShown = aggregateArchiveCategories(report.Files)
 
 	// The File tab renders cleave's per-file context view and, when present,
@@ -6638,367 +6528,6 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 	}
 
 	return result
-}
-
-// buildStructuredStrings extracts strings data for table display.
-
-func buildStructuredStrings(files []cleaveFile) []FileStringsDisplay {
-	var result []FileStringsDisplay
-
-	for i := range files {
-		file := &files[i]
-		if len(file.Strings) == 0 {
-			continue
-		}
-
-		basename := extractBasename(file.Path)
-
-		// Build section ranges for offset-to-section lookup using file offsets.
-		type sectionRange struct {
-			name       string
-			start, end uint64
-		}
-		var sectionRanges []sectionRange
-		for _, sec := range file.Sections {
-			if sec.Offset != nil && sec.Size > 0 {
-				sectionRanges = append(sectionRanges, sectionRange{
-					name:  sec.Name,
-					start: *sec.Offset,
-					end:   *sec.Offset + uint64(sec.Size), //nolint:gosec // sec.Size guarded > 0 above; cleave never emits negative section sizes
-				})
-			}
-		}
-
-		var strs []StringDisplay
-		for _, raw := range file.Strings {
-			// v4 string tuples: [offset, value] or [offset, encoding, value].
-			// Sub-element parse errors degrade to zero values — bad tuples
-			// just render with an empty string or offset 0.
-			var arr []json.RawMessage
-			if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
-				continue
-			}
-			var offset uint64
-			_ = json.Unmarshal(arr[0], &offset) //nolint:errcheck // offset 0 fallback acceptable
-			var value string
-			if len(arr) == 2 {
-				_ = json.Unmarshal(arr[1], &value) //nolint:errcheck // empty-string fallback acceptable
-			} else {
-				_ = json.Unmarshal(arr[2], &value) //nolint:errcheck // empty-string fallback acceptable
-			}
-
-			// Compute section from offset
-			section := ""
-			if len(sectionRanges) > 0 {
-				for _, sr := range sectionRanges {
-					if offset >= sr.start && offset < sr.end {
-						section = sr.name
-						break
-					}
-				}
-			}
-			strs = append(strs, StringDisplay{
-				Value:   value,
-				Section: section,
-				Offset:  fmt.Sprintf("0x%x", offset),
-			})
-		}
-
-		// Sort by offset. Parse failures sort as 0, which is fine — the
-		// offset string was produced by fmt.Sprintf("0x%x", uint64) above
-		// so this is effectively unreachable.
-		sort.Slice(strs, func(i, j int) bool {
-			oi, _ := strconv.ParseUint(strings.TrimPrefix(strs[i].Offset, "0x"), 16, 64) //nolint:errcheck // self-produced format; parse won't fail
-			oj, _ := strconv.ParseUint(strings.TrimPrefix(strs[j].Offset, "0x"), 16, 64) //nolint:errcheck // self-produced format; parse won't fail
-			return oi < oj
-		})
-
-		// Group strings by section when section data is available.
-		hasSections := false
-		sectionOrder := []string{}
-		sectionMap := map[string][]StringDisplay{}
-		for _, s := range strs {
-			sec := s.Section
-			if sec != "" {
-				hasSections = true
-			} else {
-				sec = "(other)"
-			}
-			if _, ok := sectionMap[sec]; !ok {
-				sectionOrder = append(sectionOrder, sec)
-			}
-			sectionMap[sec] = append(sectionMap[sec], s)
-		}
-		var sections []StringSectionGroup
-		if hasSections {
-			for _, sec := range sectionOrder {
-				sections = append(sections, StringSectionGroup{
-					Section: sec,
-					Strings: sectionMap[sec],
-				})
-			}
-		}
-
-		result = append(result, FileStringsDisplay{
-			Basename:       basename,
-			Risk:           critIntToString(maxCritInFile(file)),
-			Classification: file.Classification,
-			Probability:    file.Probability,
-			SHA256:         file.SHA256,
-			Formula:        file.Formula,
-			FileType:       strings.ToUpper(file.FileType),
-			Strings:        strs,
-			Sections:       sections,
-			Gradient:       file.Gradient,
-			HasSections:    hasSections,
-		})
-	}
-
-	return result
-}
-
-// buildStructuredSymbols extracts symbols data for table display.
-func buildStructuredSymbols(files []cleaveFile) []FileSymbolsDisplay {
-	var result []FileSymbolsDisplay
-
-	for i := range files {
-		file := &files[i]
-		if len(file.Imports) == 0 && len(file.Exports) == 0 {
-			continue
-		}
-
-		basename := extractBasename(file.Path)
-		var imports, exports []SymbolDisplay
-
-		for _, s := range file.Imports {
-			imports = append(imports, SymbolDisplay{
-				Name: s,
-			})
-		}
-
-		for _, s := range file.Exports {
-			name := s.Symbol
-			if name == "" {
-				name = s.Name
-			}
-			exports = append(exports, SymbolDisplay{
-				Name:    name,
-				Library: s.Library,
-			})
-		}
-
-		result = append(result, FileSymbolsDisplay{
-			Basename:       basename,
-			Risk:           critIntToString(maxCritInFile(file)),
-			Classification: file.Classification,
-			Probability:    file.Probability,
-			SHA256:         file.SHA256,
-			Formula:        file.Formula,
-			FileType:       strings.ToUpper(file.FileType),
-			Imports:        imports,
-			Exports:        exports,
-			Gradient:       file.Gradient,
-		})
-	}
-
-	return result
-}
-
-// buildStructuredSections extracts sections data for table display.
-func buildStructuredSections(files []cleaveFile) []FileSectionsDisplay {
-	var result []FileSectionsDisplay
-
-	for i := range files {
-		file := &files[i]
-		if len(file.Sections) == 0 {
-			continue
-		}
-
-		basename := extractBasename(file.Path)
-		var sections []SectionDisplay
-
-		for _, s := range file.Sections {
-			var offsetStr string
-			if s.Offset != nil {
-				offsetStr = fmt.Sprintf("0x%x", *s.Offset)
-			}
-			sections = append(sections, SectionDisplay{
-				Name:    s.Name,
-				Offset:  offsetStr,
-				Size:    s.Size,
-				Entropy: s.Entropy,
-				Flags:   s.Flags,
-			})
-		}
-
-		result = append(result, FileSectionsDisplay{
-			Basename:       basename,
-			Risk:           critIntToString(maxCritInFile(file)),
-			Classification: file.Classification,
-			Probability:    file.Probability,
-			SHA256:         file.SHA256,
-			Formula:        file.Formula,
-			FileType:       strings.ToUpper(file.FileType),
-			Sections:       sections,
-			Gradient:       file.Gradient,
-		})
-	}
-
-	return result
-}
-
-// buildStructuredMetrics dynamically walks raw metrics JSON to produce display groups.
-// This avoids hardcoding field names — any metric cleave emits will appear automatically.
-func buildStructuredMetrics(files []cleaveFile) []FileMetricsDisplay {
-	var result []FileMetricsDisplay
-
-	for i := range files {
-		file := &files[i]
-		if len(file.Metrics) == 0 {
-			continue
-		}
-
-		// Parse as map of group → map of key → value (any JSON type).
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(file.Metrics, &raw); err != nil {
-			continue
-		}
-
-		var groups []metricGroup
-		// Sort group names for deterministic order.
-		groupNames := make([]string, 0, len(raw))
-		for name := range raw {
-			groupNames = append(groupNames, name)
-		}
-		sort.Strings(groupNames)
-
-		for _, groupName := range groupNames {
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(raw[groupName], &fields); err != nil {
-				// Scalar at top level — skip (shouldn't happen with cleave metrics).
-				continue
-			}
-
-			fieldNames := make([]string, 0, len(fields))
-			for name := range fields {
-				fieldNames = append(fieldNames, name)
-			}
-			sort.Strings(fieldNames)
-
-			var mf []metricField
-			for _, fieldName := range fieldNames {
-				val := string(fields[fieldName])
-				// Try to format nicely: strip quotes from strings, format numbers.
-				var s string
-				if err := json.Unmarshal(fields[fieldName], &s); err == nil {
-					val = s
-				} else {
-					var f float64
-					if err := json.Unmarshal(fields[fieldName], &f); err == nil {
-						if f == float64(int64(f)) {
-							val = strconv.FormatInt(int64(f), 10)
-						} else {
-							val = strconv.FormatFloat(f, 'f', -1, 64)
-						}
-					} else {
-						var b bool
-						if err := json.Unmarshal(fields[fieldName], &b); err == nil {
-							val = strconv.FormatBool(b)
-						}
-						// Otherwise use raw JSON string (arrays, objects, etc.)
-					}
-				}
-				// Convert snake_case key to readable label.
-				label := strings.ReplaceAll(fieldName, "_", " ")
-				mf = append(mf, metricField{Label: label, Value: val})
-			}
-
-			if len(mf) > 0 {
-				groups = append(groups, metricGroup{Name: groupName, Fields: mf})
-			}
-		}
-
-		if len(groups) == 0 {
-			continue
-		}
-
-		result = append(result, FileMetricsDisplay{
-			Basename:       extractBasename(file.Path),
-			Risk:           critIntToString(maxCritInFile(file)),
-			Classification: file.Classification,
-			Probability:    file.Probability,
-			SHA256:         file.SHA256,
-			Formula:        file.Formula,
-			FileType:       strings.ToUpper(file.FileType),
-			Groups:         groups,
-			Gradient:       file.Gradient,
-		})
-	}
-
-	return result
-}
-
-// buildStructuredKV converts each file's flat structural kv map into
-// sorted display rows. Values are rendered as plain strings — strings keep
-// their text, numbers/bools format directly, and arrays/objects fall back
-// to their compact JSON form so callers can still see the shape.
-func buildStructuredKV(files []cleaveFile) []FileKVDisplay {
-	var result []FileKVDisplay
-	for i := range files {
-		file := &files[i]
-		if len(file.KV) == 0 {
-			continue
-		}
-		keys := make([]string, 0, len(file.KV))
-		for k := range file.KV {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		pairs := make([]KVPair, 0, len(keys))
-		for _, k := range keys {
-			pairs = append(pairs, KVPair{Key: k, Value: kvValueString(file.KV[k])})
-		}
-		result = append(result, FileKVDisplay{
-			Basename:       extractBasename(file.Path),
-			Risk:           critIntToString(maxCritInFile(file)),
-			Classification: file.Classification,
-			Probability:    file.Probability,
-			SHA256:         file.SHA256,
-			Formula:        file.Formula,
-			FileType:       strings.ToUpper(file.FileType),
-			Pairs:          pairs,
-		})
-	}
-	return result
-}
-
-// kvValueString renders a JSON-encoded leaf as a human-friendly string.
-// Strings unwrap; integers and floats stringify; booleans become
-// "true"/"false"; null becomes the empty string. Arrays and objects fall
-// through to the compact JSON form so the shape is still visible.
-func kvValueString(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case bool:
-		return strconv.FormatBool(x)
-	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
-		}
-		return strconv.FormatFloat(x, 'f', -1, 64)
-	default:
-		return strings.TrimSpace(string(raw))
-	}
 }
 
 // timeAgo returns a human-readable relative time string (e.g. "5 minutes ago").

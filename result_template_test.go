@@ -168,10 +168,5 @@ func archiveData() resultData {
 			Path: "archive.tgz!!package/index.js", Basename: "index.js", SHA256: fmt.Sprintf("%64s", "b"), Probability: 0.91,
 			Classification: "hostile", Categories: []CategoryGroup{{Name: "Objectives", Findings: []FindingDisplay{{ID: "execution", Crit: "hostile", Desc: "spawns child"}}}},
 		}},
-		FileStrings: []FileStringsDisplay{{
-			Basename: "index.js", SHA256: mkSHA('b'), Strings: []StringDisplay{{Offset: "0x0", Value: "hello"}},
-		}},
-		FileSymbols: []FileSymbolsDisplay{{Basename: "index.js", SHA256: mkSHA('b')}},
-		FileMetrics: []FileMetricsDisplay{{Basename: "index.js", SHA256: mkSHA('b')}},
 	}
 }
