@@ -65,7 +65,10 @@ func TestHopperWasCompacted(t *testing.T) {
 		{"empty", "", false},
 		{"plain", `{"v":"4","fs":[{"id":0}]}`, false},
 		{"truncated", `{"v":"4","fs":[{"id":0}],"truncated":true,"omitted_files":2}`, true},
-		{"omitted only", `{"v":"4","fs":[{"id":0}],"omitted_files":3}`, true},
+		// omitted_files without "truncated" is what prism writes after it has
+		// already reassembled a capped archive — it is enriched, not still
+		// hopper-compacted, so it must not trigger another child fetch.
+		{"omitted only", `{"v":"4","fs":[{"id":0}],"omitted_files":3}`, false},
 		{"malformed", `not json`, false},
 	}
 	for _, c := range cases {
@@ -139,7 +142,9 @@ func TestReassembleEnvelope(t *testing.T) {
 		},
 	}
 
-	enriched, err := reassembleEnvelope(parentEnv, children, "archive.tgz")
+	// total == len(children): every member was fetched, so the envelope is
+	// complete and both truncation markers should be cleared.
+	enriched, err := reassembleEnvelope(parentEnv, children, "archive.tgz", len(children))
 	if err != nil {
 		t.Fatalf("reassembleEnvelope failed: %v", err)
 	}
@@ -215,14 +220,19 @@ func TestReassembleEnvelopeSkipsBrokenChildren(t *testing.T) {
 		{SHA256: "empty", Path: "a/z", CleaveResult: []byte(`{"fs":[]}`)},
 	}
 
-	enriched, err := reassembleEnvelope(parentEnv, children, "a.zip")
+	// All 3 members were fetched but only 1 merges (broken + empty are skipped).
+	// The 2 that could not be represented must still be reported as omitted so
+	// the envelope never claims a completeness it doesn't have.
+	enriched, err := reassembleEnvelope(parentEnv, children, "a.zip", len(children))
 	if err != nil {
 		t.Fatalf("reassembleEnvelope failed: %v", err)
 	}
 
 	var got struct {
 		Raw struct {
-			Files []struct {
+			Truncated    *bool `json:"truncated,omitempty"`
+			OmittedFiles *int  `json:"omitted_files,omitempty"`
+			Files        []struct {
 				SHA string `json:"sha"`
 			} `json:"files"`
 		} `json:"raw"`
@@ -232,5 +242,57 @@ func TestReassembleEnvelopeSkipsBrokenChildren(t *testing.T) {
 	}
 	if len(got.Raw.Files) != 2 {
 		t.Errorf("expected 2 files (parent + 1 good child), got %d", len(got.Raw.Files))
+	}
+	if got.Raw.Truncated != nil {
+		t.Errorf("expected truncated marker dropped, got %v", *got.Raw.Truncated)
+	}
+	if got.Raw.OmittedFiles == nil || *got.Raw.OmittedFiles != 2 {
+		t.Errorf("expected omitted_files = 2 (members that did not merge), got %v", got.Raw.OmittedFiles)
+	}
+}
+
+// TestReassembleEnvelopeReportsOmittedBeyondCap covers the common case: an
+// archive has far more members than prism fetches (archiveMemberFetchLimit),
+// so children is the highest-score prefix and omitted_files must account for
+// the long tail the cap left behind.
+func TestReassembleEnvelopeReportsOmittedBeyondCap(t *testing.T) {
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	parentEnv := []byte(`{
+		"ml": {"v":"4","fs":[{"id":0,"class":0,"prob":0.1}]},
+		"raw": {"v":"4","fs":[{"id":0,"sha":"p","path":"big.zip","type":"zip","sz":100,"dp":0}],"truncated":true,"omitted_files":999}
+	}`)
+
+	children := []*hopper.Sample{
+		{SHA256: "c1", Path: "big/a.js", CleaveResult: []byte(`{"fs":[{"id":0,"sha":"c1","path":"a.js","sz":10,"dp":0}]}`)},
+		{SHA256: "c2", Path: "big/b.js", CleaveResult: []byte(`{"fs":[{"id":0,"sha":"c2","path":"b.js","sz":10,"dp":0}]}`)},
+	}
+
+	// 1000 members in the archive, only the top 2 fetched.
+	enriched, err := reassembleEnvelope(parentEnv, children, "big.zip", 1000)
+	if err != nil {
+		t.Fatalf("reassembleEnvelope failed: %v", err)
+	}
+
+	var got struct {
+		Raw struct {
+			Truncated    *bool `json:"truncated,omitempty"`
+			OmittedFiles *int  `json:"omitted_files,omitempty"`
+			Files        []struct {
+				SHA string `json:"sha"`
+			} `json:"files"`
+		} `json:"raw"`
+	}
+	if err := json.Unmarshal(enriched, &got); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got.Raw.Files) != 3 {
+		t.Errorf("expected 3 files (parent + 2 children), got %d", len(got.Raw.Files))
+	}
+	if got.Raw.Truncated != nil {
+		t.Errorf("expected truncated marker dropped after reassembly, got %v", *got.Raw.Truncated)
+	}
+	if got.Raw.OmittedFiles == nil || *got.Raw.OmittedFiles != 998 {
+		t.Errorf("expected omitted_files = 998 (1000 members - 2 merged), got %v", got.Raw.OmittedFiles)
 	}
 }

@@ -132,39 +132,44 @@ func TestLitmusMlResponseV7Verdict(t *testing.T) {
 	}
 }
 
-// TestLitmusMlResponseLLM confirms the optional `llm` interpretation object is
-// parsed when present and left nil otherwise (the common case).
-func TestLitmusMlResponseLLM(t *testing.T) {
-	raw := `{"v":"7","prob":0.37,"lvl":-1,"conf":0,` +
+// TestLitmusEnvelopeLLM confirms the optional `llm` interpretation object is
+// parsed from its top-level envelope slot (a sibling of `ml`/`raw`, not nested
+// inside `ml`) when present, and is absent otherwise (the common case).
+func TestLitmusEnvelopeLLM(t *testing.T) {
+	raw := `{"ml":{"v":"7","prob":0.37,"lvl":-1,"conf":0,"files":[{"id":0,"prob":0.37,"lvl":-1}]},` +
 		`"llm":{"grade":"benign","outcome":"benign","conf":0.5623,"review":false,` +
 		`"interpretation":"Legitimate Harbor database container image","model":"test-model"},` +
-		`"files":[{"id":0,"prob":0.37,"lvl":-1}]}`
-	var ml litmusMlResponse
-	if err := json.Unmarshal([]byte(raw), &ml); err != nil {
+		`"raw":{"files":[]}}`
+	var env litmusFullResponse
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if ml.LLM == nil {
-		t.Fatal("LLM should be parsed from the llm object")
+	if len(env.LLM) == 0 {
+		t.Fatal("LLM should be parsed from the top-level llm object")
 	}
-	if ml.LLM.Interpretation != "Legitimate Harbor database container image" {
-		t.Errorf("Interpretation = %q", ml.LLM.Interpretation)
+	var llm llmInterpretation
+	if err := json.Unmarshal(env.LLM, &llm); err != nil {
+		t.Fatalf("unmarshal llm: %v", err)
 	}
-	if ml.LLM.Grade != "benign" || ml.LLM.Outcome != "benign" {
-		t.Errorf("grade/outcome = %q/%q, want benign/benign", ml.LLM.Grade, ml.LLM.Outcome)
+	if llm.Interpretation != "Legitimate Harbor database container image" {
+		t.Errorf("Interpretation = %q", llm.Interpretation)
 	}
-	if ml.LLM.Review {
+	if llm.Grade != "benign" || llm.Outcome != "benign" {
+		t.Errorf("grade/outcome = %q/%q, want benign/benign", llm.Grade, llm.Outcome)
+	}
+	if llm.Review {
 		t.Error("review should be false")
 	}
-	if ml.LLM.Conf < 0.56 || ml.LLM.Conf > 0.57 {
-		t.Errorf("conf = %v, want ~0.5623", ml.LLM.Conf)
+	if llm.Conf < 0.56 || llm.Conf > 0.57 {
+		t.Errorf("conf = %v, want ~0.5623", llm.Conf)
 	}
 
-	var bare litmusMlResponse
-	if err := json.Unmarshal([]byte(`{"v":"7","prob":0.1,"lvl":-1}`), &bare); err != nil {
+	var bare litmusFullResponse
+	if err := json.Unmarshal([]byte(`{"ml":{"v":"7","prob":0.1,"lvl":-1}}`), &bare); err != nil {
 		t.Fatalf("unmarshal bare: %v", err)
 	}
-	if bare.LLM != nil {
-		t.Errorf("LLM should be nil when no llm object is present, got %+v", bare.LLM)
+	if len(bare.LLM) != 0 {
+		t.Errorf("LLM should be empty when no llm object is present, got %s", bare.LLM)
 	}
 }
 

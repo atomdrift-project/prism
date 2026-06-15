@@ -2775,6 +2775,9 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 	if json.Valid(sample.LitmusResult) {
 		envelope["ml"] = sample.LitmusResult
 	}
+	if json.Valid(sample.LLMResult) {
+		envelope["llm"] = sample.LLMResult
+	}
 	if json.Valid(sample.CleaveResult) {
 		envelope["raw"] = sample.CleaveResult
 	}
@@ -3783,6 +3786,16 @@ type pendingAnalysisError struct {
 
 func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
 
+// archiveMemberFetchLimit caps how many archive members prism pulls from hopper
+// to reassemble a container whose stored cleave result was compacted (see
+// hopper.compactCleaveResultForStorage). Members are fetched highest-score
+// first, so the most suspicious survive the cap; the remainder are reported as
+// omitted_files in the reassembled envelope rather than silently dropped. Kept
+// small on purpose: the Content tab shows at most maxFilesShown files, so a
+// deep fetch would materialize megabytes of child cleave/litmus blobs to render
+// a handful of rows.
+const archiveMemberFetchLimit = 25
+
 // fetchFromHopper loads a sample from hopper and reshapes it into the
 // storedResult shape expected by the rest of prism. Returns an error whose
 // message contains "not found" when the sample is absent, so HTTP handlers
@@ -3826,11 +3839,11 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		children, cerr := db.SamplesByParent(ctx, sha)
+		children, total, cerr := db.TopMembersByParent(ctx, sha, archiveMemberFetchLimit)
 		if cerr != nil {
-			logger.Debug("samples by parent failed", "sha", sha, "error", cerr)
+			logger.Debug("top members by parent failed", "sha", sha, "error", cerr)
 		} else if len(children) > 0 {
-			enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename)
+			enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename, total)
 			if eerr != nil {
 				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
 			} else {
@@ -3841,28 +3854,36 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	return res, nil
 }
 
-// hopperWasCompacted reports whether the cleave result was stripped of
-// child entries by hopper's compactCleaveResultForStorage. Callers should
-// query hopper for samples whose parent matches and splice them back in.
+// hopperWasCompacted reports whether the cleave result was stripped of child
+// entries by hopper's compactCleaveResultForStorage, which always sets the
+// "truncated" marker when it does so. Callers should query hopper for samples
+// whose parent matches and splice them back in.
+//
+// It keys off "truncated" alone, not omitted_files: a result prism has already
+// reassembled keeps omitted_files for the members beyond its fetch cap but
+// clears "truncated", so it is correctly seen as enriched — without it, the
+// read path would re-enrich a partially-merged archive on every cache hit.
 func hopperWasCompacted(cleaveResult []byte) bool {
 	if len(cleaveResult) == 0 {
 		return false
 	}
 	var env struct {
-		Truncated    bool `json:"truncated"`
-		OmittedFiles int  `json:"omitted_files"`
+		Truncated bool `json:"truncated"`
 	}
 	if err := json.Unmarshal(cleaveResult, &env); err != nil {
 		return false
 	}
-	return env.Truncated || env.OmittedFiles > 0
+	return env.Truncated
 }
 
-// reassembleEnvelope takes a parent's litmus envelope (containing ml + raw)
-// and a list of child hopper samples, and produces a new envelope where the
-// child entries are spliced back into raw.files[] and ml.files[]. The returned
-// envelope drops the truncated/omitted_files markers because they are no
-// longer accurate after reassembly.
+// reassembleEnvelope takes a parent's litmus envelope (containing ml + raw),
+// a list of child hopper samples, and totalMembers — the archive's full member
+// count, of which children is the highest-score prefix that was fetched. It
+// produces a new envelope where the child entries are spliced back into
+// raw.files[] and ml.files[]. hopper's "truncated" marker (its signal that the
+// children live in sibling rows) is dropped; in its place, omitted_files is set
+// to the members beyond the fetch cap that were not merged, so the envelope
+// stays honest instead of claiming completeness it does not have.
 //
 // Each child contributes its own top-level files entry (depth 0 in the child's
 // own report) which is appended to the parent's files[] with depth bumped to 1
@@ -3873,7 +3894,7 @@ func hopperWasCompacted(cleaveResult []byte) bool {
 // The function is best-effort: a child whose CleaveResult or LitmusResult
 // fails to parse is logged and skipped so a single bad child does not break
 // the whole archive view.
-func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath string) ([]byte, error) {
+func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath string, totalMembers int) ([]byte, error) {
 	if len(envelope) == 0 {
 		return envelope, nil
 	}
@@ -3891,11 +3912,21 @@ func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath s
 		return nil, err
 	}
 
+	beforeChildren := len(parentFS)
 	parentFS, parentMLFS = mergeChildren(parentFS, parentMLFS, children, parentPath)
+	spliced := len(parentFS) - beforeChildren
 
-	// The truncation markers are no longer accurate after reassembly.
+	// Drop hopper's "truncated" marker now that we've spliced in what we fetched,
+	// so the read path doesn't treat this as still-compacted and re-enrich on
+	// every cache hit. Keep an accurate omitted_files for the members the fetch
+	// cap left behind (and any child that failed to merge), so the envelope never
+	// claims a completeness it doesn't have.
 	delete(parentRaw, "truncated")
-	delete(parentRaw, "omitted_files")
+	if omitted := totalMembers - spliced; omitted > 0 {
+		parentRaw["omitted_files"] = json.RawMessage(strconv.Itoa(omitted))
+	} else {
+		delete(parentRaw, "omitted_files")
+	}
 	if b, err := json.Marshal(parentFS); err == nil {
 		delete(parentRaw, "fs")
 		parentRaw["files"] = b
@@ -5212,6 +5243,7 @@ var uploadsInFlight sync.Map
 type litmusEnvelope struct {
 	Error string          `json:"error"`
 	ML    json.RawMessage `json:"ml"`
+	LLM   json.RawMessage `json:"llm"`
 	Raw   json.RawMessage `json:"raw"`
 }
 
@@ -5318,7 +5350,7 @@ func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
 
 // cacheLitmusResult stores a litmus verdict in prism's result cache so
 // /file/<sha> renders without waiting on (or needing) hopper. The litmus
-// /analyze envelope is already the {ml,raw} shape prism stores as RawLitmus.
+// /analyze envelope is already the {ml,llm,raw} shape prism stores as RawLitmus.
 func cacheLitmusResult(ctx context.Context, sha, filename string, env *litmusEnvelope, size int64, log *slog.Logger) {
 	// Synchronous Set (not SetAsync): the value must be visible in the cache
 	// before the caller marks the litmus path done and the in-flight marker is
@@ -5335,6 +5367,9 @@ func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) st
 	envelope := map[string]json.RawMessage{}
 	if json.Valid(env.ML) {
 		envelope["ml"] = env.ML
+	}
+	if json.Valid(env.LLM) {
+		envelope["llm"] = env.LLM
 	}
 	if json.Valid(env.Raw) {
 		envelope["raw"] = env.Raw
@@ -5363,7 +5398,7 @@ func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) st
 }
 
 // analyzeWithLitmus POSTs buf to litmus POST /analyze as multipart/form-data
-// (one part named "file") and returns the ml/raw sections of the response
+// (one part named "file") and returns the ml/llm/raw sections of the response
 // envelope. A non-200 status, a structured error body, or a missing ml
 // section is reported as an error so the caller falls back to hopper's worker.
 func analyzeWithLitmus(ctx context.Context, target string, buf []byte, filename string) (*litmusEnvelope, error) {
@@ -5414,6 +5449,7 @@ type hopperResultRequest struct {
 	SHA256     string          `json:"sha256"`
 	Worker     string          `json:"worker"`
 	ML         json.RawMessage `json:"ml"`
+	LLM        json.RawMessage `json:"llm,omitempty"`
 	Raw        json.RawMessage `json:"raw"`
 	DurationMs int64           `json:"duration_ms"`
 }
@@ -5449,6 +5485,7 @@ func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope,
 		SHA256:     sha,
 		Worker:     litmusWorkerName,
 		ML:         env.ML,
+		LLM:        env.LLM,
 		Raw:        env.Raw,
 		DurationMs: durationMs,
 	})
@@ -5524,7 +5561,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// early return below. filename is passed raw; the template escapes it.
 	data.Provenance = provenanceGroups(sha256Hex, filename, res)
 
-	// Parse raw litmus response envelope: {"ml": {...}, "raw": {...}}.
+	// Parse raw litmus response envelope: {"ml": {...}, "llm": {...}, "raw": {...}}.
 	var fullResp litmusFullResponse
 	if err := json.Unmarshal([]byte(res.RawLitmus), &fullResp); err != nil {
 		logger.Debug("failed to parse raw litmus response", "sha256", sha256Hex, "error", err)
@@ -5537,12 +5574,18 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 
 	// Surface the optional LLM interpretation in the hero when one ran (only a
-	// subset of samples get it). Gate on a non-empty rationale so a pass that
-	// failed (carries only `error`) doesn't render an empty line.
-	if llm := mlResp.LLM; llm != nil && llm.Interpretation != "" {
-		data.LLMInterpretation = llm.Interpretation
-		data.LLMReview = llm.Review
-		data.LLMConfidence = int(llm.Conf*100 + 0.5)
+	// subset of samples get it). The `llm` section is a top-level envelope
+	// sibling of `ml`, not nested inside it. Gate on a non-empty rationale so a
+	// pass that failed (carries only `error`) doesn't render an empty line.
+	if len(fullResp.LLM) > 0 {
+		var llm llmInterpretation
+		if err := json.Unmarshal(fullResp.LLM, &llm); err != nil {
+			logger.Debug("failed to parse llm section", "sha256", sha256Hex, "error", err)
+		} else if llm.Interpretation != "" {
+			data.LLMInterpretation = llm.Interpretation
+			data.LLMReview = llm.Review
+			data.LLMConfidence = int(llm.Conf*100 + 0.5)
+		}
 	}
 
 	// Use thresholds from litmus response, with sensible defaults.
@@ -7032,6 +7075,7 @@ func formatBytes(b int64) string {
 // litmusFullResponse matches the top-level {"ml": {...}, "raw": {...}} envelope.
 type litmusFullResponse struct {
 	ML  json.RawMessage `json:"ml"`
+	LLM json.RawMessage `json:"llm"`
 	Raw json.RawMessage `json:"raw"`
 }
 
@@ -7088,9 +7132,6 @@ type litmusMlResponse struct {
 	Level          *int       `json:"-"` // v=5 only; kept for back-compat parsing
 	Classification int        `json:"-"`
 	Probability    float64    `json:"-"`
-	// LLM is the optional interpretation pass (envelope `llm`), nil for the
-	// majority of samples that did not get one.
-	LLM *llmInterpretation `json:"-"`
 }
 
 // UnmarshalJSON parses a litmus ml-section envelope. It accepts v=7 (the
@@ -7104,13 +7145,12 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	// that FPR level), or null (hostile via manual threshold). `conf` is the
 	// optional level-derived display/export confidence.
 	var current struct {
-		Conf       *int               `json:"conf"`
-		L          *int               `json:"lvl"`
-		OldL       *int               `json:"l"`
-		LLM        *llmInterpretation `json:"llm"` // optional interpretation pass
-		V          string             `json:"v"`
-		Version    string             `json:"version"`
-		AnalyzedAt string             `json:"analyzed_at"`
+		Conf       *int   `json:"conf"`
+		L          *int   `json:"lvl"`
+		OldL       *int   `json:"l"`
+		V          string `json:"v"`
+		Version    string `json:"version"`
+		AnalyzedAt string `json:"analyzed_at"`
 		Files      []struct {
 			Conf *int    `json:"conf"`
 			L    *int    `json:"lvl"`
@@ -7168,7 +7208,6 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	r.Version = current.Version
 	r.AnalyzedAt = current.AnalyzedAt
 	r.Probability = current.Prob
-	r.LLM = current.LLM
 	r.L = current.L
 	r.Level = legacy.Level
 	r.Thresholds = legacy.Thresholds
