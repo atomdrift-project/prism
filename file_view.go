@@ -136,7 +136,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		// window: list them with their member trail.
 		for j := range file.Findings {
 			f := &file.Findings[j]
-			if f.Src != nil || len(f.Sources) == 0 || f.Crit < minFileCrit || shown[f.ID] {
+			if len(f.From) <= 1 || f.Crit < minFileCrit || shown[f.ID] {
 				continue
 			}
 			fd.composites = append(fd.composites, f)
@@ -200,7 +200,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 				ID:      traitDisplayID(f.ID),
 				Desc:    f.Desc,
 				Crit:    critIntToString(f.Crit),
-				Sources: compositeLinks(f.Sources, idToFile, rendered),
+				Sources: compositeLinks(f.From, idToFile, rendered),
 			})
 		}
 		views = append(views, view)

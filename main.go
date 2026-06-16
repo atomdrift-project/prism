@@ -1152,40 +1152,43 @@ type sectionInfo struct {
 	Entropy float64 `json:"entropy,omitempty"`
 }
 
-// contextWindow is one entry in a file's `ctx` array. Two wire formats coexist:
+// contextWindow is one entry in a file's `ctx` array.
 //
-//   - Legacy: a pre-rendered slice of file content in Text ("t") at byte offset
-//     Offset, with Hex marking a hex dump. Notes name the traits that matched.
-//   - Current (cleave rc.6+): one entry per source line or hex unit, carrying
-//     the raw matched bytes in Data (Z85-decoded from "b") with Addr ("a") the
-//     byte start of a source line's content. Offset ("l") is then a 1-based line
-//     number (source) or a byte offset (hex/minified). The richer File and
-//     per-trait context views render from this; legacy Text is the fallback.
+// v8 (current): one entry per source line or binary unit. `ln` is the 1-based
+// line number (source) or byte offset (binary/minified). `addr` is the byte
+// offset of a source line's first byte; absent for byte-addressed units.
+// `b` carries the raw bytes Z85-encoded. Render mode (hex vs text) is derived
+// from the file's `type` field. Data is non-nil when the entry is current format.
 //
-// Data is non-nil exactly when the entry used the current format, so it is the
-// flag the renderer keys on.
+// Legacy (v7 and earlier): pre-rendered text in `t` with `n` notes. Offset in `l`.
 type contextWindow struct {
-	Text   string        `json:"t"`
-	Notes  []contextNote `json:"n,omitempty"`
-	Offset int64         `json:"l"`
-	Hex    bool          `json:"x,omitempty"`
-	Addr   *int64        `json:"-"`
-	Data   []byte        `json:"-"`
+	Text   string `json:"t"`
+	Offset int64  `json:"ln"` // v8: line number or byte offset; legacy: "l"
+	Addr   *int64 `json:"-"`
+	Data   []byte `json:"-"`
 }
 
 func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Text   string        `json:"t"`
-		Bytes  string        `json:"b"`
-		Notes  []contextNote `json:"n"`
-		Offset int64         `json:"l"`
-		Addr   *int64        `json:"a"`
-		Hex    bool          `json:"x"`
+		Text   string `json:"t"`
+		Bytes  string `json:"b"`
+		Offset int64  `json:"ln"`
+		OldOff int64  `json:"l"`
+		Addr   *int64 `json:"addr"`
+		OldAddr *int64 `json:"a"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*w = contextWindow{Text: raw.Text, Notes: raw.Notes, Offset: raw.Offset, Hex: raw.Hex, Addr: raw.Addr}
+	w.Offset = raw.Offset
+	if w.Offset == 0 {
+		w.Offset = raw.OldOff
+	}
+	w.Addr = raw.Addr
+	if w.Addr == nil {
+		w.Addr = raw.OldAddr
+	}
+	w.Text = raw.Text
 	if raw.Bytes != "" {
 		decoded, err := z85Decode(raw.Bytes)
 		if err != nil {
@@ -1196,72 +1199,51 @@ func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// contextNote attributes a span of a contextWindow to a single trait by its
-// full ID. Offset/Size locate the match within the window.
-type contextNote struct {
-	ID     string `json:"i"`
-	Desc   string `json:"d,omitempty"`
-	Offset int64  `json:"o"`
-	Crit   int    `json:"c,omitempty"`
-	Size   int    `json:"z,omitempty"`
-}
-
 type finding struct {
-	ID   string `json:"id"`
+	ID string `json:"id"`
+	// Desc is the human-readable trait description.
 	Desc string `json:"desc,omitempty"`
-	// Evidence values (cleave's compact `ev`). Parallel to Locations when
-	// the latter is non-empty; same index = same match.
-	Evidence []string `json:"ev,omitempty"`
-	// Locations is cleave's compact `loc` — one entry per Evidence item,
-	// or empty when the finding was never rolled up through an archive
-	// member. Archive-attributed entries look like
-	// "archive:<member-path>", with optional "!" nesting for archives
-	// inside archives. Used by aggregateArchiveCategories to point the
-	// user at the inner file a container-level trait actually matched.
+	// Spans holds byte-span evidence: each entry is [offset, length] in
+	// the file's byte space. Intersect against ctx windows to highlight matches.
+	Spans [][2]int64 `json:"spans,omitempty"`
+	// Locations is archive attribution: "archive:<member-path>" or
+	// "<file-id>[:<offset>]" strings used by aggregateArchiveCategories to
+	// route findings to the right extracted sub-file.
 	Locations []string `json:"loc,omitempty"`
-	// Src is the origin member's files[] index when this finding was inherited
-	// from an embedded file; nil when the finding is native to this file. The
-	// archive (top-level) view shows only native findings — inherited ones are
-	// rendered within the member that actually produced them.
-	Src *int `json:"src,omitempty"`
-	// Sources lists the archive members a cross-file composite fired on, each
-	// with the component's anchor. Non-empty marks a composite; the File view
-	// links each entry to the member's own section.
-	Sources []compactSource `json:"srcs,omitempty"`
+	// From lists the files this finding came from. A single entry means it was
+	// inherited from that embedded member; multiple entries means a cross-file
+	// composite. Empty when native to this file.
+	From    []compactSource `json:"from,omitempty"`
 	Crit    int             `json:"crit"`
 	Conf    float64         `json:"conf,omitempty"`
 }
 
-// compactSource is one member a cross-file composite drew from: the member's
-// files[] id and the component match's line/offset, when known.
+// compactSource is one member a cross-file composite drew from.
 type compactSource struct {
-	Line   *int64 `json:"ln,omitempty"`
-	Offset *int64 `json:"o,omitempty"`
-	File   int    `json:"f"`
+	Line   *int64 `json:"line,omitempty"`
+	Offset *int64 `json:"off,omitempty"`
+	File   int    `json:"file"`
 }
 
 func (f *finding) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		ID           string          `json:"id"`
-		OldID        string          `json:"i"`
-		Desc         string          `json:"desc,omitempty"`
-		OldDesc      string          `json:"d,omitempty"`
-		Evidence     []string        `json:"ev,omitempty"`
-		OldEvidence  []string        `json:"e,omitempty"`
-		Locations    []string        `json:"loc,omitempty"`
-		OldLocations []string        `json:"el,omitempty"`
-		Src          *int            `json:"src,omitempty"`
-		Sources      []compactSource `json:"srcs,omitempty"`
-		Crit         int             `json:"crit"`
-		OldCrit      int             `json:"l"`
-		Conf         float64         `json:"conf,omitempty"`
-		OldConf      float64         `json:"c,omitempty"`
+		ID        string          `json:"id"`
+		OldID     string          `json:"i"`
+		Desc      string          `json:"desc,omitempty"`
+		OldDesc   string          `json:"d,omitempty"`
+		Spans     [][2]int64      `json:"spans,omitempty"`
+		Locations []string        `json:"loc,omitempty"`
+		OldLocs   []string        `json:"el,omitempty"`
+		From      []compactSource `json:"from,omitempty"`
+		Crit      int             `json:"crit"`
+		OldCrit   int             `json:"l"`
+		Conf      float64         `json:"conf,omitempty"`
+		OldConf   float64         `json:"c,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	f.Src = raw.Src
-	f.Sources = raw.Sources
+	f.From = raw.From
 	f.ID = raw.ID
 	if f.ID == "" {
 		f.ID = raw.OldID
@@ -1270,13 +1252,10 @@ func (f *finding) UnmarshalJSON(data []byte) error {
 	if f.Desc == "" {
 		f.Desc = raw.OldDesc
 	}
-	f.Evidence = raw.Evidence
-	if len(f.Evidence) == 0 {
-		f.Evidence = raw.OldEvidence
-	}
+	f.Spans = raw.Spans
 	f.Locations = raw.Locations
 	if len(f.Locations) == 0 {
-		f.Locations = raw.OldLocations
+		f.Locations = raw.OldLocs
 	}
 	f.Crit = raw.Crit
 	if f.Crit == 0 {
@@ -5614,7 +5593,6 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 				continue // deduplicate
 			}
 			td := &TraitDetail{Desc: f.Desc, Crit: critIntToString(f.Crit)}
-			td.Evidence = append(td.Evidence, f.Evidence...)
 			traitDetails[f.ID] = td
 		}
 	}
@@ -5850,14 +5828,6 @@ func galaxyStrings(file *cleaveFile) []string {
 		}
 		for _, v := range parseStringTupleValue(s) {
 			add(v)
-		}
-	}
-	for _, f := range file.Findings {
-		if len(strs) >= maxGalaxyStrings {
-			break
-		}
-		for _, e := range f.Evidence {
-			add(e)
 		}
 	}
 	return strs
@@ -6128,39 +6098,38 @@ type evidenceRow struct {
 	hex    bool
 }
 
-// contextIndex maps each full trait ID to the evidence rows the file's v7
-// `ctx` array attributes to it. Returns nil for pre-v7 files with no ctx.
+// contextIndex maps each full trait ID to the evidence rows derived from the
+// file's findings by intersecting their Spans with ctx windows. Returns nil
+// when no ctx windows carry decoded bytes (legacy files).
 func contextIndex(file *cleaveFile) map[string][]evidenceRow {
-	if len(file.Ctx) == 0 {
+	if !hasRichContext(file) {
 		return nil
 	}
+	isHex := isBinaryType(file.FileType)
 	idx := make(map[string][]evidenceRow)
-	for w := range file.Ctx {
-		win := &file.Ctx[w]
-		for _, n := range win.Notes {
-			idx[n.ID] = append(idx[n.ID], evidenceRow{
-				text:   win.Text,
-				offset: formatOffset(n.Offset, win.Hex),
-				hex:    win.Hex,
+	for i := range file.Findings {
+		f := &file.Findings[i]
+		for _, sp := range f.Spans {
+			off := sp[0]
+			// Emit one row per span, formatted as hex for binary types.
+			idx[f.ID] = append(idx[f.ID], evidenceRow{
+				offset: formatOffset(off, isHex),
+				hex:    isHex,
 			})
 		}
 	}
 	return idx
 }
 
-// evidenceRows returns the match rows for a finding, preferring v7 `ctx`
-// attribution (via idx) and falling back to the finding's inline `ev`/`loc`
-// so older reports still expand.
+// evidenceRows returns the match rows for a finding from the ctx index.
+// Falls back to span offsets when the ctx index has no entry (e.g. older reports).
 func evidenceRows(f finding, idx map[string][]evidenceRow) []evidenceRow {
 	if rows := idx[f.ID]; len(rows) > 0 {
 		return rows
 	}
-	rows := make([]evidenceRow, len(f.Evidence))
-	for i, ev := range f.Evidence {
-		rows[i] = evidenceRow{text: ev}
-		if i < len(f.Locations) {
-			rows[i].locRef = f.Locations[i]
-		}
+	rows := make([]evidenceRow, len(f.Spans))
+	for i, sp := range f.Spans {
+		rows[i] = evidenceRow{text: fmt.Sprintf("0x%x", sp[0])}
 	}
 	return rows
 }

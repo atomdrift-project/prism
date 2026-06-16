@@ -117,24 +117,35 @@ const hexStride = 16
 // can't blow up the page. Comfortably above cleave's per-match line budgets.
 const maxContextRows = 48
 
+// isBinaryType reports whether a file type is rendered in hex (binary) rather
+// than as source text.
+func isBinaryType(fileType string) bool {
+	switch fileType {
+	case "elf", "pe", "macho", "java_class", "python_bytecode", "beam":
+		return true
+	}
+	return false
+}
+
 // groupCtxWindows splits a file's `ctx` into render groups: contiguous source
-// lines (matching line numbers) merge into one group; hex units and minified
-// text slices each stand alone. Entries with no decoded bytes (legacy windows)
-// are skipped. Each returned slice is a sub-slice of file.Ctx in file order.
-func groupCtxWindows(ctx []contextWindow) [][]contextWindow {
+// lines (matching line numbers) merge into one group; binary file types and
+// minified text slices (no Addr) each stand alone. Entries with no decoded
+// bytes (legacy windows) are skipped. Each returned slice is a sub-slice of
+// file.Ctx in file order.
+func groupCtxWindows(ctx []contextWindow, fileType string) [][]contextWindow {
 	var groups [][]contextWindow
 	for i := 0; i < len(ctx); {
 		if ctx[i].Data == nil {
 			i++
 			continue
 		}
-		if ctx[i].Hex || ctx[i].Addr == nil {
+		if isBinaryType(fileType) || ctx[i].Addr == nil {
 			groups = append(groups, ctx[i:i+1])
 			i++
 			continue
 		}
 		j := i + 1
-		for j < len(ctx) && ctx[j].Data != nil && !ctx[j].Hex &&
+		for j < len(ctx) && ctx[j].Data != nil && !isBinaryType(fileType) &&
 			ctx[j].Addr != nil && ctx[j].Offset == ctx[j-1].Offset+1 {
 			j++
 		}
@@ -154,9 +165,13 @@ func buildContextBlocks(file *cleaveFile, filterID string) []contextBlock {
 		return nil
 	}
 	filename := extractBasename(file.Path)
+	findingsByID := make(map[string]*finding, len(file.Findings))
+	for i := range file.Findings {
+		findingsByID[file.Findings[i].ID] = &file.Findings[i]
+	}
 	var blocks []contextBlock
-	for _, g := range groupCtxWindows(file.Ctx) {
-		if block, ok := renderWindow(g, filterID, filename, nil); ok {
+	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
+		if block, ok := renderWindow(g, filterID, filename, file.FileType, findingsByID, nil); ok {
 			blocks = append(blocks, block)
 		}
 	}
@@ -191,20 +206,22 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 		return nil
 	}
 	filename := extractBasename(file.Path)
-	// Description fallback for a note that carries none: the finding's own desc.
+	findingsByID := make(map[string]*finding, len(file.Findings))
+	// Description fallback: the finding's own desc.
 	descByID := make(map[string]string, len(file.Findings))
 	for i := range file.Findings {
+		findingsByID[file.Findings[i].ID] = &file.Findings[i]
 		if file.Findings[i].Desc != "" {
 			descByID[file.Findings[i].ID] = file.Findings[i].Desc
 		}
 	}
 	var out []labeledWindow
-	for _, g := range groupCtxWindows(file.Ctx) {
-		notes := windowNotes(g)
+	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
+		notes := windowNotes(g, findingsByID)
 		if len(notes) == 0 {
 			continue
 		}
-		block, ok := renderWindow(g, "", filename, descByID)
+		block, ok := renderWindow(g, "", filename, file.FileType, findingsByID, descByID)
 		if !ok {
 			continue
 		}
@@ -213,25 +230,42 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 	return out
 }
 
-// windowNotes collects the distinct traits annotating a window group, keeping
-// the strongest severity and first non-empty description per trait, ordered
-// severity-desc then id-asc for a stable, scannable header.
-func windowNotes(group []contextWindow) []ctxNoteRef {
+// windowNotes collects the distinct traits annotating a window group by
+// intersecting each finding's Spans against the group's byte ranges, keeping
+// the strongest severity and description per trait, ordered severity-desc then
+// id-asc for a stable, scannable header.
+func windowNotes(group []contextWindow, findings map[string]*finding) []ctxNoteRef {
 	byID := make(map[string]*ctxNoteRef)
 	var order []string
-	for w := range group {
-		for _, n := range group[w].Notes {
-			ref, ok := byID[n.ID]
-			if !ok {
-				order = append(order, n.ID)
-				byID[n.ID] = &ctxNoteRef{ID: n.ID, Desc: n.Desc, Crit: n.Crit}
-				continue
+	for id, f := range findings {
+		for w := range group {
+			win := &group[w]
+			base := win.Offset
+			if win.Addr != nil {
+				base = *win.Addr
 			}
-			if n.Crit > ref.Crit {
-				ref.Crit = n.Crit
-			}
-			if ref.Desc == "" {
-				ref.Desc = n.Desc
+			n := len(win.Data)
+			for _, sp := range f.Spans {
+				off, length := sp[0], sp[1]
+				if length <= 0 {
+					length = 1
+				}
+				if off < base+int64(n) && off+length > base {
+					// This finding intersects this window.
+					ref, ok := byID[id]
+					if !ok {
+						order = append(order, id)
+						byID[id] = &ctxNoteRef{ID: id, Desc: f.Desc, Crit: f.Crit}
+					} else {
+						if f.Crit > ref.Crit {
+							ref.Crit = f.Crit
+						}
+						if ref.Desc == "" {
+							ref.Desc = f.Desc
+						}
+					}
+					break // one span match is enough to include this finding
+				}
 			}
 		}
 	}
@@ -300,15 +334,15 @@ func hasRichContext(file *cleaveFile) bool {
 // unit). It reports false when filtering to a trait the window never mentions.
 // descByID, when non-nil, enables trailing trait annotations (the File view);
 // the Traits-tab expansion passes nil since its card already names the trait.
-func renderWindow(windows []contextWindow, filterID, filename string, descByID map[string]string) (contextBlock, bool) {
-	if filterID != "" && !windowsMatchTrait(windows, filterID) {
+func renderWindow(windows []contextWindow, filterID, filename, fileType string, findingsByID map[string]*finding, descByID map[string]string) (contextBlock, bool) {
+	if filterID != "" && !windowsMatchTrait(windows, filterID, findingsByID) {
 		return contextBlock{}, false
 	}
 	annotated := map[string]bool{} // a trait annotates once per window, on its first line
-	if windows[0].Hex {
-		return renderHexWindow(&windows[0], filterID, descByID, annotated), true
+	if isBinaryType(fileType) {
+		return renderHexWindow(&windows[0], filterID, findingsByID, descByID, annotated), true
 	}
-	return renderSourceWindow(windows, filterID, filename, descByID, annotated), true
+	return renderSourceWindow(windows, filterID, filename, findingsByID, descByID, annotated), true
 }
 
 // rowAnnos returns the single trailing annotation for a row — cleave's rule: one
@@ -317,41 +351,63 @@ func renderWindow(windows []contextWindow, filterID, filename string, descByID m
 // once per window (tracked in annotated), so a match spanning rows or repeating
 // doesn't echo. desc falls back finding-desc → short id. Returns nil when
 // descByID is nil (annotations disabled) or no fresh match begins on the row.
-func rowAnnos(notes []contextNote, base int64, n int, descByID map[string]string, annotated map[string]bool) []rowAnno {
+func rowAnnos(findings map[string]*finding, base int64, n int, descByID map[string]string, annotated map[string]bool) []rowAnno {
 	if descByID == nil {
 		return nil
 	}
-	var best *contextNote
-	for i := range notes {
-		note := &notes[i]
-		if off := note.Offset - base; off < 0 || off >= int64(n) {
-			continue // match doesn't begin on this row
+	var bestID string
+	bestCrit := -1
+	for id, f := range findings {
+		if annotated[id] {
+			continue
 		}
-		if annotated[note.ID] {
-			continue // already labeled on an earlier row
-		}
-		if best == nil || note.Crit > best.Crit {
-			best = note
+		for _, sp := range f.Spans {
+			off := sp[0] - base
+			if off < 0 || off >= int64(n) {
+				continue // span doesn't begin on this row
+			}
+			if f.Crit > bestCrit {
+				bestCrit = f.Crit
+				bestID = id
+			}
+			break
 		}
 	}
-	if best == nil {
+	if bestID == "" {
 		return nil
 	}
-	annotated[best.ID] = true
-	desc := best.Desc
+	annotated[bestID] = true
+	f := findings[bestID]
+	desc := f.Desc
 	if desc == "" {
-		desc = descByID[best.ID]
+		desc = descByID[bestID]
 	}
 	if desc == "" {
-		desc = traitDisplayID(best.ID)
+		desc = traitDisplayID(bestID)
 	}
-	return []rowAnno{{Desc: desc, Crit: critIntToString(best.Crit)}}
+	return []rowAnno{{Desc: desc, Crit: critIntToString(f.Crit)}}
 }
 
-func windowsMatchTrait(windows []contextWindow, filterID string) bool {
+// windowsMatchTrait checks if the finding with ID==filterID has any span
+// intersecting any window's byte range.
+func windowsMatchTrait(windows []contextWindow, filterID string, findings map[string]*finding) bool {
+	f, ok := findings[filterID]
+	if !ok {
+		return false
+	}
 	for w := range windows {
-		for _, n := range windows[w].Notes {
-			if n.ID == filterID {
+		win := &windows[w]
+		base := win.Offset
+		if win.Addr != nil {
+			base = *win.Addr
+		}
+		n := len(win.Data)
+		for _, sp := range f.Spans {
+			off, length := sp[0], sp[1]
+			if length <= 0 {
+				length = 1
+			}
+			if off < base+int64(n) && off+length > base {
 				return true
 			}
 		}
@@ -362,7 +418,7 @@ func windowsMatchTrait(windows []contextWindow, filterID string) bool {
 // renderSourceWindow renders a run of source lines: each line numbered, its
 // code syntax-highlighted, and its matched span(s) lit by severity. Lit notes
 // are restricted to filterID when set; filename selects the chroma lexer.
-func renderSourceWindow(windows []contextWindow, filterID, filename string, descByID map[string]string, annotated map[string]bool) contextBlock {
+func renderSourceWindow(windows []contextWindow, filterID, filename string, findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool) contextBlock {
 	block := contextBlock{}
 	for w := range windows {
 		if len(block.Rows) >= maxContextRows {
@@ -373,16 +429,16 @@ func renderSourceWindow(windows []contextWindow, filterID, filename string, desc
 		if win.Addr != nil {
 			base = *win.Addr
 		}
-		spans, crit := spansForRow(win.Notes, base, len(win.Data), filterID)
+		spans, crit := spansForRow(findingsByID, base, len(win.Data), filterID)
 		// Clip a long line to a window around its match so the highlighted span
 		// (and the trailing annotation) stay in view; short lines pass through.
-		text, off, lead, trail := clipSourceLine(string(win.Data), primaryMatchCol(win.Notes, base, len(win.Data), filterID))
+		text, off, lead, trail := clipSourceLine(string(win.Data), primaryMatchCol(findingsByID, base, len(win.Data), filterID))
 		spans = shiftSpans(spans, off, len(text))
 		block.Rows = append(block.Rows, contextRow{
 			Loc:   strconv.FormatInt(win.Offset, 10),
 			Crit:  crit,
 			Segs:  highlightedSegs(text, spans, filename),
-			Annos: rowAnnos(win.Notes, base, len(win.Data), descByID, annotated),
+			Annos: rowAnnos(findingsByID, base, len(win.Data), descByID, annotated),
 			Lead:  lead,
 			Trail: trail,
 		})
@@ -427,20 +483,22 @@ func clipSourceLine(text string, matchCol int) (clipped string, off int, lead, t
 }
 
 // primaryMatchCol returns the byte index, within a line of length n starting at
-// base, of the strongest match that begins on it — the anchor the clip centers
-// on. Returns -1 when the line carries no (matching) note.
-func primaryMatchCol(notes []contextNote, base int64, n int, filterID string) int {
+// base, of the strongest span start within [base, base+n) — the anchor the clip
+// centers on. Returns -1 when no (matching) finding begins on this row.
+func primaryMatchCol(findings map[string]*finding, base int64, n int, filterID string) int {
 	best, bestCrit := -1, -1
-	for _, note := range notes {
-		if filterID != "" && note.ID != filterID {
+	for id, f := range findings {
+		if filterID != "" && id != filterID {
 			continue
 		}
-		off := int(note.Offset - base)
-		if off < 0 || off >= n {
-			continue
-		}
-		if note.Crit > bestCrit {
-			bestCrit, best = note.Crit, off
+		for _, sp := range f.Spans {
+			off := int(sp[0] - base)
+			if off < 0 || off >= n {
+				continue
+			}
+			if f.Crit > bestCrit {
+				bestCrit, best = f.Crit, off
+			}
 		}
 	}
 	return best
@@ -512,7 +570,7 @@ func appendSpanSegs(segs []contextSeg, text string, spans []rowSpan, start, end 
 
 // renderHexWindow renders one hex unit as `hexStride`-byte rows with the matched
 // bytes lit. The unit's bytes begin at win.Offset.
-func renderHexWindow(win *contextWindow, filterID string, descByID map[string]string, annotated map[string]bool) contextBlock {
+func renderHexWindow(win *contextWindow, filterID string, findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool) contextBlock {
 	block := contextBlock{Hex: true}
 	for start := 0; start < len(win.Data); start += hexStride {
 		if len(block.Rows) >= maxContextRows {
@@ -520,7 +578,7 @@ func renderHexWindow(win *contextWindow, filterID string, descByID map[string]st
 		}
 		row := win.Data[start:min(start+hexStride, len(win.Data))]
 		rowBase := win.Offset + int64(start)
-		spans, crit := spansForRow(win.Notes, rowBase, len(row), filterID)
+		spans, crit := spansForRow(findingsByID, rowBase, len(row), filterID)
 		// Always emit hexStride cells, padding a short final row with blanks
 		// ("  " = the width of a hex pair, " " for ascii). Every hex window then
 		// has an identical, fully-populated grid, so the offset / hex / ascii
@@ -543,7 +601,7 @@ func renderHexWindow(win *contextWindow, filterID string, descByID map[string]st
 			Crit:  crit,
 			Segs:  hexCells,
 			ASCII: asciiCells,
-			Annos: rowAnnos(win.Notes, rowBase, len(row), descByID, annotated),
+			Annos: rowAnnos(findingsByID, rowBase, len(row), descByID, annotated),
 		})
 	}
 	return block
@@ -557,32 +615,35 @@ type rowSpan struct {
 	End   int
 }
 
-// spansForRow resolves the notes that intersect a row whose content starts at
-// byte offset base and is n bytes long, into row-relative spans. filterID, when
-// set, keeps only that trait's notes. The second return is the strongest
-// severity class touching the row (for the gutter), empty when none do.
-func spansForRow(notes []contextNote, base int64, n int, filterID string) (spans []rowSpan, crit string) {
+// spansForRow resolves the finding spans that intersect a row whose content
+// starts at byte offset base and is n bytes long, into row-relative spans.
+// filterID, when set, keeps only that finding's spans. The second return is
+// the strongest severity class touching the row (for the gutter), empty when
+// none do.
+func spansForRow(findings map[string]*finding, base int64, n int, filterID string) (spans []rowSpan, crit string) {
 	topCrit := -1
-	for _, note := range notes {
-		if filterID != "" && note.ID != filterID {
+	for id, f := range findings {
+		if filterID != "" && id != filterID {
 			continue
 		}
-		length := note.Size
-		if length <= 0 {
-			length = 1
-		}
-		start := int(note.Offset - base)
-		end := start + length
-		if end <= 0 || start >= n {
-			continue
-		}
-		start = max(start, 0)
-		end = min(end, n)
-		sev := critIntToString(note.Crit)
-		spans = append(spans, rowSpan{Start: start, End: end, Crit: sev})
-		if note.Crit > topCrit {
-			topCrit = note.Crit
-			crit = sev
+		for _, sp := range f.Spans {
+			off, length := sp[0], sp[1]
+			if length <= 0 {
+				length = 1
+			}
+			start := int(off - base)
+			end := start + int(length)
+			if end <= 0 || start >= n {
+				continue
+			}
+			start = max(start, 0)
+			end = min(end, n)
+			sev := critIntToString(f.Crit)
+			spans = append(spans, rowSpan{Start: start, End: end, Crit: sev})
+			if f.Crit > topCrit {
+				topCrit = f.Crit
+				crit = sev
+			}
 		}
 	}
 	return spans, crit
