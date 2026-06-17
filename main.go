@@ -917,10 +917,15 @@ type cleaveFacts struct {
 	Sections  []json.RawMessage          `json:"sec,omitempty"`
 }
 
+func (f *cleaveFacts) isEmpty() bool {
+	return len(f.Metrics) == 0 && f.KV == nil && len(f.Strings) == 0 && len(f.Imports) == 0 && len(f.Exports) == 0 && len(f.Functions) == 0 && len(f.Sections) == 0
+}
+
 func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Metrics     json.RawMessage            `json:"met,omitempty"`
-		OldMetrics  json.RawMessage            `json:"m,omitempty"`
+		Metrics     json.RawMessage            `json:"metrics,omitempty"` // v8
+		OldMetrics  json.RawMessage            `json:"met,omitempty"`    // v7
+		V4Metrics   json.RawMessage            `json:"m,omitempty"`      // v4
 		KV          map[string]json.RawMessage `json:"val,omitempty"`
 		OldKV       map[string]json.RawMessage `json:"v,omitempty"`
 		Strings     []json.RawMessage          `json:"str,omitempty"`
@@ -929,7 +934,8 @@ func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 		OldImports  []json.RawMessage          `json:"i,omitempty"`
 		Exports     []json.RawMessage          `json:"exp,omitempty"`
 		OldExports  []json.RawMessage          `json:"x,omitempty"`
-		Functions   []json.RawMessage          `json:"fn,omitempty"`
+		Functions   []json.RawMessage          `json:"funcs,omitempty"` // v8
+		OldFuncs    []json.RawMessage          `json:"fn,omitempty"`   // v7
 		Sections    []json.RawMessage          `json:"sec,omitempty"`
 		OldSections []json.RawMessage          `json:"sc,omitempty"`
 	}
@@ -939,6 +945,9 @@ func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 	f.Metrics = raw.Metrics
 	if len(f.Metrics) == 0 {
 		f.Metrics = raw.OldMetrics
+	}
+	if len(f.Metrics) == 0 {
+		f.Metrics = raw.V4Metrics
 	}
 	f.KV = raw.KV
 	if len(f.KV) == 0 {
@@ -957,6 +966,9 @@ func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 		f.Exports = raw.OldExports
 	}
 	f.Functions = raw.Functions
+	if len(f.Functions) == 0 {
+		f.Functions = raw.OldFuncs
+	}
 	f.Sections = raw.Sections
 	if len(f.Sections) == 0 {
 		f.Sections = raw.OldSections
@@ -981,29 +993,50 @@ func (r *cleaveReport) UnmarshalJSON(data []byte) error {
 
 func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		KV          map[string]json.RawMessage `json:"k,omitempty"`
-		Path        string                     `json:"path"`
-		FileType    string                     `json:"type"`
-		SHA256      string                     `json:"sha"`
-		Formula     string                     `json:"mol,omitempty"`
-		OldFormula  string                     `json:"f,omitempty"`
-		Facts       cleaveFacts                `json:"fact,omitzero"`
-		OldFacts    cleaveFacts                `json:"ff,omitzero"`
-		Exports     []symbolInfo               `json:"exports,omitempty"`
-		Findings    []finding                  `json:"find,omitempty"`
-		OldFindings []finding                  `json:"ts,omitempty"`
-		Ctx         []contextWindow            `json:"ctx,omitempty"`
-		Strings     []json.RawMessage          `json:"ss,omitempty"`
-		Imports     []string                   `json:"is,omitempty"`
-		Sections    []sectionInfo              `json:"sections,omitempty"`
-		Metrics     json.RawMessage            `json:"ms,omitempty"`
-		Size        int64                      `json:"size"`
-		OldSize     int64                      `json:"sz"`
-		ID          int                        `json:"id"`
-		Depth       int                        `json:"dp"`
+		KV           map[string]json.RawMessage `json:"k,omitempty"`
+		Path         string                     `json:"path"`
+		FileType     string                     `json:"type"`
+		SHA256       string                     `json:"sha"`
+		Formula      string                     `json:"mol,omitempty"`
+		OldFormula   string                     `json:"f,omitempty"`
+		Facts        cleaveFacts                `json:"facts,omitzero"` // v8
+		OldFacts     cleaveFacts                `json:"fact,omitzero"`  // v7
+		V4Facts      cleaveFacts                `json:"ff,omitzero"`    // v4
+		Exports      []symbolInfo               `json:"exports,omitempty"`
+		Findings     []finding                  `json:"traits,omitempty"` // v8
+		OldFindings  []finding                  `json:"find,omitempty"`   // v7
+		V4Findings   []finding                  `json:"ts,omitempty"`     // v4
+		Ctx          []contextWindow            `json:"ctx,omitempty"`
+		Strings      []json.RawMessage          `json:"ss,omitempty"`
+		Imports      []string                   `json:"is,omitempty"`
+		Sections     []sectionInfo              `json:"sections,omitempty"`
+		Metrics      json.RawMessage            `json:"ms,omitempty"`
+		Size         int64                      `json:"size"`
+		OldSize      int64                      `json:"sz"`
+		ID           int                        `json:"id"`
+		Depth        int                        `json:"depth"` // v8
+		OldDepth     int                        `json:"dp"`    // v7
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
+	}
+	findings := raw.Findings
+	if len(findings) == 0 {
+		findings = raw.OldFindings
+	}
+	if len(findings) == 0 {
+		findings = raw.V4Findings
+	}
+	facts := raw.Facts
+	if facts.isEmpty() {
+		facts = raw.OldFacts
+	}
+	if facts.isEmpty() {
+		facts = raw.V4Facts
+	}
+	depth := raw.Depth
+	if depth == 0 {
+		depth = raw.OldDepth
 	}
 	*f = cleaveFile{
 		KV:       raw.KV,
@@ -1011,9 +1044,9 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		FileType: raw.FileType,
 		SHA256:   raw.SHA256,
 		Formula:  raw.Formula,
-		Facts:    raw.Facts,
+		Facts:    facts,
 		Exports:  raw.Exports,
-		Findings: raw.Findings,
+		Findings: findings,
 		Ctx:      raw.Ctx,
 		Strings:  raw.Strings,
 		Imports:  raw.Imports,
@@ -1021,16 +1054,10 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		Metrics:  raw.Metrics,
 		Size:     raw.Size,
 		ID:       raw.ID,
-		Depth:    raw.Depth,
+		Depth:    depth,
 	}
 	if f.Formula == "" {
 		f.Formula = raw.OldFormula
-	}
-	if len(f.Facts.Metrics) == 0 && f.Facts.KV == nil && len(f.Facts.Strings) == 0 && len(f.Facts.Imports) == 0 && len(f.Facts.Exports) == 0 && len(f.Facts.Functions) == 0 && len(f.Facts.Sections) == 0 {
-		f.Facts = raw.OldFacts
-	}
-	if len(f.Findings) == 0 {
-		f.Findings = raw.OldFindings
 	}
 	if f.Size == 0 {
 		f.Size = raw.OldSize
@@ -1225,6 +1252,33 @@ type compactSource struct {
 	File   int    `json:"file"`
 }
 
+func (s *compactSource) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		File    int    `json:"file"`   // v8
+		OldFile int    `json:"f"`      // v7
+		Line    *int64 `json:"line"`   // v8
+		OldLine *int64 `json:"ln"`     // v7
+		Offset  *int64 `json:"off"`    // v8
+		OldOff  *int64 `json:"o"`      // v7
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.File = raw.File
+	if s.File == 0 {
+		s.File = raw.OldFile
+	}
+	s.Line = raw.Line
+	if s.Line == nil {
+		s.Line = raw.OldLine
+	}
+	s.Offset = raw.Offset
+	if s.Offset == nil {
+		s.Offset = raw.OldOff
+	}
+	return nil
+}
+
 func (f *finding) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ID        string          `json:"id"`
@@ -1235,6 +1289,8 @@ func (f *finding) UnmarshalJSON(data []byte) error {
 		Locations []string        `json:"loc,omitempty"`
 		OldLocs   []string        `json:"el,omitempty"`
 		From      []compactSource `json:"from,omitempty"`
+		Srcs      []compactSource `json:"srcs,omitempty"` // v7 composite
+		Src       *int            `json:"src,omitempty"`  // v7 single-file index
 		Crit      int             `json:"crit"`
 		OldCrit   int             `json:"l"`
 		Conf      float64         `json:"conf,omitempty"`
@@ -1244,6 +1300,12 @@ func (f *finding) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	f.From = raw.From
+	if len(f.From) == 0 && len(raw.Srcs) > 0 {
+		f.From = raw.Srcs
+	}
+	if len(f.From) == 0 && raw.Src != nil {
+		f.From = []compactSource{{File: *raw.Src}}
+	}
 	f.ID = raw.ID
 	if f.ID == "" {
 		f.ID = raw.OldID
