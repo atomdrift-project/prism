@@ -22,7 +22,7 @@ func TestAggregateBackAttributesViaLocations(t *testing.T) {
 				ID:        "well-known/malware/rootkit/ebpfkit::ebpfkit-assets-package",
 				Crit:      4,
 				Conf:      0.9,
-				Evidence:  []string{"package assets"},
+				Spans:     [][2]int64{{0x3718c0, 14}},
 				Locations: []string{"archive:pkg/assets/builder.go"},
 			}},
 		},
@@ -52,8 +52,10 @@ func TestAggregateBackAttributesViaLocations(t *testing.T) {
 		t.Fatalf("expected exactly one match, got %d: %+v", len(got.Matches), got.Matches)
 	}
 	m := got.Matches[0]
-	if m.Evidence != "package assets" {
-		t.Errorf("match Evidence = %q, want %q", m.Evidence, "package assets")
+	// v8 envelopes carry no evidence string; the span offset stands in as the
+	// evidence for a finding with no decoded ctx window.
+	if m.Evidence != "0x3718c0" {
+		t.Errorf("match Evidence = %q, want span offset %q", m.Evidence, "0x3718c0")
 	}
 	if m.Filename != "builder.go" {
 		t.Errorf("match Filename = %q, want %q", m.Filename, "builder.go")
@@ -83,7 +85,7 @@ func TestAggregateBackAttributesViaFileIndex(t *testing.T) {
 				ID:        "well-known/malware/rootkit/ebpfkit::ebpfkit-assets-package",
 				Crit:      4,
 				Conf:      0.9,
-				Evidence:  []string{"package assets"},
+				Spans:     [][2]int64{{0x3718c0, 14}},
 				Locations: []string{"1:0x3718c0"},
 			}},
 		},
@@ -158,10 +160,10 @@ func TestAggregateDropsUnresolvableContainerSources(t *testing.T) {
 			SHA256: containerSHA,
 			Depth:  0,
 			Findings: []finding{{
-				ID:       "well-known/malware/rootkit/ebpfkit::ebpfkit-assets-package",
-				Crit:     4,
-				Conf:     0.9,
-				Evidence: []string{"package assets"},
+				ID:    "well-known/malware/rootkit/ebpfkit::ebpfkit-assets-package",
+				Crit:  4,
+				Conf:  0.9,
+				Spans: [][2]int64{{0x3718c0, 14}},
 			}},
 		},
 	}

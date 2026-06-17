@@ -6161,8 +6161,11 @@ type evidenceRow struct {
 }
 
 // contextIndex maps each full trait ID to the evidence rows derived from the
-// file's findings by intersecting their Spans with ctx windows. Returns nil
-// when no ctx windows carry decoded bytes (legacy files).
+// file's findings by intersecting their Spans with ctx windows. The snippet is
+// rendered the same way the Content tab shows it — the source line for text
+// files, a compact hex+ascii dump for binary — so a trait's "evidence" column
+// matches its context block. Returns nil when no ctx window carries decoded
+// bytes (legacy files), so callers fall back to the inline-evidence path.
 func contextIndex(file *cleaveFile) map[string][]evidenceRow {
 	if !hasRichContext(file) {
 		return nil
@@ -6172,10 +6175,13 @@ func contextIndex(file *cleaveFile) map[string][]evidenceRow {
 	for i := range file.Findings {
 		f := &file.Findings[i]
 		for _, sp := range f.Spans {
-			off := sp[0]
-			// Emit one row per span, formatted as hex for binary types.
+			text, ok := evidenceFromCtx(file.Ctx, sp[0], isHex)
+			if !ok {
+				continue // span lands in no decoded window
+			}
 			idx[f.ID] = append(idx[f.ID], evidenceRow{
-				offset: formatOffset(off, isHex),
+				text:   text,
+				offset: formatOffset(sp[0], isHex),
 				hex:    isHex,
 			})
 		}
@@ -6183,8 +6189,49 @@ func contextIndex(file *cleaveFile) map[string][]evidenceRow {
 	return idx
 }
 
-// evidenceRows returns the match rows for a finding from the ctx index.
-// Falls back to span offsets when the ctx index has no entry (e.g. older reports).
+// evidenceFromCtx returns the matched snippet for a span: the source line for
+// text files, a hex+ascii dump for binary — the same content the Content tab's
+// context block renders. It reports false when no decoded window covers off.
+func evidenceFromCtx(windows []contextWindow, off int64, isHex bool) (string, bool) {
+	for i := range windows {
+		win := &windows[i]
+		if win.Data == nil {
+			continue
+		}
+		base := win.Offset
+		if win.Addr != nil {
+			base = *win.Addr
+		}
+		if off < base || off >= base+int64(len(win.Data)) {
+			continue
+		}
+		if isHex {
+			return hexDump(win.Data), true
+		}
+		return string(win.Data), true
+	}
+	return "", false
+}
+
+// hexDump renders bytes as the Content tab's hex view does in one line: the
+// space-separated hex pairs, then the printable-ascii gutter (dots for
+// non-printables).
+func hexDump(b []byte) string {
+	var hex, ascii strings.Builder
+	for i, c := range b {
+		if i > 0 {
+			hex.WriteByte(' ')
+		}
+		fmt.Fprintf(&hex, "%02x", c)
+		ascii.WriteString(printableByte(c))
+	}
+	return hex.String() + "  " + ascii.String()
+}
+
+// evidenceRows returns the match rows for a finding from the ctx index. Falls
+// back to span offsets (paired with any legacy `loc` for back-attribution) when
+// the ctx index has no entry — older envelopes whose findings carry spans/loc
+// but no decoded ctx windows.
 func evidenceRows(f finding, idx map[string][]evidenceRow) []evidenceRow {
 	if rows := idx[f.ID]; len(rows) > 0 {
 		return rows
@@ -6192,6 +6239,9 @@ func evidenceRows(f finding, idx map[string][]evidenceRow) []evidenceRow {
 	rows := make([]evidenceRow, len(f.Spans))
 	for i, sp := range f.Spans {
 		rows[i] = evidenceRow{text: fmt.Sprintf("0x%x", sp[0])}
+		if i < len(f.Locations) {
+			rows[i].locRef = f.Locations[i]
+		}
 	}
 	return rows
 }

@@ -2,8 +2,6 @@ package main
 
 import "testing"
 
-func ptrInt(v int) *int { p := v; return &p }
-
 // TestFileViewsNativeVsInherited locks in the archive rule: only native
 // findings (Src == nil) show on a file; inherited ones are omitted (they render
 // in their origin member). A cross-file composite shows with a linkable member
@@ -13,24 +11,23 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 		{ // archive container
 			ID: 0, Depth: 0, SHA256: "aaa", Path: "app.zip", FileType: "zip",
 			Findings: []finding{
-				// native cross-file composite aimed at the archive
+				// native cross-file composite aimed at the archive (multi-member From)
 				{
 					ID: "objectives/c2/beacon", Crit: 4, Conf: 0.9,
-					Sources: []compactSource{{File: 1, Line: ptrInt64(10)}},
+					From: []compactSource{{File: 1, Line: ptrInt64(10)}, {File: 2, Line: ptrInt64(3)}},
 				},
-				// inherited atomic — must NOT render on the container
-				{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9, Src: ptrInt(1)},
+				// inherited atomic (single-member From) — must NOT render on the container
+				{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9, From: []compactSource{{File: 1}}},
 			},
-			Ctx: []contextWindow{{Offset: 0, Hex: true, Data: []byte{0x90}}},
+			Ctx: []contextWindow{{Offset: 0, Data: []byte{0x90}}},
 		},
 		{ // member
 			ID: 1, Depth: 1, SHA256: "bbb", Path: "app.zip!!main.py", FileType: "python",
 			Findings: []finding{
-				{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9},
+				{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9, Spans: [][2]int64{{40, 4}}},
 			},
 			Ctx: []contextWindow{{
 				Offset: 3, Addr: ptrInt64(40), Data: []byte("eval(x)"),
-				Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 40, Size: 4, Crit: 5}},
 			}},
 		},
 	}
@@ -74,14 +71,13 @@ func TestFileViewsDropsContextless(t *testing.T) {
 	file := cleaveFile{
 		ID: 0, Depth: 0, SHA256: "aaa", Path: "x.js", FileType: "javascript",
 		Findings: []finding{
-			// located: has a context note
-			{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9},
-			// overlap-deduped: no note in ctx, no sources → must be dropped
+			// located: a span lands in the window below
+			{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9, Spans: [][2]int64{{0, 4}}},
+			// overlap-deduped: no span in ctx, no sources → must be dropped
 			{ID: "fs/write/file/direct", Crit: 4, Conf: 0.9},
 		},
 		Ctx: []contextWindow{{
 			Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
-			Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: 5}},
 		}},
 	}
 	views, _ := buildFileViews([]cleaveFile{file})
@@ -121,10 +117,9 @@ func TestFileViewsFileCap(t *testing.T) {
 		crit := 3 + i%3
 		files = append(files, cleaveFile{
 			ID: i, Depth: 1, SHA256: sha, Path: "a.zip!!f" + itoaTest(i) + ".py", FileType: "python",
-			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9}},
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{0, 4}}}},
 			Ctx: []contextWindow{{
 				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
-				Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: crit}},
 			}},
 		})
 	}
@@ -160,10 +155,9 @@ func TestFileViewsDropsLowCritMembers(t *testing.T) {
 	mk := func(id, depth, crit int, sha string) cleaveFile {
 		return cleaveFile{
 			ID: id, Depth: depth, SHA256: sha, Path: "a.zip!!f" + itoaTest(id) + ".py", FileType: "python",
-			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9}},
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{0, 4}}}},
 			Ctx: []contextWindow{{
 				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
-				Notes: []contextNote{{ID: "objectives/execution/eval", Offset: 0, Size: 4, Crit: crit}},
 			}},
 		}
 	}

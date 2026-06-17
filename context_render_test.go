@@ -27,12 +27,14 @@ func TestZ85DecodeVector(t *testing.T) {
 // TestSourceContextHighlights confirms a source window numbers its line and
 // lights only the matched span at the note's severity.
 func TestSourceContextHighlights(t *testing.T) {
-	file := &cleaveFile{Ctx: []contextWindow{{
-		Offset: 5,
-		Addr:   ptrInt64(100),
-		Data:   []byte("exec(data)"),
-		Notes:  []contextNote{{ID: "t/x", Offset: 100, Size: 4, Crit: 5}},
-	}}}
+	file := &cleaveFile{
+		Findings: []finding{{ID: "t/x", Crit: 5, Spans: [][2]int64{{100, 4}}}},
+		Ctx: []contextWindow{{
+			Offset: 5,
+			Addr:   ptrInt64(100),
+			Data:   []byte("exec(data)"),
+		}},
+	}
 	blocks := buildContextBlocks(file, "t/x")
 	if len(blocks) != 1 || len(blocks[0].Rows) != 1 {
 		t.Fatalf("want one block/row, got %+v", blocks)
@@ -49,12 +51,15 @@ func TestSourceContextHighlights(t *testing.T) {
 // TestSourceContextSyntaxHighlight confirms source context carries chroma
 // syntax classes while still lighting the matched span.
 func TestSourceContextSyntaxHighlight(t *testing.T) {
-	file := &cleaveFile{Path: "payload.js", FileType: "javascript", Ctx: []contextWindow{{
-		Offset: 1,
-		Addr:   ptrInt64(0),
-		Data:   []byte("eval(x)"),
-		Notes:  []contextNote{{ID: "t/x", Offset: 0, Size: 4, Crit: 5}},
-	}}}
+	file := &cleaveFile{
+		Path: "payload.js", FileType: "javascript",
+		Findings: []finding{{ID: "t/x", Crit: 5, Spans: [][2]int64{{0, 4}}}},
+		Ctx: []contextWindow{{
+			Offset: 1,
+			Addr:   ptrInt64(0),
+			Data:   []byte("eval(x)"),
+		}},
+	}
 	blocks := buildContextBlocks(file, "t/x")
 	if len(blocks) != 1 || len(blocks[0].Rows) != 1 {
 		t.Fatalf("want one block/row, got %+v", blocks)
@@ -109,15 +114,18 @@ func TestHighlightedSegsReconstructsLine(t *testing.T) {
 // trailing annotation — the strongest match that begins on it — even when two
 // traits match the same line. Both spans still highlight; only one label shows.
 func TestRowAnnoSingleStrongest(t *testing.T) {
-	file := &cleaveFile{Path: "x.js", FileType: "javascript", Ctx: []contextWindow{{
-		Offset: 7,
-		Addr:   ptrInt64(0),
-		Data:   []byte("getnameinfo(); lookupAccountName();"),
-		Notes: []contextNote{
-			{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Offset: 0, Size: 11, Crit: 3},
-			{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Offset: 15, Size: 17, Crit: 4},
+	file := &cleaveFile{
+		Path: "x.js", FileType: "javascript",
+		Findings: []finding{
+			{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Crit: 3, Spans: [][2]int64{{0, 11}}},
+			{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Crit: 4, Spans: [][2]int64{{15, 17}}},
 		},
-	}}}
+		Ctx: []contextWindow{{
+			Offset: 7,
+			Addr:   ptrInt64(0),
+			Data:   []byte("getnameinfo(); lookupAccountName();"),
+		}},
+	}
 	blocks := buildContextBlocksForFileView(t, file)
 	if len(blocks) != 1 || len(blocks[0].Rows) != 1 {
 		t.Fatalf("want one block/row, got %+v", blocks)
@@ -139,12 +147,15 @@ func TestLongLineClipsAroundMatch(t *testing.T) {
 	suffix := strings.Repeat("b", 400)
 	line := prefix + "eval(x)" + suffix
 	matchOff := int64(len(prefix))
-	file := &cleaveFile{Path: "min.js", FileType: "javascript", Ctx: []contextWindow{{
-		Offset: 1,
-		Addr:   ptrInt64(0),
-		Data:   []byte(line),
-		Notes:  []contextNote{{ID: "t/x", Desc: "dynamic eval", Offset: matchOff, Size: 4, Crit: 5}},
-	}}}
+	file := &cleaveFile{
+		Path: "min.js", FileType: "javascript",
+		Findings: []finding{{ID: "t/x", Desc: "dynamic eval", Crit: 5, Spans: [][2]int64{{matchOff, 4}}}},
+		Ctx: []contextWindow{{
+			Offset: 1,
+			Addr:   ptrInt64(0),
+			Data:   []byte(line),
+		}},
+	}
 	blocks := buildContextBlocksForFileView(t, file)
 	row := blocks[0].Rows[0]
 	if !row.Lead || !row.Trail {
@@ -184,12 +195,14 @@ func buildContextBlocksForFileView(t *testing.T, file *cleaveFile) []contextBloc
 // the matched bytes, with a dotted ascii gutter for non-printables.
 func TestHexContextHighlights(t *testing.T) {
 	data := []byte{0x90, 0x90, 0x41, 0x42, 0x00, 0x7f, 'A', 'B'}
-	file := &cleaveFile{Ctx: []contextWindow{{
-		Offset: 0x40,
-		Hex:    true,
-		Data:   data,
-		Notes:  []contextNote{{ID: "t/x", Offset: 0x42, Size: 2, Crit: 4}},
-	}}}
+	file := &cleaveFile{
+		FileType: "elf", // binary type → hex view
+		Findings: []finding{{ID: "t/x", Crit: 4, Spans: [][2]int64{{0x42, 2}}}},
+		Ctx: []contextWindow{{
+			Offset: 0x40,
+			Data:   data,
+		}},
+	}
 	blocks := buildContextBlocks(file, "")
 	if len(blocks) != 1 || !blocks[0].Hex || len(blocks[0].Rows) != 1 {
 		t.Fatalf("want one hex block/row, got %+v", blocks)
@@ -212,11 +225,14 @@ func TestHexContextHighlights(t *testing.T) {
 // TestContiguousSourceLinesMerge confirms adjacent source lines collapse into a
 // single block while a gap starts a new one.
 func TestContiguousSourceLinesMerge(t *testing.T) {
-	file := &cleaveFile{Ctx: []contextWindow{
-		{Offset: 5, Addr: ptrInt64(100), Data: []byte("a")},
-		{Offset: 6, Addr: ptrInt64(102), Data: []byte("b"), Notes: []contextNote{{ID: "t/x", Offset: 102, Size: 1, Crit: 3}}},
-		{Offset: 20, Addr: ptrInt64(300), Data: []byte("c"), Notes: []contextNote{{ID: "t/x", Offset: 300, Size: 1, Crit: 3}}},
-	}}
+	file := &cleaveFile{
+		Findings: []finding{{ID: "t/x", Crit: 3, Spans: [][2]int64{{102, 1}, {300, 1}}}},
+		Ctx: []contextWindow{
+			{Offset: 5, Addr: ptrInt64(100), Data: []byte("a")},
+			{Offset: 6, Addr: ptrInt64(102), Data: []byte("b")},
+			{Offset: 20, Addr: ptrInt64(300), Data: []byte("c")},
+		},
+	}
 	blocks := buildContextBlocks(file, "")
 	if len(blocks) != 2 {
 		t.Fatalf("want 2 blocks (gap splits), got %d: %+v", len(blocks), blocks)
@@ -229,7 +245,7 @@ func TestContiguousSourceLinesMerge(t *testing.T) {
 // TestNoRichContextFallsBack confirms legacy text-only windows yield no blocks
 // so the caller uses the inline-evidence path.
 func TestNoRichContextFallsBack(t *testing.T) {
-	file := &cleaveFile{Ctx: []contextWindow{{Offset: 0, Text: "ea fb 32", Hex: true}}}
+	file := &cleaveFile{Ctx: []contextWindow{{Offset: 0, Text: "ea fb 32"}}}
 	if blocks := buildContextBlocks(file, ""); blocks != nil {
 		t.Errorf("legacy window should yield nil blocks, got %+v", blocks)
 	}
