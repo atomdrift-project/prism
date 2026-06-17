@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func reqWithIP(method, target, ip string) *http.Request {
-	r := httptest.NewRequest(method, target, nil)
+func reqWithIP(target, ip string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, http.NoBody)
 	r.Header.Set("Cf-Connecting-Ip", ip)
 	return r
 }
@@ -32,7 +32,7 @@ func TestSanitizeNext(t *testing.T) {
 }
 
 func TestChallengeSolve(t *testing.T) {
-	r := reqWithIP(http.MethodGet, "/x", "1.1.1.1")
+	r := reqWithIP("/x", "1.1.1.1")
 	exp := time.Now().Add(challengeMaxAge).Unix()
 	token := strconv.FormatInt(exp, 10) + "." + challengeMAC(clientIP(r), 7, exp) // 3 + 4
 
@@ -42,7 +42,7 @@ func TestChallengeSolve(t *testing.T) {
 	if challengeSolved(r, token, "8") {
 		t.Error("wrong answer must not solve")
 	}
-	if challengeSolved(reqWithIP(http.MethodGet, "/x", "2.2.2.2"), token, "7") {
+	if challengeSolved(reqWithIP("/x", "2.2.2.2"), token, "7") {
 		t.Error("token is IP-bound; another IP must not solve it")
 	}
 	expired := time.Now().Add(-time.Minute).Unix()
@@ -57,19 +57,19 @@ func TestChallengeSolve(t *testing.T) {
 
 func TestPassCookieRoundTrip(t *testing.T) {
 	w := httptest.NewRecorder()
-	issuePass(w, reqWithIP(http.MethodGet, "/x", "9.9.9.9"))
+	issuePass(w, reqWithIP("/x", "9.9.9.9"))
 	cookies := w.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != passCookieName {
 		t.Fatalf("expected one %s cookie, got %v", passCookieName, cookies)
 	}
 
-	same := reqWithIP(http.MethodGet, "/y", "9.9.9.9")
+	same := reqWithIP("/y", "9.9.9.9")
 	same.AddCookie(cookies[0])
 	if !hasValidPass(same) {
 		t.Error("freshly issued pass should be valid for the same IP")
 	}
 
-	other := reqWithIP(http.MethodGet, "/y", "8.8.8.8")
+	other := reqWithIP("/y", "8.8.8.8")
 	other.AddCookie(cookies[0])
 	if hasValidPass(other) {
 		t.Error("pass is IP-bound; a different IP must be rejected")
@@ -83,7 +83,7 @@ func TestChallengeBypassEndToEnd(t *testing.T) {
 	}))
 
 	browser := func(cookie *http.Cookie) *httptest.ResponseRecorder {
-		r := reqWithIP(http.MethodGet, "/file/x", "5.5.5.5")
+		r := reqWithIP("/file/x", "5.5.5.5")
 		r.Header.Set("Accept", "text/html")
 		if cookie != nil {
 			r.AddCookie(cookie)
@@ -107,7 +107,7 @@ func TestChallengeBypassEndToEnd(t *testing.T) {
 
 	// A valid pass cookie bypasses the limiter even while over the rate.
 	pw := httptest.NewRecorder()
-	issuePass(pw, reqWithIP(http.MethodGet, "/x", "5.5.5.5"))
+	issuePass(pw, reqWithIP("/x", "5.5.5.5"))
 	if w := browser(pw.Result().Cookies()[0]); w.Code != http.StatusOK {
 		t.Fatalf("with a valid pass, an over-limit request should pass: got %d", w.Code)
 	}
@@ -120,7 +120,7 @@ func TestNonBrowserGetsPlain429(t *testing.T) {
 	}))
 	call := func() *httptest.ResponseRecorder {
 		// No Accept: text/html — a scripted / download-bot client.
-		r := reqWithIP(http.MethodGet, "/file/x.dl", "7.7.7.7")
+		r := reqWithIP("/file/x.dl", "7.7.7.7")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w

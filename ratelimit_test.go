@@ -56,7 +56,7 @@ func TestRateLimiterMiddleware(t *testing.T) {
 	}))
 
 	call := func(path string) int {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 		r.Header.Set("Cf-Connecting-Ip", "9.9.9.9")
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -84,7 +84,7 @@ func TestRateLimiterNilPassThrough(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	for range 100 {
-		r := httptest.NewRequest(http.MethodGet, "/file/abc", nil)
+		r := httptest.NewRequest(http.MethodGet, "/file/abc", http.NoBody)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != http.StatusOK {

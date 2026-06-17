@@ -97,7 +97,11 @@ $(GOLANGCI_LINT_BIN):
 
 LINTERS += golangci-lint-lint
 golangci-lint-lint: $(GOLANGCI_LINT_BIN)
-	find . -name go.mod -execdir "$(GOLANGCI_LINT_BIN)" run -c "$(GOLANGCI_LINT_CONFIG)" \;
+	@exit_code=0; \
+	for gomod in $$(find . -name go.mod); do \
+		(cd "$$(dirname "$$gomod")" && "$(GOLANGCI_LINT_BIN)" run -c "$(GOLANGCI_LINT_CONFIG)") || exit_code=1; \
+	done; \
+	exit $$exit_code
 
 FIXERS += golangci-lint-fix
 golangci-lint-fix: $(GOLANGCI_LINT_BIN)

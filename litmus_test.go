@@ -98,12 +98,12 @@ func TestAnalyzeWithLitmusErrors(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		status int
 		body   string
+		status int
 	}{
-		{"non_200", http.StatusServiceUnavailable, `{"error":"saturated"}`},
-		{"error_body", http.StatusOK, `{"error":"unsupported file"}`},
-		{"missing_ml", http.StatusOK, `{"raw":{}}`},
+		{name: "non_200", status: http.StatusServiceUnavailable, body: `{"error":"saturated"}`},
+		{name: "error_body", status: http.StatusOK, body: `{"error":"unsupported file"}`},
+		{name: "missing_ml", status: http.StatusOK, body: `{"raw":{}}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -22,14 +22,14 @@ func TestPrepareResultDataV6Envelope(t *testing.T) {
 		{
 			name:      "benign (l == -1)",
 			ml:        `{"v":"6","prob":0.10,"l":-1,"conf":0,"fs":[{"id":0,"prob":0.10,"l":-1,"conf":0}]}`,
-			wantLevel: testInt(-1),
+			wantLevel: new(-1),
 			wantClass: "benign",
 			wantConf:  0,
 		},
 		{
 			name:      "hostile at level 50",
 			ml:        `{"v":"6","prob":0.97,"l":50,"conf":90,"fs":[{"id":0,"prob":0.97,"l":50,"conf":90}]}`,
-			wantLevel: testInt(50),
+			wantLevel: new(50),
 			wantClass: "hostile",
 			wantConf:  90,
 		},
@@ -125,14 +125,14 @@ func TestLitmusMlResponseV5(t *testing.T) {
 			raw:       `{"v":"5","class":2,"prob":0.998,"threshold":0.95,"level":3,"version":"vtest","fs":[{"id":0,"class":2,"prob":0.998,"threshold":0.95}]}`,
 			class:     2,
 			threshold: 0.95,
-			wantLevel: testInt(3),
+			wantLevel: new(3),
 		},
 		{
 			name:      "suspicious, level 5",
 			raw:       `{"v":"5","class":1,"prob":0.75,"threshold":0.70,"level":5,"version":"vtest","fs":[{"id":0,"class":1,"prob":0.75,"threshold":0.70}]}`,
 			class:     1,
 			threshold: 0.70,
-			wantLevel: testInt(5),
+			wantLevel: new(5),
 		},
 		{
 			name:      "benign, null level (manual thresholds)",
@@ -193,19 +193,19 @@ func TestLitmusMlResponseV6(t *testing.T) {
 			name:      "benign (l == -1)",
 			raw:       `{"v":"6","prob":0.10,"l":-1,"version":"vtest","fs":[{"id":0,"prob":0.10}]}`,
 			wantClass: 0,
-			wantLevel: testInt(-1),
+			wantLevel: new(-1),
 		},
 		{
 			name:      "suspicious at level 50 (above critical line)",
 			raw:       `{"v":"6","prob":0.998,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
 			wantClass: 1,
-			wantLevel: testInt(50),
+			wantLevel: new(50),
 		},
 		{
 			name:      "hostile at level 0 (strictest)",
 			raw:       `{"v":"6","prob":0.999,"l":0,"version":"vtest","fs":[{"id":0,"prob":0.999}]}`,
 			wantClass: 2,
-			wantLevel: testInt(0),
+			wantLevel: new(0),
 		},
 		{
 			name:      "hostile via manual threshold (l == null)",
@@ -253,19 +253,19 @@ func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(nil); got != 2 {
 		t.Errorf("envelopeClass(nil) = %d, want 2 (hostile/manual)", got)
 	}
-	if got := envelopeClass(testInt(-1)); got != 0 {
+	if got := envelopeClass(new(-1)); got != 0 {
 		t.Errorf("envelopeClass(-1) = %d, want 0 (benign)", got)
 	}
-	if got := envelopeClass(testInt(0)); got != 2 {
+	if got := envelopeClass(new(0)); got != 2 {
 		t.Errorf("envelopeClass(0) = %d, want 2 (hostile@strictest)", got)
 	}
-	if got := envelopeClass(testInt(CriticalLevel)); got != 2 {
+	if got := envelopeClass(new(CriticalLevel)); got != 2 {
 		t.Errorf("envelopeClass(CriticalLevel) = %d, want 2 (hostile at critical line)", got)
 	}
-	if got := envelopeClass(testInt(CriticalLevel + 1)); got != 1 {
+	if got := envelopeClass(new(CriticalLevel + 1)); got != 1 {
 		t.Errorf("envelopeClass(CriticalLevel+1) = %d, want 1 (suspicious just above critical)", got)
 	}
-	if got := envelopeClass(testInt(1000)); got != 1 {
+	if got := envelopeClass(new(1000)); got != 1 {
 		t.Errorf("envelopeClass(1000) = %d, want 1 (suspicious in loose tail)", got)
 	}
 }

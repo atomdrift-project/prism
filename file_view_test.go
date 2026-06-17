@@ -79,7 +79,7 @@ func TestFileViewsInheritedSpanNoFalseAnno(t *testing.T) {
 				// inherited from a member; span [19,10] is relative to the
 				// member's bytes but overlaps the container's [0,33) sample.
 				{
-					ID: "metadata/file/profile/language::lang-arabic-urdu",
+					ID:   "metadata/file/profile/language::lang-arabic-urdu",
 					Crit: 1, Conf: 0.9, Desc: "Arabic script detection (Arabic/Urdu)",
 					From:  []compactSource{{File: 1}},
 					Spans: [][2]int64{{19, 10}},

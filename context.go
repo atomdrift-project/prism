@@ -350,7 +350,10 @@ func hasRichContext(file *cleaveFile) bool {
 // unit). It reports false when filtering to a trait the window never mentions.
 // descByID, when non-nil, enables trailing trait annotations (the File view);
 // the Traits-tab expansion passes nil since its card already names the trait.
-func renderWindow(windows []contextWindow, filterID, filename, fileType string, findingsByID map[string]*finding, descByID map[string]string) (contextBlock, bool) {
+func renderWindow(
+	windows []contextWindow, filterID, filename, fileType string,
+	findingsByID map[string]*finding, descByID map[string]string,
+) (contextBlock, bool) {
 	if filterID != "" && !windowsMatchTrait(windows, filterID, findingsByID) {
 		return contextBlock{}, false
 	}
@@ -434,7 +437,10 @@ func windowsMatchTrait(windows []contextWindow, filterID string, findings map[st
 // renderSourceWindow renders a run of source lines: each line numbered, its
 // code syntax-highlighted, and its matched span(s) lit by severity. Lit notes
 // are restricted to filterID when set; filename selects the chroma lexer.
-func renderSourceWindow(windows []contextWindow, filterID, filename string, findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool) contextBlock {
+func renderSourceWindow(
+	windows []contextWindow, filterID, filename string,
+	findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool,
+) contextBlock {
 	block := contextBlock{}
 	for w := range windows {
 		if len(block.Rows) >= maxContextRows {
@@ -448,15 +454,15 @@ func renderSourceWindow(windows []contextWindow, filterID, filename string, find
 		spans, crit := spansForRow(findingsByID, base, len(win.Data), filterID)
 		// Clip a long line to a window around its match so the highlighted span
 		// (and the trailing annotation) stay in view; short lines pass through.
-		text, off, lead, trail := clipSourceLine(string(win.Data), primaryMatchCol(findingsByID, base, len(win.Data), filterID))
-		spans = shiftSpans(spans, off, len(text))
+		clip := clipSourceLine(string(win.Data), primaryMatchCol(findingsByID, base, len(win.Data), filterID))
+		spans = shiftSpans(spans, clip.Off, len(clip.Text))
 		block.Rows = append(block.Rows, contextRow{
 			Loc:   strconv.FormatInt(win.Offset, 10),
 			Crit:  crit,
-			Segs:  highlightedSegs(text, spans, filename),
+			Segs:  highlightedSegs(clip.Text, spans, filename),
 			Annos: rowAnnos(findingsByID, base, len(win.Data), descByID, annotated),
-			Lead:  lead,
-			Trail: trail,
+			Lead:  clip.Lead,
+			Trail: clip.Trail,
 		})
 	}
 	return block
@@ -470,15 +476,23 @@ const (
 	srcLeadCols = 28
 )
 
+// clippedLine is a source line bounded to maxSrcCols: Text is the view, Off the
+// byte it starts at, and Lead/Trail report whether content was elided on each
+// side (the template renders an ellipsis).
+type clippedLine struct {
+	Text  string
+	Off   int
+	Lead  bool
+	Trail bool
+}
+
 // clipSourceLine returns a view of text bounded to maxSrcCols. When the line is
 // longer it clips to a window holding the match (matchCol, a byte index, or -1
 // for a context line with none), keeping ≥srcLeadCols of lead where possible.
-// off is the byte the view starts at; lead/trail report whether content was
-// elided on each side (the template renders an ellipsis). Clip points snap to
-// rune boundaries so multibyte characters are never split.
-func clipSourceLine(text string, matchCol int) (clipped string, off int, lead, trail bool) {
+// Clip points snap to rune boundaries so multibyte characters are never split.
+func clipSourceLine(text string, matchCol int) clippedLine {
 	if len(text) <= maxSrcCols {
-		return text, 0, false, false
+		return clippedLine{Text: text}
 	}
 	w0 := 0
 	if matchCol >= 0 {
@@ -495,7 +509,7 @@ func clipSourceLine(text string, matchCol int) (clipped string, off int, lead, t
 	for w1 < len(text) && !utf8.RuneStart(text[w1]) {
 		w1++
 	}
-	return text[w0:w1], w0, w0 > 0, w1 < len(text)
+	return clippedLine{Text: text[w0:w1], Off: w0, Lead: w0 > 0, Trail: w1 < len(text)}
 }
 
 // primaryMatchCol returns the byte index, within a line of length n starting at
@@ -586,7 +600,10 @@ func appendSpanSegs(segs []contextSeg, text string, spans []rowSpan, start, end 
 
 // renderHexWindow renders one hex unit as `hexStride`-byte rows with the matched
 // bytes lit. The unit's bytes begin at win.Offset.
-func renderHexWindow(win *contextWindow, filterID string, findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool) contextBlock {
+func renderHexWindow(
+	win *contextWindow, filterID string,
+	findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool,
+) contextBlock {
 	block := contextBlock{Hex: true}
 	for start := 0; start < len(win.Data); start += hexStride {
 		if len(block.Rows) >= maxContextRows {

@@ -703,66 +703,33 @@ type resultData struct {
 
 // storedResult is what we persist in fido/datastore.
 type storedResult struct {
-	CachedAt       time.Time
-	AnalyzedAt     time.Time
-	CreatedAt      time.Time
-	Metrics        string
-	Symbols        string
-	Sections       string
-	Filename       string
-	Classification string
-	Formula        string
-	FileType       string
-	Strings        string
-	Traits         string
-	RawLitmus      string
-	// SourceURL is the canonical download URL forager (or another
-	// ingester) captured when the bytes first landed in hopper. Empty
-	// for samples without provenance (uploads, legacy harvested rows).
-	SourceURL string
-	// SourceDomain is the eTLD+1 of SourceURL (or registry-derived when
-	// the URL is missing), used as a fallback display when SourceURL is
-	// empty so the page still surfaces *something* about provenance.
-	SourceDomain string
-	// Ecosystem is hopper's registry/distro label for the sample (e.g.
-	// "npm", "pypi", "debian"). Empty for uploads or rows hopper could
-	// not attribute.
-	Ecosystem string
-	// SizeBytes is hopper's authoritative byte count for the sample,
-	// recorded from the actual stored bytes at ingest. It is the source of
-	// truth for size: the cleave report's entry-level size is absent on
-	// compacted and pre-v7 root entries, so size must not be re-derived
-	// from the report when this is available.
-	SizeBytes int64
-	// The fields below carry the rest of hopper's provenance record for the
-	// Provenance tab. All are empty/zero for uploads (which arrive without
-	// provenance) and for legacy rows hopper never attributed; the tab
-	// drops empty rows so absent fields simply don't appear.
-	//
-	// Source is hopper's ingest source column (the harvester or importer that
-	// first recorded the bytes); Feed is the threat-intel or registry feed
-	// the sample arrived on (e.g. "npmjs.org", "malshare").
-	Source string
-	Feed   string
-	// Package and Version identify the software release the bytes belong to
-	// (e.g. "lodash" / "4.17.21") when hopper attributed one.
-	Package string
-	Version string
-	// Label is hopper's ground-truth verdict ("bad"/"good"/"unknown") and
-	// LabelSource records who or what assigned it.
-	Label       string
-	LabelSource string
-	// TraitsVersion is the short traits-repo commit prefix used for the most
-	// recent analysis.
-	TraitsVersion string
-	// CanonicalSHA256 is the min SHA256 across the sample and its embedded
-	// files — the identity hopper uses for train/test dedup. Shown only when
-	// it differs from the sample's own SHA256.
-	CanonicalSHA256 string
-	// UpdatedAt and FirstAnalyzedAt round out the provenance timeline
-	// alongside CreatedAt (first seen) and AnalyzedAt (last analyzed).
-	UpdatedAt       time.Time
+	CachedAt        time.Time
+	AnalyzedAt      time.Time
+	CreatedAt       time.Time
 	FirstAnalyzedAt time.Time
+	UpdatedAt       time.Time
+	RawLitmus       string
+	Label           string
+	Classification  string
+	Formula         string
+	FileType        string
+	Strings         string
+	Traits          string
+	Sections        string
+	SourceURL       string
+	SourceDomain    string
+	Ecosystem       string
+	Metrics         string
+	Source          string
+	Feed            string
+	Package         string
+	Version         string
+	Filename        string
+	LabelSource     string
+	TraitsVersion   string
+	CanonicalSHA256 string
+	Symbols         string
+	SizeBytes       int64
 }
 
 type feedRow struct {
@@ -924,8 +891,8 @@ func (f *cleaveFacts) isEmpty() bool {
 func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Metrics     json.RawMessage            `json:"metrics,omitempty"` // v8
-		OldMetrics  json.RawMessage            `json:"met,omitempty"`    // v7
-		V4Metrics   json.RawMessage            `json:"m,omitempty"`      // v4
+		OldMetrics  json.RawMessage            `json:"met,omitempty"`     // v7
+		V4Metrics   json.RawMessage            `json:"m,omitempty"`       // v4
 		KV          map[string]json.RawMessage `json:"val,omitempty"`
 		OldKV       map[string]json.RawMessage `json:"v,omitempty"`
 		Strings     []json.RawMessage          `json:"str,omitempty"`
@@ -935,7 +902,7 @@ func (f *cleaveFacts) UnmarshalJSON(data []byte) error {
 		Exports     []json.RawMessage          `json:"exp,omitempty"`
 		OldExports  []json.RawMessage          `json:"x,omitempty"`
 		Functions   []json.RawMessage          `json:"funcs,omitempty"` // v8
-		OldFuncs    []json.RawMessage          `json:"fn,omitempty"`   // v7
+		OldFuncs    []json.RawMessage          `json:"fn,omitempty"`    // v7
 		Sections    []json.RawMessage          `json:"sec,omitempty"`
 		OldSections []json.RawMessage          `json:"sc,omitempty"`
 	}
@@ -993,29 +960,29 @@ func (r *cleaveReport) UnmarshalJSON(data []byte) error {
 
 func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		KV           map[string]json.RawMessage `json:"k,omitempty"`
-		Path         string                     `json:"path"`
-		FileType     string                     `json:"type"`
-		SHA256       string                     `json:"sha"`
-		Formula      string                     `json:"mol,omitempty"`
-		OldFormula   string                     `json:"f,omitempty"`
-		Facts        cleaveFacts                `json:"facts,omitzero"` // v8
-		OldFacts     cleaveFacts                `json:"fact,omitzero"`  // v7
-		V4Facts      cleaveFacts                `json:"ff,omitzero"`    // v4
-		Exports      []symbolInfo               `json:"exports,omitempty"`
-		Findings     []finding                  `json:"traits,omitempty"` // v8
-		OldFindings  []finding                  `json:"find,omitempty"`   // v7
-		V4Findings   []finding                  `json:"ts,omitempty"`     // v4
-		Ctx          []contextWindow            `json:"ctx,omitempty"`
-		Strings      []json.RawMessage          `json:"ss,omitempty"`
-		Imports      []string                   `json:"is,omitempty"`
-		Sections     []sectionInfo              `json:"sections,omitempty"`
-		Metrics      json.RawMessage            `json:"ms,omitempty"`
-		Size         int64                      `json:"size"`
-		OldSize      int64                      `json:"sz"`
-		ID           int                        `json:"id"`
-		Depth        int                        `json:"depth"` // v8
-		OldDepth     int                        `json:"dp"`    // v7
+		KV          map[string]json.RawMessage `json:"k,omitempty"`
+		Path        string                     `json:"path"`
+		FileType    string                     `json:"type"`
+		SHA256      string                     `json:"sha"`
+		Formula     string                     `json:"mol,omitempty"`
+		OldFormula  string                     `json:"f,omitempty"`
+		Facts       cleaveFacts                `json:"facts,omitzero"` // v8
+		OldFacts    cleaveFacts                `json:"fact,omitzero"`  // v7
+		V4Facts     cleaveFacts                `json:"ff,omitzero"`    // v4
+		Exports     []symbolInfo               `json:"exports,omitempty"`
+		Findings    []finding                  `json:"traits,omitempty"` // v8
+		OldFindings []finding                  `json:"find,omitempty"`   // v7
+		V4Findings  []finding                  `json:"ts,omitempty"`     // v4
+		Ctx         []contextWindow            `json:"ctx,omitempty"`
+		Strings     []json.RawMessage          `json:"ss,omitempty"`
+		Imports     []string                   `json:"is,omitempty"`
+		Sections    []sectionInfo              `json:"sections,omitempty"`
+		Metrics     json.RawMessage            `json:"ms,omitempty"`
+		Size        int64                      `json:"size"`
+		OldSize     int64                      `json:"sz"`
+		ID          int                        `json:"id"`
+		Depth       int                        `json:"depth"` // v8
+		OldDepth    int                        `json:"dp"`    // v7
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -1189,20 +1156,20 @@ type sectionInfo struct {
 //
 // Legacy (v7 and earlier): pre-rendered text in `t` with `n` notes. Offset in `l`.
 type contextWindow struct {
-	Text   string `json:"t"`
-	Offset int64  `json:"ln"` // v8: line number or byte offset; legacy: "l"
 	Addr   *int64 `json:"-"`
+	Text   string `json:"t"`
 	Data   []byte `json:"-"`
+	Offset int64  `json:"ln"`
 }
 
 func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Text   string `json:"t"`
-		Bytes  string `json:"b"`
-		Offset int64  `json:"ln"`
-		OldOff int64  `json:"l"`
-		Addr   *int64 `json:"addr"`
+		Addr    *int64 `json:"addr"`
 		OldAddr *int64 `json:"a"`
+		Text    string `json:"t"`
+		Bytes   string `json:"b"`
+		Offset  int64  `json:"ln"`
+		OldOff  int64  `json:"l"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -1240,9 +1207,9 @@ type finding struct {
 	// From lists the files this finding came from. A single entry means it was
 	// inherited from that embedded member; multiple entries means a cross-file
 	// composite. Empty when native to this file.
-	From    []compactSource `json:"from,omitempty"`
-	Crit    int             `json:"crit"`
-	Conf    float64         `json:"conf,omitempty"`
+	From []compactSource `json:"from,omitempty"`
+	Crit int             `json:"crit"`
+	Conf float64         `json:"conf,omitempty"`
 }
 
 // compactSource is one member a cross-file composite drew from.
@@ -1254,12 +1221,12 @@ type compactSource struct {
 
 func (s *compactSource) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		File    int    `json:"file"`   // v8
-		OldFile int    `json:"f"`      // v7
-		Line    *int64 `json:"line"`   // v8
-		OldLine *int64 `json:"ln"`     // v7
-		Offset  *int64 `json:"off"`    // v8
-		OldOff  *int64 `json:"o"`      // v7
+		Line    *int64 `json:"line"`
+		OldLine *int64 `json:"ln"`
+		Offset  *int64 `json:"off"`
+		OldOff  *int64 `json:"o"`
+		File    int    `json:"file"`
+		OldFile int    `json:"f"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -1281,16 +1248,16 @@ func (s *compactSource) UnmarshalJSON(data []byte) error {
 
 func (f *finding) UnmarshalJSON(data []byte) error {
 	var raw struct {
+		Src       *int            `json:"src,omitempty"`
+		OldDesc   string          `json:"d,omitempty"`
+		Desc      string          `json:"desc,omitempty"`
 		ID        string          `json:"id"`
 		OldID     string          `json:"i"`
-		Desc      string          `json:"desc,omitempty"`
-		OldDesc   string          `json:"d,omitempty"`
 		Spans     [][2]int64      `json:"spans,omitempty"`
 		Locations []string        `json:"loc,omitempty"`
 		OldLocs   []string        `json:"el,omitempty"`
 		From      []compactSource `json:"from,omitempty"`
-		Srcs      []compactSource `json:"srcs,omitempty"` // v7 composite
-		Src       *int            `json:"src,omitempty"`  // v7 single-file index
+		Srcs      []compactSource `json:"srcs,omitempty"`
 		Crit      int             `json:"crit"`
 		OldCrit   int             `json:"l"`
 		Conf      float64         `json:"conf,omitempty"`
@@ -2308,8 +2275,8 @@ func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Dur
 // unbounded and one-off, not worth pre-warming — as is the domain dimension, so
 // a /npm/ visit with any domain filter still counts toward the plain /npm/ view.
 type feedPopularity struct {
-	mu     sync.Mutex
 	counts map[feedQueryArgs]uint64
+	mu     sync.Mutex
 }
 
 // feedPopularityCap bounds the tracked key set so cycling through distinct
@@ -2510,12 +2477,12 @@ func isHardRefresh(r *http.Request) bool {
 // by a hard refresh, so a forced reload rebuilds the page top to bottom.
 func invalidateSampleCaches(ctx context.Context, sha, reason string) {
 	for _, c := range []struct {
-		name string
 		del  func(context.Context, string) error
+		name string
 	}{
-		{"result", cache.Delete},
-		{"report", reportCache.Delete},
-		{"parents", parentArchiveCache.Delete},
+		{name: "result", del: cache.Delete},
+		{name: "report", del: reportCache.Delete},
+		{name: "parents", del: parentArchiveCache.Delete},
 	} {
 		if err := c.del(ctx, sha); err != nil {
 			logger.Debug("sample cache invalidation failed", "sha256", sha, "cache", c.name, "reason", reason, "error", err)
@@ -2693,20 +2660,9 @@ func shouldRefreshCachedSample(res *storedResult, sample *hopper.Sample) bool {
 }
 
 func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
-	envelope := map[string]json.RawMessage{}
-	if json.Valid(sample.LitmusResult) {
-		envelope["ml"] = sample.LitmusResult
-	}
-	if json.Valid(sample.LLMResult) {
-		envelope["llm"] = sample.LLMResult
-	}
-	if json.Valid(sample.CleaveResult) {
-		envelope["raw"] = sample.CleaveResult
-	}
-	rawLitmus, err := json.Marshal(envelope)
-	if err != nil {
-		rawLitmus = []byte("{}")
-	}
+	// hopper owns the column↔envelope mapping ({ml,llm,raw}); use it so the
+	// shape stays in lockstep with the splitter/joiner.
+	rawLitmus := hopper.Envelope(sample)
 
 	classification := ""
 	if len(sample.LitmusResult) > 0 {
@@ -3761,16 +3717,17 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		// Identify the archive's members, then load the heavy cleave/litmus
-		// blobs only for the top-N we'll actually render and splice them back
-		// in. The member SHAs come from sample_locations when populated, else
-		// from the SHAs cleave embedded in the compacted envelope.
-		shas, total := archiveMemberSHAs(ctx, db, sha, sample.CleaveResult)
+		// Identify the archive's members, load the heavy cleave/litmus blobs for
+		// the top-N we'll render, and hand both to hopper, which owns reassembly
+		// (the inverse of the split it applied on storage). The member SHAs come
+		// from sample_locations when populated, else from the SHAs cleave
+		// embedded in the compacted envelope.
+		shas, _ := archiveMemberSHAs(ctx, db, sha, sample.CleaveResult)
 		if len(shas) > 0 {
 			children, cerr := db.SamplesBySHAs(ctx, shas)
 			if cerr != nil {
 				logger.Debug("samples by shas failed", "sha", sha, "error", cerr)
-			} else if enriched, eerr := reassembleEnvelope([]byte(res.RawLitmus), children, res.Filename, total); eerr != nil {
+			} else if enriched, eerr := hopper.Reassemble(sample, children); eerr != nil {
 				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
 			} else {
 				res.RawLitmus = string(enriched)
@@ -3876,304 +3833,6 @@ func hopperWasCompacted(cleaveResult []byte) bool {
 		return false
 	}
 	return env.Truncated
-}
-
-// reassembleEnvelope takes a parent's litmus envelope (containing ml + raw),
-// a list of child hopper samples, and totalMembers — the archive's full member
-// count, of which children is the highest-score prefix that was fetched. It
-// produces a new envelope where the child entries are spliced back into
-// raw.files[] and ml.files[]. hopper's "truncated" marker (its signal that the
-// children live in sibling rows) is dropped; in its place, omitted_files is set
-// to the members beyond the fetch cap that were not merged, so the envelope
-// stays honest instead of claiming completeness it does not have.
-//
-// Each child contributes its own top-level files entry (depth 0 in the child's
-// own report) which is appended to the parent's files[] with depth bumped to 1
-// and Path prefixed by parentPath + "!!". Child IDs are renumbered so they
-// stay unique across the merged report; the same renumbering is mirrored
-// into the merged ml.files entries so per-file ML stays correctly attributed.
-//
-// The function is best-effort: a child whose CleaveResult or LitmusResult
-// fails to parse is logged and skipped so a single bad child does not break
-// the whole archive view.
-func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath string, totalMembers int) ([]byte, error) {
-	if len(envelope) == 0 {
-		return envelope, nil
-	}
-	var env map[string]json.RawMessage
-	if err := json.Unmarshal(envelope, &env); err != nil {
-		return nil, fmt.Errorf("parse envelope: %w", err)
-	}
-
-	parentRaw, parentFS, err := extractFS(env, "raw")
-	if err != nil {
-		return nil, err
-	}
-	parentML, parentMLFS, err := extractFS(env, "ml")
-	if err != nil {
-		return nil, err
-	}
-
-	parentFS, parentMLFS, spliced := mergeChildren(parentFS, parentMLFS, children, parentPath)
-
-	// Drop hopper's "truncated" marker now that we've spliced in what we fetched,
-	// so the read path doesn't treat this as still-compacted and re-enrich on
-	// every cache hit. Keep an accurate omitted_files for the members the fetch
-	// cap left behind (and any child that failed to merge), so the envelope never
-	// claims a completeness it doesn't have.
-	delete(parentRaw, "truncated")
-	if omitted := totalMembers - spliced; omitted > 0 {
-		parentRaw["omitted_files"] = json.RawMessage(strconv.Itoa(omitted))
-	} else {
-		delete(parentRaw, "omitted_files")
-	}
-	if b, err := json.Marshal(parentFS); err == nil {
-		delete(parentRaw, "fs")
-		parentRaw["files"] = b
-	}
-	if b, err := json.Marshal(parentRaw); err == nil {
-		env["raw"] = b
-	}
-	if b, err := json.Marshal(parentMLFS); err == nil {
-		delete(parentML, "fs")
-		parentML["files"] = b
-	}
-	if b, err := json.Marshal(parentML); err == nil {
-		env["ml"] = b
-	}
-	return json.Marshal(env)
-}
-
-// extractFS pulls env[key] (a JSON object) and the "files" array within it.
-// Missing values yield empty results so callers can append unconditionally.
-func extractFS(env map[string]json.RawMessage, key string) (map[string]json.RawMessage, []json.RawMessage, error) {
-	inner := map[string]json.RawMessage{}
-	if blob, ok := env[key]; ok && len(blob) > 0 {
-		if err := json.Unmarshal(blob, &inner); err != nil {
-			return nil, nil, fmt.Errorf("parse %s: %w", key, err)
-		}
-	}
-	var entries []json.RawMessage
-	blob, ok := inner["files"]
-	if !ok || len(blob) == 0 {
-		blob = inner["fs"]
-	}
-	if len(blob) > 0 {
-		if err := json.Unmarshal(blob, &entries); err != nil {
-			return nil, nil, fmt.Errorf("parse %s.files: %w", key, err)
-		}
-	}
-	return inner, entries, nil
-}
-
-// mergeChildren fills each child's full analysis into the parent's lists,
-// returning the count actually merged. A compacted parent carries a lightweight
-// stub for every member (same files[] schema, heavy fields stripped); a child
-// replaces its stub in place, preserving the id that cross-file `from`
-// references point at. A child with no matching stub (an older stored envelope
-// that dropped its members) is appended under a fresh id. Errors on individual
-// children are logged and skipped.
-func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sample, parentPath string) (mergedFS, mergedMLFS []json.RawMessage, merged int) {
-	slotBySHA := make(map[string]int, len(parentFS))
-	idBySlot := make([]int, len(parentFS))
-	nextID := 1
-	for i, raw := range parentFS {
-		var f struct {
-			SHA string `json:"sha"`
-			ID  int    `json:"id"`
-		}
-		if json.Unmarshal(raw, &f) != nil {
-			continue
-		}
-		idBySlot[i] = f.ID
-		if f.ID >= nextID {
-			nextID = f.ID + 1
-		}
-		if f.SHA != "" {
-			slotBySHA[f.SHA] = i
-		}
-	}
-	for _, child := range children {
-		if len(child.CleaveResult) == 0 {
-			continue
-		}
-		topRaw, oldID, ok := childTopEntry(child)
-		if !ok {
-			continue
-		}
-		slot, isStub := slotBySHA[child.SHA256]
-		id := nextID
-		if isStub {
-			id = idBySlot[slot]
-		}
-		rewritten, err := rewriteChildEntry(topRaw, parentPath, child.Path, child.Filename, id)
-		if err != nil {
-			logger.Debug("reassemble: rewrite child entry failed", "sha", child.SHA256, "error", err)
-			continue
-		}
-		if isStub {
-			parentFS[slot] = rewritten
-		} else {
-			parentFS = append(parentFS, rewritten)
-			nextID++
-		}
-		merged++
-		if updated, ok := renumberedMLEntry(child.LitmusResult, oldID, id); ok {
-			parentMLFS = mergeMLEntry(parentMLFS, id, updated)
-		}
-	}
-	return parentFS, parentMLFS, merged
-}
-
-// mergeMLEntry replaces the ml.files[] entry whose id matches, else appends it,
-// keeping per-file ML aligned with the (possibly stub-replaced) cleave id.
-func mergeMLEntry(mlFS []json.RawMessage, id int, entry json.RawMessage) []json.RawMessage {
-	for i, raw := range mlFS {
-		var f struct {
-			ID int `json:"id"`
-		}
-		if json.Unmarshal(raw, &f) == nil && f.ID == id {
-			mlFS[i] = entry
-			return mlFS
-		}
-	}
-	return append(mlFS, entry)
-}
-
-// childTopEntry parses the child sample's cleave envelope and returns its
-// representative files entry — preferring sha-match, then depth-0, then the
-// first entry — along with the entry's original id.
-func childTopEntry(child *hopper.Sample) (entry json.RawMessage, id int, ok bool) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(child.CleaveResult, &raw); err != nil {
-		logger.Debug("reassemble: parse child cleave failed", "sha", child.SHA256, "error", err)
-		return nil, 0, false
-	}
-	var entries []json.RawMessage
-	blob, ok := raw["files"]
-	if !ok || len(blob) == 0 {
-		blob = raw["fs"]
-	}
-	if len(blob) > 0 {
-		if err := json.Unmarshal(blob, &entries); err != nil {
-			logger.Debug("reassemble: parse child files failed", "sha", child.SHA256, "error", err)
-			return nil, 0, false
-		}
-	}
-	if len(entries) == 0 {
-		return nil, 0, false
-	}
-
-	type stub struct {
-		SHA   string `json:"sha"`
-		ID    int    `json:"id"`
-		Depth int    `json:"dp"`
-	}
-	var fallback json.RawMessage
-	var fallbackID int
-	for _, e := range entries {
-		var s stub
-		if json.Unmarshal(e, &s) != nil {
-			continue
-		}
-		if s.SHA == child.SHA256 {
-			return e, s.ID, true
-		}
-		if s.Depth == 0 && fallback == nil {
-			fallback = e
-			fallbackID = s.ID
-		}
-	}
-	if fallback != nil {
-		return fallback, fallbackID, true
-	}
-	// No depth-0 found; fall back to the first entry. A parse failure here
-	// just means the renumber loop later assigns a fresh id — nothing to
-	// surface to the caller.
-	var s stub
-	_ = json.Unmarshal(entries[0], &s) //nolint:errcheck // best-effort; failure is fine
-	return entries[0], s.ID, true
-}
-
-// renumberedMLEntry locates the child's own ml.files[] row for oldID and
-// rewrites its id to newID. The boolean reports whether the row was
-// found and successfully re-marshalled.
-func renumberedMLEntry(litmus []byte, oldID, newID int) (json.RawMessage, bool) {
-	if len(litmus) == 0 {
-		return nil, false
-	}
-	var ml struct {
-		Files    []json.RawMessage `json:"files"`
-		OldFiles []json.RawMessage `json:"fs"`
-	}
-	if json.Unmarshal(litmus, &ml) != nil || len(ml.Files) == 0 {
-		if len(ml.OldFiles) == 0 {
-			return nil, false
-		}
-		ml.Files = ml.OldFiles
-	}
-	entry := ml.Files[0]
-	for _, raw := range ml.Files {
-		var stub struct {
-			ID int `json:"id"`
-		}
-		if json.Unmarshal(raw, &stub) == nil && stub.ID == oldID {
-			entry = raw
-			break
-		}
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(entry, &obj); err != nil {
-		logger.Debug("reassemble: rewrite child ml entry failed", "error", err)
-		return nil, false
-	}
-	if b, err := json.Marshal(newID); err == nil {
-		obj["id"] = b
-	}
-	updated, err := json.Marshal(obj)
-	if err != nil {
-		return nil, false
-	}
-	return updated, true
-}
-
-// rewriteChildEntry mutates a single fs entry to fit the parent archive's
-// view: prefixes the path with "<parentPath>!!", marks depth=1, and assigns
-// the supplied id. We prefer the entry's own path (cleave's view), falling
-// back to the child's stored path/filename so the tree shows something
-// readable instead of a long upload temp path.
-func rewriteChildEntry(entry json.RawMessage, parentPath, childPath, childFilename string, newID int) (json.RawMessage, error) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(entry, &obj); err != nil {
-		return nil, err
-	}
-	displayPath := ""
-	if rawPath, ok := obj["path"]; ok {
-		_ = json.Unmarshal(rawPath, &displayPath) //nolint:errcheck // best-effort; falls through to childPath/Filename below
-	}
-	if displayPath == "" {
-		displayPath = childPath
-	}
-	if displayPath == "" {
-		displayPath = childFilename
-	}
-	if displayPath == "" {
-		displayPath = "(unnamed)"
-	}
-	// Strip any parentPath!! prefix the child may already carry, then add ours.
-	if i := strings.LastIndex(displayPath, "!!"); i >= 0 {
-		displayPath = displayPath[i+2:]
-	}
-	if b, err := json.Marshal(parentPath + "!!" + displayPath); err == nil {
-		obj["path"] = b
-	}
-	if b, err := json.Marshal(1); err == nil {
-		obj["dp"] = b
-	}
-	if b, err := json.Marshal(newID); err == nil {
-		obj["id"] = b
-	}
-	return json.Marshal(obj)
 }
 
 // refreshFromHopper reloads a sample from hopper and writes it into the cache.
@@ -5852,8 +5511,9 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.ResultsOmitted = omitted.Results
 		data.FilesShownLimit = maxFilesShown
 	}
-	if src, hex := contentLocCh(data.FileViews); src > 0 || hex > 0 {
-		data.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, src, hex))
+	if srcCh, hexCh := contentLocCh(data.FileViews); srcCh > 0 || hexCh > 0 {
+		//nolint:gosec // G203: both widths are ints computed from rendered context, never user input
+		data.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, srcCh, hexCh))
 	}
 
 	// IsArchive reflects the underlying file set, not the findings count: an
@@ -6083,8 +5743,8 @@ func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (grou
 	shown = len(scored)
 
 	byCat := make(map[string][]scoredTrait)
-	for _, s := range scored {
-		byCat[s.topLevel] = append(byCat[s.topLevel], s)
+	for i := range scored {
+		byCat[scored[i].topLevel] = append(byCat[scored[i].topLevel], scored[i])
 	}
 	categoryMap := make(map[string][]FindingDisplay, len(byCat))
 	for cat, items := range byCat {
@@ -6095,8 +5755,8 @@ func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (grou
 			return items[i].display.ID < items[j].display.ID
 		})
 		fds := make([]FindingDisplay, len(items))
-		for i, it := range items {
-			fds[i] = it.display
+		for i := range items {
+			fds[i] = items[i].display
 		}
 		categoryMap[cat] = fds
 	}
@@ -6328,15 +5988,15 @@ func evidenceFromCtx(windows []contextWindow, off int64, isHex bool) (string, bo
 // space-separated hex pairs, then the printable-ascii gutter (dots for
 // non-printables).
 func hexDump(b []byte) string {
-	var hex, ascii strings.Builder
+	var hexCol, ascii strings.Builder
 	for i, c := range b {
 		if i > 0 {
-			hex.WriteByte(' ')
+			hexCol.WriteByte(' ')
 		}
-		fmt.Fprintf(&hex, "%02x", c)
+		fmt.Fprintf(&hexCol, "%02x", c)
 		ascii.WriteString(printableByte(c))
 	}
-	return hex.String() + "  " + ascii.String()
+	return hexCol.String() + "  " + ascii.String()
 }
 
 // evidenceRows returns the match rows for a finding from the ctx index. Falls
@@ -6375,13 +6035,86 @@ func matchTokens(ev, filename string, isHex bool) []EvidenceToken {
 	return highlightEvidence(ev, filename)
 }
 
+// archiveAgg accumulates one category bucket while aggregating an archive's
+// findings: dedup'd match rows in insertion order, plus the strongest crit/conf
+// and description seen for the bucket.
+type archiveAgg struct {
+	matches  map[string]*FindingMatch
+	dirPath  string
+	topLevel string
+	desc     string
+	order    []string
+	crit     int
+	conf     float64
+}
+
+// addMatch inserts a match (or bumps its count) under key mk, preserving first-
+// seen order. build constructs the FindingMatch only on first insert.
+func (a *archiveAgg) addMatch(mk string, build func() *FindingMatch) {
+	if m, ok := a.matches[mk]; ok {
+		m.Count++
+		return
+	}
+	a.matches[mk] = build()
+	a.order = append(a.order, mk)
+}
+
+// addRollupMatches attributes a v8 rollup finding to each embedded member it was
+// inherited from (From): one match per member, carrying filename + location only
+// (member bytes are omitted from the envelope, so there is no snippet). Container
+// self-references are skipped.
+func (a *archiveAgg) addRollupMatches(from []compactSource, idToFile map[int]*cleaveFile, containerSHAs map[string]bool) {
+	for _, src := range from {
+		member := idToFile[src.File]
+		if member == nil || containerSHAs[member.SHA256] {
+			continue
+		}
+		path := displayPath(member.Path)
+		loc := sourceLoc(src)
+		a.addMatch("\x00"+path+"\x00"+loc, func() *FindingMatch {
+			return &FindingMatch{Path: path, Filename: extractBasename(path), Location: loc, Count: 1}
+		})
+	}
+}
+
+// addEvidenceMatches resolves a finding's evidence rows into (filename, location,
+// evidence) matches. A row's legacy loc back-attributes a container rollup to the
+// inner file that produced it; otherwise a finding on an inner file (depth>0) is
+// attributed to that file. The archive container is never kept as a source — it's
+// a rollup, not a real file — though its evidence text is retained.
+func (a *archiveAgg) addEvidenceMatches(f finding, ctxIdx map[string][]evidenceRow, file *cleaveFile, pathToFile map[string]*cleaveFile, idToFile map[int]*cleaveFile, containerSHAs map[string]bool) {
+	for _, row := range evidenceRows(f, ctxIdx) {
+		ev := row.text
+		path, sha, loc := "", "", row.offset
+		if row.locRef != "" {
+			loc = locationOffset(row.locRef)
+			if target := resolveMatchFile(row.locRef, pathToFile, idToFile); target != nil {
+				path = displayPath(target.Path)
+				sha = target.SHA256
+			}
+		}
+		if sha == "" && file.Depth > 0 {
+			path = displayPath(file.Path)
+			sha = file.SHA256
+		}
+		if containerSHAs[sha] {
+			path, loc = "", ""
+		}
+		base := extractBasename(path)
+		a.addMatch(ev+"\x00"+path+"\x00"+loc, func() *FindingMatch {
+			return &FindingMatch{
+				Evidence: ev, Path: path, Filename: base, Location: loc,
+				Tokens: matchTokens(ev, base, row.hex), Count: 1,
+			}
+		})
+	}
+}
+
 // aggregateArchiveCategories merges every file's findings into one category
 // list, deduped by trait-ID directory prefix. Used by the archive Traits tab.
 // Unlike per-file aggregation, this version attributes every aggregated trait
 // back to the files that contributed, so the UI can expand a trait into
 // "filename — location — evidence" rows.
-//
-//nolint:gocognit // inherently complex: trait bucketing plus per-evidence file back-attribution
 func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, total, shown int) {
 	categoryNames := map[string]string{
 		"objectives":      "Objectives",
@@ -6391,16 +6124,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 		"third_party":     "Third-party",
 	}
 
-	type aggregated struct {
-		matches  map[string]*FindingMatch
-		dirPath  string
-		topLevel string
-		desc     string
-		order    []string
-		crit     int
-		conf     float64
-	}
-	bucket := make(map[string]*aggregated)
+	bucket := make(map[string]*archiveAgg)
 	// Track which SHAs are archive containers (depth 0). When a trait fires
 	// inside the archive as well as on the container itself, the container
 	// entry is just a rollup of inner-file findings — link to the actual
@@ -6444,7 +6168,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 
 			agg, ok := bucket[key]
 			if !ok {
-				agg = &aggregated{
+				agg = &archiveAgg{
 					dirPath:  dirPath,
 					topLevel: topLevel,
 					crit:     f.Crit,
@@ -6458,76 +6182,13 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				agg.conf = f.Conf
 				agg.desc = f.Desc
 			}
-			// v8: the finding is a rollup aggregated onto this file from one or
-			// more embedded members (From), each carrying the member id and,
-			// when known, the line/offset it fired at. Attribute each member
-			// directly. Member bytes are omitted from the envelope, so the row
-			// carries filename + location only (no evidence snippet to show).
+			// A v8 rollup is attributed to the members it was inherited from;
+			// otherwise resolve the finding's own evidence rows.
 			if len(f.From) > 0 {
-				for _, src := range f.From {
-					member := idToFile[src.File]
-					if member == nil || containerSHAs[member.SHA256] {
-						continue
-					}
-					path := displayPath(member.Path)
-					loc := sourceLoc(src)
-					mk := "\x00" + path + "\x00" + loc
-					if m, ok := agg.matches[mk]; ok {
-						m.Count++
-						continue
-					}
-					agg.matches[mk] = &FindingMatch{
-						Path:     path,
-						Filename: extractBasename(path),
-						Location: loc,
-						Count:    1,
-					}
-					agg.order = append(agg.order, mk)
-				}
+				agg.addRollupMatches(f.From, idToFile, containerSHAs)
 				continue
 			}
-			// Resolve each match into a (filename, location, evidence) row.
-			// v7 ctx rows belong to this file directly; legacy inline rows
-			// may carry a `loc` hint that back-attributes a container rollup
-			// to the inner file that produced it. Container-as-source is
-			// dropped: it's a rollup, not a real source file.
-			for _, row := range evidenceRows(f, ctxIdx) {
-				ev := row.text
-				path, sha, loc := "", "", row.offset
-				if row.locRef != "" {
-					loc = locationOffset(row.locRef)
-					if target := resolveMatchFile(row.locRef, pathToFile, idToFile); target != nil {
-						path = displayPath(target.Path)
-						sha = target.SHA256
-					}
-				}
-				if sha == "" && file.Depth > 0 {
-					// No cleave hint, but we know the finding lives on
-					// this inner file directly — use it as the source.
-					path = displayPath(file.Path)
-					sha = file.SHA256
-				}
-				if containerSHAs[sha] {
-					// Drop the archive container as a source. Keep the
-					// evidence text; the row just has no filename column.
-					path, loc = "", ""
-				}
-				mk := ev + "\x00" + path + "\x00" + loc
-				if m, ok := agg.matches[mk]; ok {
-					m.Count++
-				} else {
-					base := extractBasename(path)
-					agg.matches[mk] = &FindingMatch{
-						Evidence: ev,
-						Path:     path,
-						Filename: base,
-						Location: loc,
-						Tokens:   matchTokens(ev, base, row.hex),
-						Count:    1,
-					}
-					agg.order = append(agg.order, mk)
-				}
-			}
+			agg.addEvidenceMatches(f, ctxIdx, file, pathToFile, idToFile, containerSHAs)
 		}
 	}
 	if len(bucket) == 0 {

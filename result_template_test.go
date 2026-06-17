@@ -41,14 +41,18 @@ func TestResultTemplateParses(t *testing.T) {
 	}{
 		// No FileViews: the Content tab is omitted entirely and Traits is the
 		// default, so the two tabs can't render identical evidence.
-		{name: "single_file", data: singleFileData(),
+		{
+			name: "single_file", data: singleFileData(),
 			dontWant: []string{"verdict-level", "tabbtn-content", `id="tab-content"`}, // benign: badge hidden; no Content tab
-			want:     []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`}},
+			want:     []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`},
+		},
 		// Archive without per-line context: same — Traits-only, no Content tab.
 		// Confidence badge plus a full trait match row (filename — location — evidence).
-		{name: "archive_with_children", data: archiveData(),
+		{
+			name: "archive_with_children", data: archiveData(),
 			dontWant: []string{"tabbtn-content"},
-			want:     []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"}},
+			want:     []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"},
+		},
 		// File tab: Content tab present and default, per-file card, lit context
 		// span, and a linkable composite trail.
 		{name: "file_view", data: fileViewData(), want: []string{
@@ -122,7 +126,7 @@ func singleFileData() resultData {
 		SuspiciousT:  0.65,
 		HostileT:     0.887,
 		Nonce:        "n",
-		Level:        testInt(-1), // benign sentinel: badge must be hidden, not crash
+		Level:        new(-1), // benign sentinel: badge must be hidden, not crash
 		Provenance: []ProvenanceGroup{
 			{Title: "Identity", Rows: []ProvenanceRow{
 				{Label: "SHA-256", Value: strings.Repeat("a", 64), Mono: true},
@@ -157,7 +161,7 @@ func archiveData() resultData {
 		HostileT:        0.887,
 		Nonce:           "n",
 		IsArchive:       true,
-		Level:           testInt(72), // real FPR level: badge must render confidence
+		Level:           new(72), // real FPR level: badge must render confidence
 		LevelConfidence: 87,
 		ArchiveCategories: []CategoryGroup{{
 			Name: "Objectives",

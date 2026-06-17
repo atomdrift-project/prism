@@ -30,8 +30,10 @@ func TestContextProvidesEvidence(t *testing.T) {
 		FileType: "elf", // binary type → hex view
 		Depth:    0,
 		Findings: []finding{
-			{ID: "objectives/execution/interpreter/eval::dynamic", Crit: 3, Conf: 0.9, Desc: "dynamic eval",
-				Spans: [][2]int64{{0x6b, 4}}},
+			{
+				ID: "objectives/execution/interpreter/eval::dynamic", Crit: 3, Conf: 0.9, Desc: "dynamic eval",
+				Spans: [][2]int64{{0x6b, 4}},
+			},
 		},
 		Ctx: []contextWindow{{
 			Offset: 0x6b,
@@ -67,8 +69,10 @@ func TestArchiveContextEvidence(t *testing.T) {
 		{Path: "bundle.zip", SHA256: containerSHA, Depth: 0},
 		{
 			Path: "bundle.zip!!pkg/index.js", SHA256: innerSHA, FileType: "javascript", Depth: 1,
-			Findings: []finding{{ID: "objectives/execution/interpreter/eval::call", Crit: 3, Conf: 0.9, Desc: "eval",
-				Spans: [][2]int64{{40, 7}}}},
+			Findings: []finding{{
+				ID: "objectives/execution/interpreter/eval::call", Crit: 3, Conf: 0.9, Desc: "eval",
+				Spans: [][2]int64{{40, 7}},
+			}},
 			Ctx: []contextWindow{{
 				Offset: 40,
 				Addr:   ptrInt64(40),

