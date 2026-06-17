@@ -64,6 +64,43 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 	}
 }
 
+// TestFileViewsInheritedSpanNoFalseAnno is the v8 archive regression: a
+// container's findings are rollups inherited from members, carrying
+// member-relative spans, while the container's own ctx is only a short header
+// sample of the compressed stream. A member-relative span that happens to land
+// within that sample's byte range must NOT light the container's header line
+// (e.g. an inner test fixture's "Arabic script" note annotating the gzip
+// header). The container shows no window; the member is attributed elsewhere.
+func TestFileViewsInheritedSpanNoFalseAnno(t *testing.T) {
+	files := []cleaveFile{
+		{ // archive container: ctx is a 4-byte header sample at offset 0
+			ID: 0, Depth: 0, SHA256: "aaa", Path: "src.tar.gz", FileType: "tar.gz",
+			Findings: []finding{
+				// inherited from a member; span [19,10] is relative to the
+				// member's bytes but overlaps the container's [0,33) sample.
+				{
+					ID: "metadata/file/profile/language::lang-arabic-urdu",
+					Crit: 1, Conf: 0.9, Desc: "Arabic script detection (Arabic/Urdu)",
+					From:  []compactSource{{File: 1}},
+					Spans: [][2]int64{{19, 10}},
+				},
+			},
+			Ctx: []contextWindow{{Offset: 0, Data: []byte{0x1f, 0x8b, 0x08, 0x00}}},
+		},
+		{ // member: content omitted by the envelope, so no ctx
+			ID: 1, Depth: 1, SHA256: "bbb",
+			Path: "src.tar.gz!!tests/fixtures/unicode/input.md", FileType: "markdown",
+		},
+	}
+
+	views, _ := buildFileViews(files)
+	for _, v := range views {
+		if len(v.Windows) != 0 {
+			t.Fatalf("no file should render a window (container=header sample, member=no ctx); got %+v", v)
+		}
+	}
+}
+
 // TestFileViewsDropsContextless confirms cleave's model: a finding whose match
 // was overlap-deduped (no context window, no composite sources) is dropped
 // rather than shown as a bare row, while a located trait in the same file stays.

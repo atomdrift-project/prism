@@ -6279,6 +6279,12 @@ func contextIndex(file *cleaveFile) map[string][]evidenceRow {
 	idx := make(map[string][]evidenceRow)
 	for i := range file.Findings {
 		f := &file.Findings[i]
+		if len(f.From) > 0 {
+			// Inherited rollup: its spans are member-relative, so they don't
+			// index against this file's own ctx. Attributed to its member by
+			// aggregateArchiveCategories instead.
+			continue
+		}
 		for _, sp := range f.Spans {
 			text, ok := evidenceFromCtx(file.Ctx, sp[0], isHex)
 			if !ok {
@@ -6451,6 +6457,34 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				agg.crit = f.Crit
 				agg.conf = f.Conf
 				agg.desc = f.Desc
+			}
+			// v8: the finding is a rollup aggregated onto this file from one or
+			// more embedded members (From), each carrying the member id and,
+			// when known, the line/offset it fired at. Attribute each member
+			// directly. Member bytes are omitted from the envelope, so the row
+			// carries filename + location only (no evidence snippet to show).
+			if len(f.From) > 0 {
+				for _, src := range f.From {
+					member := idToFile[src.File]
+					if member == nil || containerSHAs[member.SHA256] {
+						continue
+					}
+					path := displayPath(member.Path)
+					loc := sourceLoc(src)
+					mk := "\x00" + path + "\x00" + loc
+					if m, ok := agg.matches[mk]; ok {
+						m.Count++
+						continue
+					}
+					agg.matches[mk] = &FindingMatch{
+						Path:     path,
+						Filename: extractBasename(path),
+						Location: loc,
+						Count:    1,
+					}
+					agg.order = append(agg.order, mk)
+				}
+				continue
 			}
 			// Resolve each match into a (filename, location, evidence) row.
 			// v7 ctx rows belong to this file directly; legacy inline rows

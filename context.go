@@ -165,10 +165,7 @@ func buildContextBlocks(file *cleaveFile, filterID string) []contextBlock {
 		return nil
 	}
 	filename := extractBasename(file.Path)
-	findingsByID := make(map[string]*finding, len(file.Findings))
-	for i := range file.Findings {
-		findingsByID[file.Findings[i].ID] = &file.Findings[i]
-	}
+	findingsByID := nativeFindings(file)
 	var blocks []contextBlock
 	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
 		if block, ok := renderWindow(g, filterID, filename, file.FileType, findingsByID, nil); ok {
@@ -206,13 +203,12 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 		return nil
 	}
 	filename := extractBasename(file.Path)
-	findingsByID := make(map[string]*finding, len(file.Findings))
+	findingsByID := nativeFindings(file)
 	// Description fallback: the finding's own desc.
-	descByID := make(map[string]string, len(file.Findings))
-	for i := range file.Findings {
-		findingsByID[file.Findings[i].ID] = &file.Findings[i]
-		if file.Findings[i].Desc != "" {
-			descByID[file.Findings[i].ID] = file.Findings[i].Desc
+	descByID := make(map[string]string, len(findingsByID))
+	for id, f := range findingsByID {
+		if f.Desc != "" {
+			descByID[id] = f.Desc
 		}
 	}
 	var out []labeledWindow
@@ -317,6 +313,26 @@ func blockKey(b contextBlock) string {
 		return ""
 	}
 	return b.Rows[0].Loc + "-" + b.Rows[len(b.Rows)-1].Loc
+}
+
+// nativeFindings indexes the findings native to a file by ID. A finding with a
+// non-empty From is a rollup inherited from one or more embedded members; its
+// spans are relative to those members' bytes, not this file's, so intersecting
+// them against this file's own context windows lights spurious matches. For an
+// archive container — whose ctx is only a short header sample of the compressed
+// stream — that surfaces a member's trait (e.g. an Arabic-script note from an
+// inner test fixture) annotating the container's gzip header. Keeping only
+// native findings confines a window's annotations to traits that actually fired
+// on its bytes; inherited findings are attributed to their member elsewhere.
+func nativeFindings(file *cleaveFile) map[string]*finding {
+	byID := make(map[string]*finding, len(file.Findings))
+	for i := range file.Findings {
+		if len(file.Findings[i].From) > 0 {
+			continue
+		}
+		byID[file.Findings[i].ID] = &file.Findings[i]
+	}
+	return byID
 }
 
 // hasRichContext reports whether any window carries current-format per-line
