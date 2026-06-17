@@ -36,16 +36,23 @@ func TestResultTemplateParses(t *testing.T) {
 	cases := []struct {
 		name     string
 		want     []string
-		dontWant string
+		dontWant []string
 		data     resultData
 	}{
-		{name: "single_file", data: singleFileData(), dontWant: "verdict-level", // benign: badge hidden
-			want: []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org"}},
-		// Archive: confidence badge plus a full trait match row
-		// (filename — location — highlighted evidence).
-		{name: "archive_with_children", data: archiveData(), want: []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"}},
-		// File tab: per-file card, lit context span, and a linkable composite trail.
+		// No FileViews: the Content tab is omitted entirely and Traits is the
+		// default, so the two tabs can't render identical evidence.
+		{name: "single_file", data: singleFileData(),
+			dontWant: []string{"verdict-level", "tabbtn-content", `id="tab-content"`}, // benign: badge hidden; no Content tab
+			want:     []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`}},
+		// Archive without per-line context: same — Traits-only, no Content tab.
+		// Confidence badge plus a full trait match row (filename — location — evidence).
+		{name: "archive_with_children", data: archiveData(),
+			dontWant: []string{"tabbtn-content"},
+			want:     []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"}},
+		// File tab: Content tab present and default, per-file card, lit context
+		// span, and a linkable composite trail.
 		{name: "file_view", data: fileViewData(), want: []string{
+			`id="tabbtn-content" data-tab="content" aria-selected="true"`,
 			"tab-content", "file-card", "ctx-hit hostile", "composite-trail",
 			`href="#file-cafe"`, "loader.js",
 			"win-section", "ctx-anno", `anno hostile`, "spawns a child process",
@@ -66,8 +73,10 @@ func TestResultTemplateParses(t *testing.T) {
 					t.Errorf("rendered output missing %q", w)
 				}
 			}
-			if c.dontWant != "" && strings.Contains(buf.String(), c.dontWant) {
-				t.Errorf("rendered output unexpectedly contains %q", c.dontWant)
+			for _, dw := range c.dontWant {
+				if strings.Contains(buf.String(), dw) {
+					t.Errorf("rendered output unexpectedly contains %q", dw)
+				}
 			}
 		})
 	}

@@ -36,6 +36,7 @@ func TestHopperWasCompacted(t *testing.T) {
 }
 
 func TestEnvelopeChildSHAs(t *testing.T) {
+	p := "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
 	a := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	b := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	cases := []struct {
@@ -43,15 +44,18 @@ func TestEnvelopeChildSHAs(t *testing.T) {
 		body string
 		want []string
 	}{
-		{"none", `{"truncated":true,"omitted_files":2}`, nil},
-		{"two", `{"truncated":true,"omitted_children":[{"sha":"` + a + `","path":"x.py"},{"sha":"` + b + `","path":"y.js"}]}`, []string{a, b}},
-		{"skips empty sha", `{"omitted_children":[{"sha":"","path":"z"},{"sha":"` + a + `"}]}`, []string{a}},
+		// Container only (no member stubs): nothing to fetch.
+		{"container only", `{"truncated":true,"files":[{"id":0,"sha":"` + p + `","dp":0}]}`, nil},
+		// Container + two member stubs: both members, container excluded.
+		{"two stubs", `{"truncated":true,"files":[{"id":0,"sha":"` + p + `","dp":0},{"id":1,"sha":"` + a + `","path":"x.py","depth":1},{"id":2,"sha":"` + b + `","path":"y.js","depth":1}]}`, []string{a, b}},
+		// Legacy "fs" key is honored too.
+		{"fs key", `{"fs":[{"id":0,"sha":"` + p + `","dp":0},{"id":1,"sha":"` + a + `","dp":1}]}`, []string{a}},
 		{"empty", "", nil},
 		{"malformed", `not json`, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := envelopeChildSHAs([]byte(c.body))
+			got := envelopeChildSHAs([]byte(c.body), p)
 			if len(got) != len(c.want) {
 				t.Fatalf("envelopeChildSHAs = %v, want %v", got, c.want)
 			}
@@ -186,6 +190,94 @@ func TestReassembleEnvelope(t *testing.T) {
 
 	if len(got.ML.Files) != 3 {
 		t.Errorf("ml.files len = %d, want 3", len(got.ML.Files))
+	}
+}
+
+// TestReassembleEnvelopeReplacesStubInPlace covers the compacted format where
+// every member is kept as a lightweight stub: a fetched child must replace its
+// stub in place — same files[] slot, same id — so cross-file `from` references
+// (which point at the original cleave id) stay valid and no duplicate appears.
+func TestReassembleEnvelopeReplacesStubInPlace(t *testing.T) {
+	logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	parentEnv := []byte(`{
+		"ml": {"v":8,"files":[{"id":0,"class":2,"prob":0.9},{"id":7,"class":1,"prob":0.5}]},
+		"raw": {
+			"v":8,
+			"files":[
+				{"id":0,"sha":"parentsha","path":"archive.tgz","type":"tar.gz","depth":0},
+				{"id":7,"sha":"child1sha","path":"pkg/index.js","type":"js","depth":1}
+			],
+			"truncated":true
+		}
+	}`)
+	children := []*hopper.Sample{{
+		SHA256:       "child1sha",
+		Path:         "pkg/index.js",
+		CleaveResult: []byte(`{"v":8,"files":[{"id":0,"sha":"child1sha","path":"pkg/index.js","type":"js","depth":0,"traits":[{"id":"x","crit":5}]}]}`),
+		LitmusResult: []byte(`{"v":8,"files":[{"id":0,"class":2,"prob":0.99}]}`),
+	}}
+
+	enriched, err := reassembleEnvelope(parentEnv, children, "archive.tgz", 1)
+	if err != nil {
+		t.Fatalf("reassembleEnvelope failed: %v", err)
+	}
+
+	var got struct {
+		Raw struct {
+			Truncated *bool `json:"truncated,omitempty"`
+			Files     []struct {
+				SHA    string            `json:"sha"`
+				ID     int               `json:"id"`
+				Depth  int               `json:"dp"`
+				Traits []json.RawMessage `json:"traits"`
+			} `json:"files"`
+		} `json:"raw"`
+		ML struct {
+			Files []struct {
+				ID   int     `json:"id"`
+				Prob float64 `json:"prob"`
+			} `json:"files"`
+		} `json:"ml"`
+	}
+	if err := json.Unmarshal(enriched, &got); err != nil {
+		t.Fatalf("parse enriched: %v", err)
+	}
+
+	// Replaced in place: still two files, no duplicate child.
+	if len(got.Raw.Files) != 2 {
+		t.Fatalf("raw.files len = %d, want 2 (stub replaced, not appended)", len(got.Raw.Files))
+	}
+	if got.Raw.Truncated != nil {
+		t.Errorf("expected truncated marker dropped, got %v", *got.Raw.Truncated)
+	}
+	var found bool
+	for _, f := range got.Raw.Files {
+		if f.SHA != "child1sha" {
+			continue
+		}
+		found = true
+		if f.ID != 7 {
+			t.Errorf("child id = %d, want 7 preserved (so `from` refs resolve)", f.ID)
+		}
+		if f.Depth != 1 {
+			t.Errorf("child depth = %d, want 1", f.Depth)
+		}
+		if len(f.Traits) == 0 {
+			t.Error("child stub was not hydrated with its full traits")
+		}
+	}
+	if !found {
+		t.Fatal("child entry missing after reassembly")
+	}
+	// The child's ml entry replaces the stub's id 7 (not appended), staying aligned.
+	if len(got.ML.Files) != 2 {
+		t.Fatalf("ml.files len = %d, want 2 (no duplicate)", len(got.ML.Files))
+	}
+	for _, f := range got.ML.Files {
+		if f.ID == 7 && f.Prob != 0.99 {
+			t.Errorf("ml id 7 prob = %v, want 0.99 (hydrated from child)", f.Prob)
+		}
 	}
 }
 

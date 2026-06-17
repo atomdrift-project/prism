@@ -3798,7 +3798,7 @@ func archiveMemberSHAs(ctx context.Context, db *hopper.DB, sha string, cleaveRes
 		}
 		return shas, total
 	}
-	refs := envelopeChildSHAs(cleaveResult)
+	refs := envelopeChildSHAs(cleaveResult, sha)
 	if len(refs) == 0 {
 		return nil, total
 	}
@@ -3811,26 +3811,47 @@ func archiveMemberSHAs(ctx context.Context, db *hopper.DB, sha string, cleaveRes
 	return refs, total
 }
 
-// envelopeChildSHAs extracts the child SHAs hopper recorded in a compacted
-// archive envelope (the omitted_children array). Returns nil for envelopes that
-// predate that field or fail to parse — callers then have only sample_locations.
-func envelopeChildSHAs(cleaveResult []byte) []string {
+// envelopeChildSHAs returns the member SHAs of a compacted archive envelope: the
+// files[] entries other than the container, which compaction keeps as
+// lightweight stubs. Returns nil for an envelope that carries no member stubs
+// (an older stored archive) — callers then have only sample_locations.
+func envelopeChildSHAs(cleaveResult []byte, parentSHA string) []string {
 	if len(cleaveResult) == 0 {
 		return nil
 	}
 	var env struct {
-		Children []struct {
-			SHA string `json:"sha"`
-		} `json:"omitted_children"`
+		Files []json.RawMessage `json:"files"`
+		FS    []json.RawMessage `json:"fs"`
 	}
 	if json.Unmarshal(cleaveResult, &env) != nil {
 		return nil
 	}
-	out := make([]string, 0, len(env.Children))
-	for _, c := range env.Children {
-		if c.SHA != "" {
-			out = append(out, c.SHA)
+	entries := env.Files
+	if len(entries) == 0 {
+		entries = env.FS
+	}
+	// Rank by the per-file risk the stub carries so a capped fetch pulls the
+	// most significant members first — the same intent as the score-ranked
+	// MembersByParent primary path.
+	type member struct {
+		sha  string
+		risk int
+	}
+	members := make([]member, 0, len(entries))
+	for _, raw := range entries {
+		var f struct {
+			SHA  string `json:"sha"`
+			Risk int    `json:"risk"`
 		}
+		if json.Unmarshal(raw, &f) != nil || f.SHA == "" || f.SHA == parentSHA {
+			continue
+		}
+		members = append(members, member{sha: f.SHA, risk: f.Risk})
+	}
+	sort.SliceStable(members, func(i, j int) bool { return members[i].risk > members[j].risk })
+	out := make([]string, len(members))
+	for i, m := range members {
+		out[i] = m.sha
 	}
 	return out
 }
@@ -3893,9 +3914,7 @@ func reassembleEnvelope(envelope []byte, children []*hopper.Sample, parentPath s
 		return nil, err
 	}
 
-	beforeChildren := len(parentFS)
-	parentFS, parentMLFS = mergeChildren(parentFS, parentMLFS, children, parentPath)
-	spliced := len(parentFS) - beforeChildren
+	parentFS, parentMLFS, spliced := mergeChildren(parentFS, parentMLFS, children, parentPath)
 
 	// Drop hopper's "truncated" marker now that we've spliced in what we fetched,
 	// so the read path doesn't treat this as still-compacted and re-enrich on
@@ -3947,17 +3966,31 @@ func extractFS(env map[string]json.RawMessage, key string) (map[string]json.RawM
 	return inner, entries, nil
 }
 
-// mergeChildren splices each child's top-level files entry (and its mirrored
-// ml entry) into the parent's lists, renumbering ids so they stay unique.
-// Errors on individual children are logged and skipped.
-func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sample, parentPath string) (mergedFS, mergedMLFS []json.RawMessage) {
+// mergeChildren fills each child's full analysis into the parent's lists,
+// returning the count actually merged. A compacted parent carries a lightweight
+// stub for every member (same files[] schema, heavy fields stripped); a child
+// replaces its stub in place, preserving the id that cross-file `from`
+// references point at. A child with no matching stub (an older stored envelope
+// that dropped its members) is appended under a fresh id. Errors on individual
+// children are logged and skipped.
+func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sample, parentPath string) (mergedFS, mergedMLFS []json.RawMessage, merged int) {
+	slotBySHA := make(map[string]int, len(parentFS))
+	idBySlot := make([]int, len(parentFS))
 	nextID := 1
-	for _, raw := range parentFS {
+	for i, raw := range parentFS {
 		var f struct {
-			ID int `json:"id"`
+			SHA string `json:"sha"`
+			ID  int    `json:"id"`
 		}
-		if json.Unmarshal(raw, &f) == nil && f.ID >= nextID {
+		if json.Unmarshal(raw, &f) != nil {
+			continue
+		}
+		idBySlot[i] = f.ID
+		if f.ID >= nextID {
 			nextID = f.ID + 1
+		}
+		if f.SHA != "" {
+			slotBySHA[f.SHA] = i
 		}
 	}
 	for _, child := range children {
@@ -3968,19 +4001,43 @@ func mergeChildren(parentFS, parentMLFS []json.RawMessage, children []*hopper.Sa
 		if !ok {
 			continue
 		}
-		newID := nextID
-		nextID++
-		rewritten, err := rewriteChildEntry(topRaw, parentPath, child.Path, child.Filename, newID)
+		slot, isStub := slotBySHA[child.SHA256]
+		id := nextID
+		if isStub {
+			id = idBySlot[slot]
+		}
+		rewritten, err := rewriteChildEntry(topRaw, parentPath, child.Path, child.Filename, id)
 		if err != nil {
 			logger.Debug("reassemble: rewrite child entry failed", "sha", child.SHA256, "error", err)
 			continue
 		}
-		parentFS = append(parentFS, rewritten)
-		if updated, ok := renumberedMLEntry(child.LitmusResult, oldID, newID); ok {
-			parentMLFS = append(parentMLFS, updated)
+		if isStub {
+			parentFS[slot] = rewritten
+		} else {
+			parentFS = append(parentFS, rewritten)
+			nextID++
+		}
+		merged++
+		if updated, ok := renumberedMLEntry(child.LitmusResult, oldID, id); ok {
+			parentMLFS = mergeMLEntry(parentMLFS, id, updated)
 		}
 	}
-	return parentFS, parentMLFS
+	return parentFS, parentMLFS, merged
+}
+
+// mergeMLEntry replaces the ml.files[] entry whose id matches, else appends it,
+// keeping per-file ML aligned with the (possibly stub-replaced) cleave id.
+func mergeMLEntry(mlFS []json.RawMessage, id int, entry json.RawMessage) []json.RawMessage {
+	for i, raw := range mlFS {
+		var f struct {
+			ID int `json:"id"`
+		}
+		if json.Unmarshal(raw, &f) == nil && f.ID == id {
+			mlFS[i] = entry
+			return mlFS
+		}
+	}
+	return append(mlFS, entry)
 }
 
 // childTopEntry parses the child sample's cleave envelope and returns its
