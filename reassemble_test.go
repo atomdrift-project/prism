@@ -35,6 +35,35 @@ func TestHopperWasCompacted(t *testing.T) {
 	}
 }
 
+func TestEnvelopeChildSHAs(t *testing.T) {
+	a := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	b := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"none", `{"truncated":true,"omitted_files":2}`, nil},
+		{"two", `{"truncated":true,"omitted_children":[{"sha":"` + a + `","path":"x.py"},{"sha":"` + b + `","path":"y.js"}]}`, []string{a, b}},
+		{"skips empty sha", `{"omitted_children":[{"sha":"","path":"z"},{"sha":"` + a + `"}]}`, []string{a}},
+		{"empty", "", nil},
+		{"malformed", `not json`, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := envelopeChildSHAs([]byte(c.body))
+			if len(got) != len(c.want) {
+				t.Fatalf("envelopeChildSHAs = %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("sha[%d] = %q, want %q", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestCleaveReportReadsV5Facts(t *testing.T) {
 	var report cleaveReport
 	raw := []byte(`{"v":"5","fs":[{"id":0,"sha":"abc","path":"sample.exe","type":"pe","sz":42,"ff":{"m":{"binary":{"overall_entropy":7.2}},"v":{"pe.machine":"x86_64"},"s":[[16,"a","hello"]],"i":[["kernel32.dll","CreateFileW"]],"x":[["DllRegisterServer"]],"sc":[[".text",1024,4096,6.42,"r-x"]]}}]}`)

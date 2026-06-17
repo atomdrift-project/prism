@@ -1664,14 +1664,14 @@
 
         <section class="tabs-section" aria-label="Analysis details">
             <div class="tabs" role="tablist" aria-label="Analysis sections">
-                <button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>
-                <button type="button" class="tab" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="false" aria-controls="tab-traits" tabindex="-1">Traits</button>
+                {{if .FileViews}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
+                <button type="button" class="tab{{if not .FileViews}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if .FileViews}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if .FileViews}}-1{{else}}0{{end}}">Traits</button>
                 {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
 
+            {{if .FileViews}}
             <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>
-                {{if .FileViews}}
                 {{range .FileViews}}
                 {{range .Composites}}
                 <div class="comp-card {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
@@ -1695,14 +1695,13 @@
                 {{if .FilesOmitted}}
                 <p class="content-limit-note">Showing the top {{.FilesShownLimit}} files for legibility — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}result{{else}}results{{end}}) hidden. Open a file directly to see its full context.</p>
                 {{end}}
-                {{else}}
-                {{/* No per-line context (legacy or context-free data): fall back to
-                     the evidence each trait matched on — filename, location, snippet. */}}
-                {{template "findingsbody" .}}
-                {{end}}
             </div>
+            {{end}}
 
-            <div class="tab-content" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{template "findingsbody" .}}</div>
+            {{/* When no file carries per-line context (legacy or context-free
+                 data) the Content tab is omitted entirely and Traits is the
+                 default, so the two tabs never render identical evidence. */}}
+            <div class="tab-content{{if not .FileViews}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{template "findingsbody" .}}</div>
 {{define "findingsbody"}}
                 {{if .IsArchive}}
                     {{if .ArchiveCategories}}

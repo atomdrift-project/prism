@@ -3761,19 +3761,12 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		// List the archive's members from sample_locations (the authoritative,
-		// dedup-correct edge table) ranked by score, then load the heavy
-		// cleave/litmus blobs only for the top-N we'll actually render. The
-		// light list + total drives the member count and the omitted tally;
-		// the heavy fetch feeds reassembleEnvelope.
-		members, total, merr := db.MembersByParent(ctx, sha, archiveMemberFetchLimit)
-		if merr != nil {
-			logger.Debug("members by parent failed", "sha", sha, "error", merr)
-		} else if len(members) > 0 {
-			shas := make([]string, len(members))
-			for i := range members {
-				shas[i] = members[i].SHA256
-			}
+		// Identify the archive's members, then load the heavy cleave/litmus
+		// blobs only for the top-N we'll actually render and splice them back
+		// in. The member SHAs come from sample_locations when populated, else
+		// from the SHAs cleave embedded in the compacted envelope.
+		shas, total := archiveMemberSHAs(ctx, db, sha, sample.CleaveResult)
+		if len(shas) > 0 {
 			children, cerr := db.SamplesBySHAs(ctx, shas)
 			if cerr != nil {
 				logger.Debug("samples by shas failed", "sha", sha, "error", cerr)
@@ -3785,6 +3778,61 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// archiveMemberSHAs returns the SHAs of an archive's members to fetch (capped at
+// archiveMemberFetchLimit) and the archive's total member count. It prefers the
+// sample_locations edge table, which is score-ranked; when that yields nothing —
+// e.g. the parent edges were never populated — it falls back to the child SHAs
+// cleave recorded in the compacted envelope, so the Content view still
+// reassembles instead of collapsing to a duplicate of the Traits view.
+func archiveMemberSHAs(ctx context.Context, db *hopper.DB, sha string, cleaveResult []byte) (shas []string, total int) {
+	members, total, err := db.MembersByParent(ctx, sha, archiveMemberFetchLimit)
+	if err != nil {
+		logger.Debug("members by parent failed", "sha", sha, "error", err)
+	}
+	if len(members) > 0 {
+		shas = make([]string, len(members))
+		for i := range members {
+			shas[i] = members[i].SHA256
+		}
+		return shas, total
+	}
+	refs := envelopeChildSHAs(cleaveResult)
+	if len(refs) == 0 {
+		return nil, total
+	}
+	if total == 0 {
+		total = len(refs)
+	}
+	if len(refs) > archiveMemberFetchLimit {
+		refs = refs[:archiveMemberFetchLimit]
+	}
+	return refs, total
+}
+
+// envelopeChildSHAs extracts the child SHAs hopper recorded in a compacted
+// archive envelope (the omitted_children array). Returns nil for envelopes that
+// predate that field or fail to parse — callers then have only sample_locations.
+func envelopeChildSHAs(cleaveResult []byte) []string {
+	if len(cleaveResult) == 0 {
+		return nil
+	}
+	var env struct {
+		Children []struct {
+			SHA string `json:"sha"`
+		} `json:"omitted_children"`
+	}
+	if json.Unmarshal(cleaveResult, &env) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(env.Children))
+	for _, c := range env.Children {
+		if c.SHA != "" {
+			out = append(out, c.SHA)
+		}
+	}
+	return out
 }
 
 // hopperWasCompacted reports whether the cleave result was stripped of child
