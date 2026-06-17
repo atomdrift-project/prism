@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit hook: refuse the commit unless the tree is clean.
+#
+# Gates, in order:
+#   1. go.mod has no local `replace` overrides
+#   2. `make test` passes
+#   3. `make lint` passes
+#
+# Install with: make install-precommit
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# 1. Reject local `replace` overrides in go.mod (both `replace x => y` and the
+#    `replace ( ... )` block form). These point at working copies on a single
+#    machine and must never be committed.
+if grep -nE '^[[:space:]]*replace([[:space:]]|\()' go.mod 2>/dev/null; then
+	echo "pre-commit: go.mod contains a local 'replace' override (shown above); remove it before committing." >&2
+	exit 1
+fi
+
+echo "pre-commit: running 'make test'..."
+make test
+
+echo "pre-commit: running 'make lint'..."
+make lint
+
+echo "pre-commit: all checks passed."

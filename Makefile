@@ -1,4 +1,4 @@
-.PHONY: build lint run test integration clean deploy help
+.PHONY: build lint run test integration clean deploy help install-precommit
 
 help:
 	@echo "Available targets:"
@@ -8,6 +8,7 @@ help:
 	@echo "  make run                    Run locally (requires cleave in PATH)"
 	@echo "  make clean                  Clean build artifacts"
 	@echo "  make deploy                 git pull + bastille rollout (BUILD=build RUN=prism)"
+	@echo "  make install-precommit      Install the pre-commit hook (test + lint + no go.mod overrides)"
 	@echo ""
 
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -38,6 +39,11 @@ run: build
 clean:
 	rm -f prism
 	rm -rf dist/
+
+install-precommit:
+	cp scripts/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed (runs: go.mod override check, make test, make lint)."
 
 # BEGIN: lint-install .
 # http://github.com/codeGROOVE-dev/lint-install
