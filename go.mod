@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	codeberg.org/atomdrift/hopper v0.0.0-20260617181714-32e4b17c4a92
-	codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594
+	codeberg.org/atomdrift/obs v0.0.0-20260618102920-63996188a61d
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
@@ -31,7 +31,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
-	github.com/mattn/go-sqlite3 v1.14.45 // indirect
+	github.com/mattn/go-sqlite3 v1.14.46 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

@@ -2,6 +2,8 @@ codeberg.org/atomdrift/hopper v0.0.0-20260617181714-32e4b17c4a92 h1:nyjvmGycPh8n
 codeberg.org/atomdrift/hopper v0.0.0-20260617181714-32e4b17c4a92/go.mod h1:S8/uuMwAr0QR4xsGUdG0WF7DYP6s1yaRK51ztqWeBVY=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594 h1:AXMuGXL69gliKDSudWK7Yn6dvCKvlJUv8dhI+WUeXNU=
 codeberg.org/atomdrift/obs v0.0.0-20260527115627-22bed5c55594/go.mod h1:N3CvSuq9LM9bAt7dwB6s6sQxnEJZdliK5+2eRCcwHCA=
+codeberg.org/atomdrift/obs v0.0.0-20260618102920-63996188a61d h1:owzK27rYw/Yltk5kDxXgHeK6SkF/cBuBQv9oNyt7xa8=
+codeberg.org/atomdrift/obs v0.0.0-20260618102920-63996188a61d/go.mod h1:N3CvSuq9LM9bAt7dwB6s6sQxnEJZdliK5+2eRCcwHCA=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
 github.com/alecthomas/assert/v2 v2.11.0/go.mod h1:Bze95FyfUr7x34QZrjL+XP+0qgp/zg8yS+TtBj1WA3k=
 github.com/alecthomas/chroma/v2 v2.27.0 h1:FodwmyOBgJULFYmDqibcp9pvfDLWdtPRh9v/r5BXYZs=
@@ -60,6 +62,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/mattn/go-sqlite3 v1.14.45 h1:6KA/spDguL3KV8rnybG7ezSaE4SeMR3KC9VbUoAQaIk=
 github.com/mattn/go-sqlite3 v1.14.45/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
+github.com/mattn/go-sqlite3 v1.14.46 h1:ZfaNcYO/CGNMRxkN1vvG9qf+Y+uvXfgT9a6MlEw+HmU=
+github.com/mattn/go-sqlite3 v1.14.46/go.mod h1:6JTjA44L93a0QCyJef5YvlPoKXntQPjzWv5gtm9sB6w=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/pierrec/lz4/v4 v4.1.22 h1:cKFw6uJDK+/gfw5BcDL0JL5aBsAFdsIT18eRtLj7VIU=
