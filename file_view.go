@@ -109,6 +109,8 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		idToFile[files[i].ID] = &files[i]
 	}
 
+	forced, inject := compositeLegs(files)
+
 	type fileData struct {
 		file       *cleaveFile
 		lws        []labeledWindow
@@ -132,6 +134,13 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 			}
 		}
 
+		// A composite's primary leg carries the composite name inline, on the row
+		// at its first source location (the other legs keep the native trait that
+		// fired there, rendered above).
+		for _, a := range inject[file.ID] {
+			attachComposite(fd.lws, a)
+		}
+
 		// Cross-file composites native to this file that didn't anchor a local
 		// window: list them with their member trail.
 		for j := range file.Findings {
@@ -150,8 +159,17 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 
 		// Inside-archive members below the content-criticality floor are noise;
 		// skip building their content view entirely. The top-level file (depth 0)
-		// is what the user navigated to, so it always renders.
+		// is what the user navigated to, so it always renders. A member that a
+		// cross-file composite drew from is evidence for that composite, so it
+		// renders regardless of its own crit and sorts up to the composite's, so
+		// its window survives the file cap and the composite's trail links land.
 		lowCrit := file.Depth > 0 && maxCritInFile(file) < minContentCrit
+		if c, ok := forced[file.ID]; ok {
+			lowCrit = false
+			if c > fd.maxCrit {
+				fd.maxCrit = c
+			}
+		}
 		if !lowCrit && (len(fd.lws) > 0 || len(fd.composites) > 0) {
 			datas = append(datas, fd)
 		}
@@ -206,6 +224,79 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		views = append(views, view)
 	}
 	return views, omitted
+}
+
+// anchorAnno is a composite annotation to attach inline on its primary member:
+// the composite's description, placed on the row at its first leg's location.
+type anchorAnno struct {
+	src  compactSource
+	desc string
+	crit int
+}
+
+// compositeLegs scans every file for cross-file composites (multi-member From at
+// notable+) and returns, keyed by member file ID, the data the Content tab needs
+// to show a composite's members. forced maps a leg's file to the strongest
+// composite crit referencing it, so the member renders even below the content
+// floor and sorts up to its composite. inject maps a composite's primary leg
+// (From[0]) to the annotation that names the composite on that member's window;
+// the other legs keep the native trait that fired there.
+func compositeLegs(files []cleaveFile) (forced map[int]int, inject map[int][]anchorAnno) {
+	forced = map[int]int{}
+	inject = map[int][]anchorAnno{}
+	for i := range files {
+		for j := range files[i].Findings {
+			f := &files[i].Findings[j]
+			if len(f.From) <= 1 || f.Crit < minFileCrit {
+				continue
+			}
+			for _, s := range f.From {
+				if c, ok := forced[s.File]; !ok || f.Crit > c {
+					forced[s.File] = f.Crit
+				}
+			}
+			desc := f.Desc
+			if desc == "" {
+				desc = traitDisplayID(f.ID)
+			}
+			first := f.From[0]
+			inject[first.File] = append(inject[first.File], anchorAnno{src: first, desc: desc, crit: f.Crit})
+		}
+	}
+	return forced, inject
+}
+
+// attachComposite annotates the window row at the leg's location with the
+// composite's description, so a composite's primary member carries the composite
+// name inline. Per cleave's one-comment-per-line rule it replaces the row's
+// native annotation. It is a no-op when the location falls outside every
+// rendered window — the composite still shows on the container with a link here.
+func attachComposite(lws []labeledWindow, a anchorAnno) {
+	for w := range lws {
+		rows := lws[w].Block.Rows
+		for r := range rows {
+			if legAtRow(a.src, &rows[r]) {
+				rows[r].Annos = []rowAnno{{Desc: a.desc, Crit: critIntToString(a.crit)}}
+				return
+			}
+		}
+	}
+}
+
+// legAtRow reports whether a composite leg's location falls on a context row: a
+// source leg matches by line number, a binary leg by the hex row's byte range.
+func legAtRow(s compactSource, row *contextRow) bool {
+	switch {
+	case s.Line != nil:
+		return row.Loc == strconv.FormatInt(*s.Line, 10)
+	case s.Offset != nil:
+		base, err := strconv.ParseInt(strings.TrimPrefix(row.Loc, "0x"), 16, 64)
+		if err != nil {
+			return false
+		}
+		return *s.Offset >= base && *s.Offset < base+hexStride
+	}
+	return false
 }
 
 // capWindows keeps a file's strongest maxWindowsPerFile windows but renders them

@@ -129,6 +129,81 @@ func TestFileViewsDropsContextless(t *testing.T) {
 	}
 }
 
+// TestFileViewsCompositePromotesMembers locks the cross-file composite contract:
+// every leg's member renders its own window even below the content floor, the
+// primary leg (From[0]) carries the composite description inline, the other legs
+// keep the native trait that fired there, and the composite trail links to both.
+func TestFileViewsCompositePromotesMembers(t *testing.T) {
+	files := []cleaveFile{
+		{ // archive container holds the cross-file composite
+			ID: 0, Depth: 0, SHA256: "aaa", Path: "wheel.whl", FileType: "zip",
+			Findings: []finding{
+				{
+					ID: "micro-behaviors/net/http-client", Crit: 3, Conf: 0.9,
+					Desc: "Performs HTTP request",
+					From: []compactSource{{File: 1, Line: ptrInt64(12)}, {File: 2, Line: ptrInt64(31)}},
+				},
+			},
+			Ctx: []contextWindow{{Offset: 0, Data: []byte{0x50, 0x4b}}},
+		},
+		{ // primary leg: crit 1 on its own (below the floor), force-rendered
+			ID: 1, Depth: 1, SHA256: "bbb", Path: "wheel.whl!!gpfs_client.py", FileType: "python",
+			Findings: []finding{
+				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{0, 12}}},
+			},
+			Ctx: []contextWindow{{Offset: 12, Addr: ptrInt64(0), Data: []byte("requests.get(u)")}},
+		},
+		{ // secondary leg: keeps its native trait label
+			ID: 2, Depth: 1, SHA256: "ccc", Path: "wheel.whl!!weka_client.py", FileType: "python",
+			Findings: []finding{
+				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{0, 10}}},
+			},
+			Ctx: []contextWindow{{Offset: 31, Addr: ptrInt64(0), Data: []byte("httpx.post(e)")}},
+		},
+	}
+
+	views, _ := buildFileViews(files)
+
+	bySHA := make(map[string]fileView, len(views))
+	for _, v := range views {
+		bySHA[v.SHA256] = v
+	}
+	if len(views) != 3 {
+		t.Fatalf("want 3 views (container + both legs), got %d: %+v", len(views), views)
+	}
+
+	// Primary leg renders, annotated with the composite description (not its own
+	// low-crit native trait).
+	primary, ok := bySHA["bbb"]
+	if !ok || len(primary.Windows) != 1 {
+		t.Fatalf("primary leg bbb = %+v, want one window", primary)
+	}
+	if annos := windowAnnos(primary.Windows[0]); len(annos) != 1 || annos[0] != "Performs HTTP request" {
+		t.Errorf("primary leg annotations = %v, want [Performs HTTP request]", annos)
+	}
+
+	// Secondary leg renders too, keeping the trait that fired there.
+	secondary, ok := bySHA["ccc"]
+	if !ok || len(secondary.Windows) != 1 {
+		t.Fatalf("secondary leg ccc = %+v, want one window", secondary)
+	}
+	if annos := windowAnnos(secondary.Windows[0]); len(annos) != 1 || annos[0] != "http client" {
+		t.Errorf("secondary leg annotations = %v, want [http client]", annos)
+	}
+
+	// The composite shows on the container with both legs linked to their sections.
+	container, ok := bySHA["aaa"]
+	if !ok || len(container.Composites) != 1 {
+		t.Fatalf("container aaa = %+v, want one composite", container)
+	}
+	src := container.Composites[0].Sources
+	if len(src) != 2 ||
+		src[0].Label != "gpfs_client.py" || src[0].Anchor != "file-bbb" || src[0].Loc != "12" ||
+		src[1].Label != "weka_client.py" || src[1].Anchor != "file-ccc" || src[1].Loc != "31" {
+		t.Errorf("composite trail = %+v, want both legs linked", src)
+	}
+}
+
 // windowAnnos flattens the trait annotations across a window's rows for tests.
 func windowAnnos(w fileWindow) []string {
 	var out []string
