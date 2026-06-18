@@ -70,6 +70,14 @@ func (b *breaker) allow() error {
 	}
 }
 
+// currentState returns the breaker's position for telemetry. Held under mu
+// so the read is consistent with concurrent allow/success/failure callers.
+func (b *breaker) currentState() breakerState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state
+}
+
 // success records a healthy outcome, closing the breaker and clearing the
 // failure count.
 func (b *breaker) success() {

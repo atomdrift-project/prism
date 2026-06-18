@@ -23,6 +23,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -114,6 +115,19 @@ const (
 	// expire. The high-traffic default and criticality views are kept fresher
 	// than this by refreshFeedCacheLoop.
 	feedCacheTTL = 30 * time.Minute
+	// feedRebuildTimeout bounds a single feed-snapshot rebuild. The rebuild
+	// runs under this deadline on a context detached from the caller's
+	// request (see loadFeedSnapshot): in a singleflight cache the loader is
+	// shared by every coalesced waiter, so it must outlive any one client
+	// disconnecting. A generous ceiling that still guarantees the loader
+	// can't hang forever and wedge the feed (the 2026-06-18 outage).
+	feedRebuildTimeout = 60 * time.Second
+	// hopperQueryTimeout bounds a single hopper-db read (feed query or
+	// sample lookup) independently of the caller's context. Some legitimate
+	// queries are slow, so the ceiling is generous; its job is to guarantee
+	// a degraded hopper-db can't pin a request goroutine indefinitely, and
+	// to give the circuit breaker a timely failure to trip on.
+	hopperQueryTimeout = 60 * time.Second
 	// The feed pre-cache runs in two tiers. The hot tier re-warms the views
 	// people actually hit (the top feedHotPrecacheCount structured pivots, by
 	// observed traffic) every feedHotPrecacheInterval, so popular ecosystem and
@@ -1312,6 +1326,7 @@ func main() {
 	}
 	logger = slog.New(obs.TeeSlog(baseHandler, "prism"))
 	slog.SetDefault(logger)
+	initDependencyMetrics()
 
 	// Parse command-line flags via the stdlib flag package. Single-dash and
 	// double-dash forms are both accepted (flag package treats `--foo` as
@@ -1641,9 +1656,45 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /_/challenge", handleChallenge)
 	mux.HandleFunc("GET /_/health", handleHealth)
 	mux.Handle("GET /_/metrik", obs.MetricsHandler())
+	registerPprof(mux)
 	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
 	mux.HandleFunc("GET /{ecosystem}/", handleEcosystem)
 	return mux
+}
+
+// registerPprof mounts the runtime profiler under /_/pprof, gated to
+// loopback and private-network clients. The endpoints expose full
+// goroutine dumps and a CPU profiler that can pin a core, so they must
+// never be reachable from the public internet through the tunnel — only
+// from the host or LAN (e.g. an SSH-forwarded curl during an incident).
+// The canonical hang diagnosis is `curl .../_/pprof/goroutine?debug=2`.
+func registerPprof(mux *http.ServeMux) {
+	mux.HandleFunc("GET /_/pprof/", localOnly(pprof.Index))
+	mux.HandleFunc("GET /_/pprof/cmdline", localOnly(pprof.Cmdline))
+	mux.HandleFunc("GET /_/pprof/profile", localOnly(pprof.Profile))
+	mux.HandleFunc("GET /_/pprof/symbol", localOnly(pprof.Symbol))
+	mux.HandleFunc("GET /_/pprof/trace", localOnly(pprof.Trace))
+	// Named runtime profiles (goroutine, heap, allocs, block, mutex, …). A
+	// more specific pattern above wins for the fixed endpoints; this wildcard
+	// serves the rest. pprof.Index hard-codes the /debug/pprof/ prefix, so it
+	// can't serve named profiles when mounted elsewhere — dispatch by name.
+	mux.HandleFunc("GET /_/pprof/{name}", localOnly(func(w http.ResponseWriter, r *http.Request) {
+		pprof.Handler(r.PathValue("name")).ServeHTTP(w, r)
+	}))
+}
+
+// localOnly wraps h so it serves only requests from a loopback or private
+// address, returning 404 (not 403) to anyone else so the endpoint's
+// existence isn't advertised to the public internet.
+func localOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip := net.ParseIP(clientIP(r))
+		if ip == nil || !ip.IsLoopback() && !ip.IsPrivate() {
+			http.NotFound(w, r)
+			return
+		}
+		h(w, r)
+	}
 }
 
 // loadConfig loads configuration from environment variables.
@@ -1948,7 +1999,17 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 		fromCache := true
 		snapshot, err = feedCache.FetchTTL(ctx, feedCacheKey(a), feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
 			fromCache = false
-			return buildFeedSnapshot(lctx, a, reqLogger)
+			// Detach the shared rebuild from the caller's request context.
+			// FetchTTL coalesces concurrent callers onto one loader, and lctx
+			// is the *first* caller's request context — if that client
+			// disconnects, cancelling lctx would abort the rebuild for every
+			// waiter, the feed can never repopulate under load, and the cache
+			// stays cold (the 2026-06-18 outage). WithoutCancel keeps trace
+			// context and values but drops cancellation; a fresh deadline
+			// still bounds a genuinely stuck rebuild.
+			bctx, cancel := context.WithTimeout(context.WithoutCancel(lctx), feedRebuildTimeout)
+			defer cancel()
+			return buildFeedSnapshot(bctx, a, reqLogger)
 		})
 		if fromCache {
 			diag.Source = "cache"
@@ -2024,15 +2085,38 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 	if db == nil {
 		return nil, nil, nil, 0, errors.New("hopper not connected")
 	}
+	// Gate the feed behind the shared hopper-db breaker so a degraded
+	// hopper sheds these queries fast instead of every request queueing a
+	// full rebuild (the 2026-06-18 outage). This is the same breaker that
+	// guards the per-sample lookups in fetchFromHopper.
+	if berr := dbBreaker.allow(); berr != nil {
+		recordDep(ctx, "hopper-db", "feed", "rejected", time.Time{})
+		return nil, nil, nil, 0, fmt.Errorf("hopper-db feed: %w", berr)
+	}
+	// Bound the DB-query phase independently of the caller: a slow hopper
+	// round-trip must not pin a request goroutine (or precache tick), and a
+	// timeout becomes a breaker failure that trips it for later callers.
+	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
+	defer cancel()
 	// Source="" spans every Source value (legacy "harvest" rows from
 	// before the rename, new "forager" rows, manual "upload"s) so the
 	// dropdowns and the result set both work across the transition.
+	// feedStart times the DB-query phase only; the per-sample render loop
+	// below recurses into fetchFromHopper, which records its own lookups.
+	feedStart := time.Now()
+	// fail records a feed-query fault on both the breaker and the metric.
+	fail := func() {
+		dbBreaker.failure()
+		recordDep(ctx, "hopper-db", "feed", "error", feedStart)
+	}
 	ecosystems, err = db.FeedEcosystems(ctx, "", "", time.Now().Add(-feedEcosystemWindow))
 	if err != nil {
+		fail()
 		return nil, nil, nil, 0, err
 	}
 	domains, err = db.FeedDomains(ctx, "", "")
 	if err != nil {
+		fail()
 		return nil, nil, nil, 0, err
 	}
 
@@ -2065,12 +2149,16 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 
 	samples, err := db.FeedSamples(ctx, &q)
 	if err != nil {
+		fail()
 		return nil, nil, nil, 0, err
 	}
 	total, err = db.FeedSamplesCount(ctx, &q)
 	if err != nil {
+		fail()
 		return nil, nil, nil, 0, err
 	}
+	dbBreaker.success()
+	recordDep(ctx, "hopper-db", "feed", "ok", feedStart)
 
 	rows = make([]feedRow, 0, len(samples))
 	now := time.Now()
@@ -3691,19 +3779,28 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
 	}
 	if err := dbBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-db", "lookup", "rejected", time.Time{})
 		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
 	}
+	// Bound the lookup (and any archive-reassembly reads below) so a slow
+	// hopper-db can't pin the caller; a timeout trips the breaker.
+	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
+	defer cancel()
+	start := time.Now()
 	sample, err := db.SampleBySHA256(ctx, sha)
 	if err != nil {
 		if errors.Is(err, hopper.ErrNotFound) {
 			// The DB answered; "not found" is a healthy response, not a fault.
 			dbBreaker.success()
+			recordDep(ctx, "hopper-db", "lookup", "ok", start)
 			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
 		}
 		dbBreaker.failure()
+		recordDep(ctx, "hopper-db", "lookup", "error", start)
 		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
 	}
 	dbBreaker.success()
+	recordDep(ctx, "hopper-db", "lookup", "ok", start)
 
 	if len(sample.CleaveResult) == 0 {
 		return storedResult{}, &pendingAnalysisError{
@@ -3893,6 +3990,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 
 	if err := apiBreaker.allow(); err != nil {
+		recordDep(r.Context(), "hopper-api", "download", "rejected", time.Time{})
 		reqLogger.Warn("hopper download skipped", "error", err)
 		w.Header().Set("Retry-After", "10")
 		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
@@ -3903,9 +4001,11 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
 		return
 	}
+	dlStart := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
 	if err != nil {
 		apiBreaker.failure()
+		recordDep(r.Context(), "hopper-api", "download", "error", dlStart)
 		reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
 		http.Error(w, "download unavailable", http.StatusBadGateway)
 		return
@@ -3917,8 +4017,10 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}()
 	if resp.StatusCode >= http.StatusInternalServerError {
 		apiBreaker.failure()
+		recordDep(r.Context(), "hopper-api", "download", "error", dlStart)
 	} else {
 		apiBreaker.success()
+		recordDep(r.Context(), "hopper-api", "download", "ok", dlStart)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -4858,6 +4960,7 @@ func postUploadWithRetry(ctx context.Context, target string, buf []byte, token s
 // Body is read from buf so retries can replay it.
 func postOnce(ctx context.Context, target string, buf []byte, token string) (*http.Response, error) {
 	if err := apiBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-api", "upload", "rejected", time.Time{})
 		return nil, fmt.Errorf("hopper-api upload: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
@@ -4867,15 +4970,19 @@ func postOnce(ctx context.Context, target string, buf []byte, token string) (*ht
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
+	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
 	if err != nil {
 		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "upload", "error", start)
 		return nil, fmt.Errorf("hopper request: %w", err)
 	}
 	if resp.StatusCode >= http.StatusInternalServerError {
 		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "upload", "error", start)
 	} else {
 		apiBreaker.success()
+		recordDep(ctx, "hopper-api", "upload", "ok", start)
 	}
 	return resp, nil
 }
@@ -5116,16 +5223,20 @@ func analyzeWithLitmus(ctx context.Context, target string, buf []byte, filename 
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
+	start := time.Now()
 	resp, err := litmusClient.Do(req) //nolint:gosec // target built from admin-configured litmus host, not user input
 	if err != nil {
+		recordDep(ctx, "litmus", "analyze", "error", start)
 		return nil, fmt.Errorf("litmus request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
 	rd := io.LimitReader(resp.Body, maxLitmusResponseBytes)
 	if resp.StatusCode != http.StatusOK {
+		recordDep(ctx, "litmus", "analyze", "error", start)
 		snippet, _ := io.ReadAll(io.LimitReader(rd, 1024)) //nolint:errcheck // diagnostics only
 		return nil, fmt.Errorf("litmus status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
+	recordDep(ctx, "litmus", "analyze", "ok", start)
 	var env litmusEnvelope
 	if err := json.NewDecoder(rd).Decode(&env); err != nil {
 		return nil, fmt.Errorf("decode litmus response: %w", err)
@@ -5176,6 +5287,7 @@ func hopperResultURL() string {
 // The same per-dependency breaker that guards other hopper-api calls applies.
 func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope, durationMs int64) error {
 	if err := apiBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-api", "result", "rejected", time.Time{})
 		return fmt.Errorf("hopper-api result: %w", err)
 	}
 	body, err := json.Marshal(hopperResultRequest{
@@ -5195,16 +5307,20 @@ func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope,
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperResultURL built from admin-configured hopper-api host
 	if err != nil {
 		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "result", "error", start)
 		return fmt.Errorf("hopper request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
 	if resp.StatusCode >= http.StatusInternalServerError {
 		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "result", "error", start)
 	} else {
 		apiBreaker.success()
+		recordDep(ctx, "hopper-api", "result", "ok", start)
 	}
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024)) //nolint:errcheck // diagnostics only
