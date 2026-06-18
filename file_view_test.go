@@ -32,7 +32,7 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 		},
 	}
 
-	views, _ := buildFileViews(files)
+	views, _, _ := buildFileViews(files)
 	if len(views) != 2 {
 		t.Fatalf("want 2 file views, got %d: %+v", len(views), views)
 	}
@@ -93,7 +93,7 @@ func TestFileViewsInheritedSpanNoFalseAnno(t *testing.T) {
 		},
 	}
 
-	views, _ := buildFileViews(files)
+	views, _, _ := buildFileViews(files)
 	for _, v := range views {
 		if len(v.Windows) != 0 {
 			t.Fatalf("no file should render a window (container=header sample, member=no ctx); got %+v", v)
@@ -117,7 +117,7 @@ func TestFileViewsDropsContextless(t *testing.T) {
 			Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
 		}},
 	}
-	views, _ := buildFileViews([]cleaveFile{file})
+	views, _, _ := buildFileViews([]cleaveFile{file})
 	if len(views) != 1 {
 		t.Fatalf("want 1 view, got %d", len(views))
 	}
@@ -149,20 +149,20 @@ func TestFileViewsCompositePromotesMembers(t *testing.T) {
 		{ // primary leg: crit 1 on its own (below the floor), force-rendered
 			ID: 1, Depth: 1, SHA256: "bbb", Path: "wheel.whl!!gpfs_client.py", FileType: "python",
 			Findings: []finding{
-				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{0, 12}}},
+				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{1, 12}}},
 			},
 			Ctx: []contextWindow{{Offset: 12, Addr: ptrInt64(0), Data: []byte("requests.get(u)")}},
 		},
 		{ // secondary leg: keeps its native trait label
 			ID: 2, Depth: 1, SHA256: "ccc", Path: "wheel.whl!!weka_client.py", FileType: "python",
 			Findings: []finding{
-				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{0, 10}}},
+				{ID: "micro-behaviors/net/http-client", Crit: 1, Conf: 0.9, Desc: "http client", Spans: [][2]int64{{1, 10}}},
 			},
 			Ctx: []contextWindow{{Offset: 31, Addr: ptrInt64(0), Data: []byte("httpx.post(e)")}},
 		},
 	}
 
-	views, _ := buildFileViews(files)
+	views, _, _ := buildFileViews(files)
 
 	bySHA := make(map[string]fileView, len(views))
 	for _, v := range views {
@@ -229,13 +229,15 @@ func TestFileViewsFileCap(t *testing.T) {
 		crit := 3 + i%3
 		files = append(files, cleaveFile{
 			ID: i, Depth: 1, SHA256: sha, Path: "a.zip!!f" + itoaTest(i) + ".py", FileType: "python",
-			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{0, 4}}}},
+			// Span off byte 0 so the offset-0 sub-suspicious noise filter doesn't
+			// touch these fixtures — this test exercises the file cap, not that.
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{1, 4}}}},
 			Ctx: []contextWindow{{
 				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
 			}},
 		})
 	}
-	views, omitted := buildFileViews(files)
+	views, _, omitted := buildFileViews(files)
 	if len(views) != maxFilesShown {
 		t.Errorf("rendered %d files, want the cap of %d", len(views), maxFilesShown)
 	}
@@ -248,6 +250,35 @@ func TestFileViewsFileCap(t *testing.T) {
 	}
 }
 
+// TestOffsetZeroNoiseFiltered locks the offset-0 noise rule: a sub-suspicious
+// trait whose match sits at byte 0 (a format/whole-file marker like a zip's "PK"
+// header) is dropped from the content view, while a suspicious+ trait at byte 0,
+// or a sub-suspicious trait off byte 0, is kept.
+func TestOffsetZeroNoiseFiltered(t *testing.T) {
+	file := cleaveFile{
+		ID: 0, Depth: 0, SHA256: "aaa", Path: "app.zip", FileType: "zip",
+		Findings: []finding{
+			{ID: "metadata/library/web-frameworks::bundle-marker", Crit: 2, Conf: 0.9, Desc: "bundle marker", Spans: [][2]int64{{0, 4}}},
+			{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9, Desc: "eval", Spans: [][2]int64{{0, 4}}},
+		},
+		Ctx: []contextWindow{{Offset: 1, Addr: ptrInt64(0), Data: []byte("PK\x03\x04eval")}},
+	}
+	views, top, _ := buildFileViews([]cleaveFile{file})
+	if len(views) != 1 {
+		t.Fatalf("want one view, got %d", len(views))
+	}
+	annos := windowAnnos(views[0].Windows[0])
+	for _, a := range annos {
+		if a == "bundle marker" {
+			t.Errorf("offset-0 sub-suspicious trait should be filtered; annos=%v", annos)
+		}
+	}
+	// The suspicious+ trait at offset 0 survives and headlines.
+	if len(top) != 1 || top[0].Desc != "eval" || top[0].Anchor != "file-aaa" {
+		t.Errorf("top traits = %+v, want [eval -> file-aaa]", top)
+	}
+}
+
 // TestFileViewsNoContextNil confirms a legacy report with no current-format
 // context yields no File tab, so the page keeps Traits as its default.
 func TestFileViewsNoContextNil(t *testing.T) {
@@ -255,7 +286,7 @@ func TestFileViewsNoContextNil(t *testing.T) {
 		ID: 0, Depth: 0, SHA256: "aaa", Path: "x.py",
 		Findings: []finding{{ID: "objectives/execution/eval", Crit: 5, Conf: 0.9}},
 	}}
-	if views, _ := buildFileViews(files); views != nil {
+	if views, _, _ := buildFileViews(files); views != nil {
 		t.Errorf("no rich context should yield nil views, got %+v", views)
 	}
 }
@@ -267,7 +298,9 @@ func TestFileViewsDropsLowCritMembers(t *testing.T) {
 	mk := func(id, depth, crit int, sha string) cleaveFile {
 		return cleaveFile{
 			ID: id, Depth: depth, SHA256: sha, Path: "a.zip!!f" + itoaTest(id) + ".py", FileType: "python",
-			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{0, 4}}}},
+			// Span off byte 0 so the offset-0 sub-suspicious noise filter doesn't
+			// interfere — this test exercises the content-criticality floor.
+			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{1, 4}}}},
 			Ctx: []contextWindow{{
 				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
 			}},
@@ -278,7 +311,7 @@ func TestFileViewsDropsLowCritMembers(t *testing.T) {
 		mk(1, 1, 1, "lowmember"),  // component (crit 1) member — dropped
 		mk(2, 1, 3, "highmember"), // notable (crit 3) member — kept
 	}
-	views, _ := buildFileViews(files)
+	views, _, _ := buildFileViews(files)
 	shown := make(map[string]bool, len(views))
 	for _, v := range views {
 		shown[v.SHA256] = true

@@ -97,7 +97,7 @@ func previewData() resultData {
 		}},
 	}
 	files := append([]cleaveFile{container}, members...)
-	d.FileViews, _ = buildFileViews(files)
+	d.FileViews, _, _ = buildFileViews(files)
 	if src, hex := contentLocCh(d.FileViews); src > 0 || hex > 0 {
 		d.ContentLocStyle = template.HTMLAttr(fmt.Sprintf(`style="--ctx-loc-src-ch:%d;--ctx-loc-hex-ch:%d"`, src, hex))
 	}

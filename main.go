@@ -667,6 +667,10 @@ type resultData struct {
 	// non-empty the File tab renders and is the page's default tab; empty for
 	// legacy reports without current-format context, which keep Traits default.
 	FileViews []fileView
+	// TopTraits is the Content tab's headline: the few most significant traits
+	// (highest crit×confidence, suspicious+), each linking to its evidence
+	// section. Empty when nothing reaches the suspicious bar.
+	TopTraits []topTrait
 	// ContentLocStyle sets the --ctx-loc-ch CSS variable (the widest loc string
 	// across every window) on the Content tab, so each window's line-number /
 	// hex-offset column shares one width and the columns line up within and
@@ -3841,28 +3845,164 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 // cleave recorded in the compacted envelope, so the Content view still
 // reassembles instead of collapsing to a duplicate of the Traits view.
 func archiveMemberSHAs(ctx context.Context, db *hopper.DB, sha string, cleaveResult []byte) (shas []string, total int) {
+	// Files a notable+ finding draws from are the archive's point — a member
+	// whose malice is only detected in aggregate (e.g. an obfuscated bundle
+	// chunk) scores ~0 on its own, so the score-ranked sources below would drop
+	// it. Fetch those first so hostile-linked members always hydrate and their
+	// sections (and the trail links pointing at them) render.
+	linked := compositeLinkedSHAs(cleaveResult, sha)
+
 	members, total, err := db.MembersByParent(ctx, sha, archiveMemberFetchLimit)
 	if err != nil {
 		logger.Debug("members by parent failed", "sha", sha, "error", err)
 	}
+	var primary []string
 	if len(members) > 0 {
-		shas = make([]string, len(members))
+		primary = make([]string, len(members))
 		for i := range members {
-			shas[i] = members[i].SHA256
+			primary[i] = members[i].SHA256
 		}
-		return shas, total
+	} else {
+		// No sample_locations edges: fall back to the stub SHAs cleave recorded.
+		primary = envelopeChildSHAs(cleaveResult, sha)
+		if total == 0 {
+			total = len(primary)
+		}
 	}
-	refs := envelopeChildSHAs(cleaveResult, sha)
-	if len(refs) == 0 {
+
+	merged := mergeCappedSHAs(linked, primary, archiveMemberFetchLimit)
+	if len(merged) == 0 {
 		return nil, total
 	}
-	if total == 0 {
-		total = len(refs)
+	return merged, total
+}
+
+// compositeLinkedSHAs returns the content SHAs of members that a notable+
+// finding on the container draws from, ranked by the strongest such finding
+// (then SHA for determinism). These are the files the archive's verdict hangs
+// on, regardless of their own standalone score.
+func compositeLinkedSHAs(cleaveResult []byte, parentSHA string) []string {
+	if len(cleaveResult) == 0 {
+		return nil
 	}
-	if len(refs) > archiveMemberFetchLimit {
-		refs = refs[:archiveMemberFetchLimit]
+	var env struct {
+		Files []json.RawMessage `json:"files"`
+		FS    []json.RawMessage `json:"fs"`
 	}
-	return refs, total
+	if json.Unmarshal(cleaveResult, &env) != nil {
+		return nil
+	}
+	entries := env.Files
+	if len(entries) == 0 {
+		entries = env.FS
+	}
+	idToSHA := make(map[int]string, len(entries))
+	var containerFindings []json.RawMessage
+	for _, raw := range entries {
+		var f struct {
+			SHA      string            `json:"sha"`
+			Traits   []json.RawMessage `json:"traits"`
+			Find     []json.RawMessage `json:"find"`
+			TS       []json.RawMessage `json:"ts"`
+			ID       int               `json:"id"`
+			Depth    int               `json:"depth"`
+			OldDepth int               `json:"dp"`
+		}
+		if json.Unmarshal(raw, &f) != nil {
+			continue
+		}
+		if f.SHA != "" {
+			idToSHA[f.ID] = f.SHA
+		}
+		depth := f.Depth
+		if depth == 0 {
+			depth = f.OldDepth
+		}
+		if depth == 0 {
+			containerFindings = f.Traits
+			if len(containerFindings) == 0 {
+				containerFindings = f.Find
+			}
+			if len(containerFindings) == 0 {
+				containerFindings = f.TS
+			}
+		}
+	}
+
+	type leg struct {
+		File    int `json:"file"`
+		OldFile int `json:"f"`
+	}
+	maxCrit := make(map[string]int)
+	for _, raw := range containerFindings {
+		var fd struct {
+			From    []leg `json:"from"`
+			Srcs    []leg `json:"srcs"`
+			Crit    int   `json:"crit"`
+			OldCrit int   `json:"l"`
+		}
+		if json.Unmarshal(raw, &fd) != nil {
+			continue
+		}
+		crit := fd.Crit
+		if crit == 0 {
+			crit = fd.OldCrit
+		}
+		if crit < minFileCrit {
+			continue // notable+ only
+		}
+		legs := fd.From
+		if len(legs) == 0 {
+			legs = fd.Srcs
+		}
+		for _, lg := range legs {
+			id := lg.File
+			if id == 0 {
+				id = lg.OldFile
+			}
+			memberSHA, ok := idToSHA[id]
+			if !ok || memberSHA == parentSHA {
+				continue
+			}
+			if crit > maxCrit[memberSHA] {
+				maxCrit[memberSHA] = crit
+			}
+		}
+	}
+	if len(maxCrit) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(maxCrit))
+	for memberSHA := range maxCrit {
+		out = append(out, memberSHA)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if maxCrit[out[i]] != maxCrit[out[j]] {
+			return maxCrit[out[i]] > maxCrit[out[j]]
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
+// mergeCappedSHAs concatenates SHA lists in priority order, dropping blanks and
+// duplicates, and caps the result. The first list wins placement on a tie.
+func mergeCappedSHAs(first, second []string, limit int) []string {
+	seen := make(map[string]bool, limit)
+	out := make([]string, 0, limit)
+	for _, group := range [][]string{first, second} {
+		for _, s := range group {
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			out = append(out, s)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	return out
 }
 
 // envelopeChildSHAs returns the member SHAs of a compacted archive envelope: the
@@ -5621,7 +5761,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// becomes the default tab. It is populated only for reports carrying
 	// current-format context, so legacy samples keep Traits as the default.
 	var omitted contentOmitted
-	data.FileViews, omitted = buildFileViews(report.Files)
+	data.FileViews, data.TopTraits, omitted = buildFileViews(report.Files)
 	if omitted.Files > 0 {
 		data.FilesOmitted = omitted.Files
 		data.ResultsOmitted = omitted.Results

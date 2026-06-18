@@ -1151,6 +1151,31 @@
            "file:line". Carries its severity as a soft tint plus a left rail,
            inset slightly so it reads as the archive-level summary, not just
            another file. Tints match the verdict-bar / galaxy palette. */
+        /* Top-traits headline: the sample's most significant findings, shown as
+           a compact scannable strip above the per-file content cards. */
+        .top-traits {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin: 0 10px 16px;
+        }
+        .top-trait {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .top-trait.hostile { border-left-color: var(--hostile); border-color: rgba(239, 68, 68, 0.22); background: rgba(239, 68, 68, 0.07); }
+        .top-trait.suspicious { border-left-color: var(--suspicious); border-color: rgba(234, 179, 8, 0.26); background: rgba(234, 179, 8, 0.09); }
+        .top-trait.notable { border-left-color: var(--notable); border-color: rgba(59, 130, 246, 0.22); background: rgba(59, 130, 246, 0.06); }
+        .top-trait-desc { color: var(--carbon); text-decoration: none; font-weight: 500; }
+        a.top-trait-desc:hover { text-decoration: underline; }
+
         .comp-card {
             padding: 9px 14px;
             margin: 0 10px 14px;
@@ -1672,6 +1697,16 @@
 
             {{if .FileViews}}
             <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>
+                {{if .TopTraits}}
+                <div class="top-traits" aria-label="Most significant traits">
+                    {{range .TopTraits}}
+                    <div class="top-trait {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
+                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                        {{if .Anchor}}<a href="#{{.Anchor}}" class="top-trait-desc">{{.Desc}}</a>{{else}}<span class="top-trait-desc">{{.Desc}}</span>{{end}}
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
                 {{range .FileViews}}
                 {{range .Composites}}
                 <div class="comp-card {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">

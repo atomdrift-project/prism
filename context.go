@@ -330,9 +330,36 @@ func nativeFindings(file *cleaveFile) map[string]*finding {
 		if len(file.Findings[i].From) > 0 {
 			continue
 		}
+		if isOffsetZeroNoise(&file.Findings[i]) {
+			continue
+		}
 		byID[file.Findings[i].ID] = &file.Findings[i]
 	}
 	return byID
+}
+
+// minSuspiciousCrit is the criticality at and above which a finding is taken
+// seriously enough to survive the offset-0 filter — "suspicious" (4) per
+// critIntToString.
+const minSuspiciousCrit = 4
+
+// isOffsetZeroNoise reports whether a finding is a likely false positive anchored
+// at byte 0: a sub-suspicious trait whose every span begins at offset 0. Format
+// markers and whole-file metrics (e.g. a "JavaScript built bundle marker" on a
+// zip's "PK" header) match at offset 0 on almost any container, so below the
+// suspicious bar they are dropped from the content view rather than lighting the
+// first row of every archive. A finding with no spans is not offset-anchored and
+// is never filtered here.
+func isOffsetZeroNoise(f *finding) bool {
+	if f.Crit >= minSuspiciousCrit || len(f.Spans) == 0 {
+		return false
+	}
+	for _, sp := range f.Spans {
+		if sp[0] != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // hasRichContext reports whether any window carries current-format per-line

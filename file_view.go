@@ -92,7 +92,7 @@ type compositeLink struct {
 // findings. The second return reports what the maxFilesShown cap dropped, for
 // the "results limited" note. Returns nil when no file carries current-format
 // context.
-func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
+func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted) {
 	rich := false
 	for i := range files {
 		if hasRichContext(&files[i]) {
@@ -101,7 +101,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		}
 	}
 	if !rich {
-		return nil, contentOmitted{}
+		return nil, nil, contentOmitted{}
 	}
 
 	idToFile := make(map[int]*cleaveFile, len(files))
@@ -175,7 +175,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		}
 	}
 	if len(datas) == 0 {
-		return nil, contentOmitted{}
+		return nil, nil, contentOmitted{}
 	}
 
 	sort.SliceStable(datas, func(a, b int) bool { return datas[a].maxCrit > datas[b].maxCrit })
@@ -223,7 +223,87 @@ func buildFileViews(files []cleaveFile) ([]fileView, contentOmitted) {
 		}
 		views = append(views, view)
 	}
-	return views, omitted
+	return views, topTraits(files, idToFile, rendered), omitted
+}
+
+// topTrait is one entry in the Content tab's headline: the most significant
+// traits in the sample, each linking to the section where its evidence renders.
+type topTrait struct {
+	Desc   string
+	Crit   string // severity class for coloring
+	Anchor string // in-page target "file-<sha>", empty when no section rendered
+}
+
+// maxTopTraits caps the headline. Three keeps it a glanceable summary, not a
+// second findings list.
+const maxTopTraits = 3
+
+// topTraits selects the sample's most significant traits — highest
+// crit×confidence, suspicious or above — across every file, atomic and composite
+// alike, deduped by trait ID. Each links to the section where its evidence shows
+// (the member a composite/inherited finding fired on, else the file it is native
+// to) when that section was rendered. Offset-0 noise is excluded, matching the
+// content view.
+func topTraits(files []cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) []topTrait {
+	type cand struct {
+		desc   string
+		anchor string
+		score  float64
+		crit   int
+	}
+	best := make(map[string]cand)
+	for i := range files {
+		for j := range files[i].Findings {
+			f := &files[i].Findings[j]
+			if f.Crit < minSuspiciousCrit || isOffsetZeroNoise(f) {
+				continue
+			}
+			score := float64(f.Crit) * f.Conf
+			if existing, ok := best[f.ID]; ok && existing.score >= score {
+				continue
+			}
+			desc := f.Desc
+			if desc == "" {
+				desc = traitDisplayID(f.ID)
+			}
+			best[f.ID] = cand{score: score, crit: f.Crit, desc: desc, anchor: traitAnchor(f, &files[i], idToFile, rendered)}
+		}
+	}
+	cands := make([]cand, 0, len(best))
+	for _, c := range best {
+		cands = append(cands, c)
+	}
+	sort.SliceStable(cands, func(a, b int) bool {
+		if cands[a].score != cands[b].score {
+			return cands[a].score > cands[b].score
+		}
+		return cands[a].desc < cands[b].desc
+	})
+	if len(cands) > maxTopTraits {
+		cands = cands[:maxTopTraits]
+	}
+	out := make([]topTrait, len(cands))
+	for i, c := range cands {
+		out[i] = topTrait{Desc: c.desc, Crit: critIntToString(c.crit), Anchor: c.anchor}
+	}
+	return out
+}
+
+// traitAnchor resolves the section a top trait jumps to: the member a
+// composite/inherited finding drew from (its first leg), else the file the
+// finding is native to. Returns "" when that section was not rendered, so the
+// headline entry shows without a dangling link.
+func traitAnchor(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) string {
+	if len(f.From) > 0 {
+		if m := idToFile[f.From[0].File]; m != nil && rendered[m.SHA256] {
+			return "file-" + m.SHA256
+		}
+		return ""
+	}
+	if rendered[host.SHA256] {
+		return "file-" + host.SHA256
+	}
+	return ""
 }
 
 // anchorAnno is a composite annotation to attach inline on its primary member:
