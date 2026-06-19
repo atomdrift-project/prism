@@ -32,13 +32,11 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 		},
 	}
 
-	views, _, _ := buildFileViews(files)
-	if len(views) != 2 {
-		t.Fatalf("want 2 file views, got %d: %+v", len(views), views)
-	}
-	// Highest-criticality file (member, crit 5) leads, with a labeled window.
-	if views[0].SHA256 != "bbb" {
-		t.Errorf("first view = %q, want member bbb (crit 5)", views[0].SHA256)
+	views, top, _ := buildFileViews(files)
+	// Only the member renders a section (it has a window); the container has no
+	// window of its own, so it is not a file card — composite cards are gone.
+	if len(views) != 1 || views[0].SHA256 != "bbb" {
+		t.Fatalf("want one file view (member bbb), got %+v", views)
 	}
 	if len(views[0].Windows) != 1 {
 		t.Fatalf("member should have one window, got %d", len(views[0].Windows))
@@ -49,18 +47,21 @@ func TestFileViewsNativeVsInherited(t *testing.T) {
 		t.Errorf("member window annotations = %v, want [execution/eval]", annos)
 	}
 
-	// The container shows only its native composite (no window), never the
-	// inherited atomic, with a linkable member trail.
-	c := views[1]
-	if c.SHA256 != "aaa" || len(c.Windows) != 0 || len(c.Composites) != 1 {
-		t.Fatalf("container view = %+v, want one composite and no windows", c)
+	// The cross-file composite (suspicious) now surfaces in the top-traits
+	// headline with its linkable member trail, not as a bare card. (The hostile
+	// eval also headlines; we only assert the composite's trail here.)
+	var beacon *topTrait
+	for i := range top {
+		if top[i].Desc == "c2/beacon" {
+			beacon = &top[i]
+		}
 	}
-	if c.Composites[0].ID != "c2/beacon" {
-		t.Errorf("container composite = %q, want c2/beacon", c.Composites[0].ID)
+	if beacon == nil {
+		t.Fatalf("top traits = %+v, want one to be the c2/beacon composite", top)
 	}
-	src := c.Composites[0].Sources
-	if len(src) != 1 || src[0].Label != "main.py" || src[0].Anchor != "file-bbb" || src[0].Loc != "10" {
-		t.Errorf("composite trail = %+v, want main.py @ file-bbb:10", src)
+	if src := beacon.Sources; len(src) != 1 ||
+		src[0].Label != "main.py" || src[0].Anchor != "file-bbb" || src[0].Loc != "10" {
+		t.Errorf("composite trail = %+v, want main.py @ file-bbb:10", beacon.Sources)
 	}
 }
 
@@ -121,7 +122,7 @@ func TestFileViewsDropsContextless(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("want 1 view, got %d", len(views))
 	}
-	if len(views[0].Windows) != 1 || len(views[0].Composites) != 0 {
+	if len(views[0].Windows) != 1 {
 		t.Fatalf("want one window and no context-less rows, got %+v", views[0])
 	}
 	if annos := windowAnnos(views[0].Windows[0]); len(annos) != 1 || annos[0] != "execution/eval" {
@@ -168,12 +169,18 @@ func TestFileViewsCompositePromotesMembers(t *testing.T) {
 	for _, v := range views {
 		bySHA[v.SHA256] = v
 	}
-	if len(views) != 3 {
-		t.Fatalf("want 3 views (container + both legs), got %d: %+v", len(views), views)
+	// Both legs render their own section; the container (no window of its own) is
+	// not a card. The composite is folded into the source view, not shown as a
+	// card.
+	if len(views) != 2 {
+		t.Fatalf("want 2 views (both legs), got %d: %+v", len(views), views)
+	}
+	if _, ok := bySHA["aaa"]; ok {
+		t.Errorf("container should not render a section (no window of its own)")
 	}
 
-	// Primary leg renders, annotated with the composite description (not its own
-	// low-crit native trait).
+	// Primary leg renders, annotated with the composite description folded onto
+	// the row at its leg location (not its own low-crit native trait).
 	primary, ok := bySHA["bbb"]
 	if !ok || len(primary.Windows) != 1 {
 		t.Fatalf("primary leg bbb = %+v, want one window", primary)
@@ -182,25 +189,13 @@ func TestFileViewsCompositePromotesMembers(t *testing.T) {
 		t.Errorf("primary leg annotations = %v, want [Performs HTTP request]", annos)
 	}
 
-	// Secondary leg renders too, keeping the trait that fired there.
+	// Secondary leg renders too, keeping the native trait that fired there.
 	secondary, ok := bySHA["ccc"]
 	if !ok || len(secondary.Windows) != 1 {
 		t.Fatalf("secondary leg ccc = %+v, want one window", secondary)
 	}
 	if annos := windowAnnos(secondary.Windows[0]); len(annos) != 1 || annos[0] != "http client" {
 		t.Errorf("secondary leg annotations = %v, want [http client]", annos)
-	}
-
-	// The composite shows on the container with both legs linked to their sections.
-	container, ok := bySHA["aaa"]
-	if !ok || len(container.Composites) != 1 {
-		t.Fatalf("container aaa = %+v, want one composite", container)
-	}
-	src := container.Composites[0].Sources
-	if len(src) != 2 ||
-		src[0].Label != "gpfs_client.py" || src[0].Anchor != "file-bbb" || src[0].Loc != "12" ||
-		src[1].Label != "weka_client.py" || src[1].Anchor != "file-ccc" || src[1].Loc != "31" {
-		t.Errorf("composite trail = %+v, want both legs linked", src)
 	}
 }
 
@@ -273,9 +268,13 @@ func TestOffsetZeroNoiseFiltered(t *testing.T) {
 			t.Errorf("offset-0 sub-suspicious trait should be filtered; annos=%v", annos)
 		}
 	}
-	// The suspicious+ trait at offset 0 survives and headlines.
-	if len(top) != 1 || top[0].Desc != "eval" || top[0].Anchor != "file-aaa" {
-		t.Errorf("top traits = %+v, want [eval -> file-aaa]", top)
+	// The suspicious+ trait at offset 0 survives and headlines, with a clickable
+	// location pointing back at the file's own section.
+	if len(top) != 1 || top[0].Desc != "eval" {
+		t.Fatalf("top traits = %+v, want [eval]", top)
+	}
+	if src := top[0].Sources; len(src) != 1 || src[0].Label != "app.zip" || src[0].Anchor != "file-aaa" {
+		t.Errorf("eval source = %+v, want app.zip @ file-aaa", top[0].Sources)
 	}
 }
 

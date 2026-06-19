@@ -60,7 +60,7 @@ func TestResultTemplateParses(t *testing.T) {
 			"tab-content", "file-card", "ctx-hit hostile", "composite-trail",
 			`href="#file-cafe"`, "loader.js",
 			"win-section", "ctx-anno", `anno hostile`, "spawns a child process",
-			`comp-card hostile`, "beacons to a remote host", "loader.js",
+			`top-trait hostile`, "beacons to a remote host",
 		}},
 	}
 	for _, c := range cases {
@@ -90,13 +90,15 @@ func TestResultTemplateParses(t *testing.T) {
 // span and a finding whose composite trail links to another file's section.
 func fileViewData() resultData {
 	d := singleFileData()
+	// A cross-file composite now surfaces in the top-traits headline with its
+	// member trail, not as a per-file card.
+	d.TopTraits = []topTrait{{
+		Desc: "beacons to a remote host", Crit: "hostile",
+		Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "3"}},
+	}}
 	d.FileViews = []fileView{{
 		Path: "package/postinstall.js", Filename: "postinstall.js", FileType: "JS",
 		SHA256: "deadbeef", Anchor: "file-deadbeef", Crit: "hostile",
-		Composites: []compositeFinding{{
-			ID: "c2/beacon", Desc: "beacons to a remote host", Crit: "hostile",
-			Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "3"}},
-		}},
 		Windows: []fileWindow{{
 			Blocks: []contextBlock{{Rows: []contextRow{{
 				Loc:   "12",

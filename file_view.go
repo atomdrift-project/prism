@@ -14,9 +14,10 @@ import (
 // no window and are dropped here too.
 //
 // Files are ordered by criticality. A cross-file composite has no local window
-// (its evidence lives in the members it fired on); it shows as a labeled entry
-// with a linkable member trail. Inherited findings (Src set) render in their
-// origin member, not on the container.
+// (its evidence lives in the members it fired on); its name is folded inline
+// into the primary member's source, and it surfaces whole in the top-traits
+// headline with a clickable member trail. Inherited findings render in their
+// origin member, not on the container. There are no standalone composite cards.
 //
 // Only files carrying current-format context drive this view; legacy reports
 // return nil and the page keeps the Traits tab as its default.
@@ -38,8 +39,8 @@ const minContentCrit = 2
 // the rest (lower criticality) are omitted with a note, so a large archive
 // stays legible instead of rendering hundreds of windows.
 const (
-	maxWindowsPerFile = 12
-	maxFilesShown     = 10
+	maxWindowsPerFile = 5
+	maxFilesShown     = 5
 )
 
 // contentOmitted counts what the file cap dropped from the Content tab: how many
@@ -52,14 +53,13 @@ type contentOmitted struct {
 
 // fileView is one file's section in the Content tab.
 type fileView struct {
-	Path       string
-	Filename   string
-	FileType   string
-	SHA256     string
-	Anchor     string // in-page link target, "file-<sha>"
-	Crit       string // severity class of the file's strongest finding
-	Composites []compositeFinding
-	Windows    []fileWindow
+	Path     string
+	Filename string
+	FileType string
+	SHA256   string
+	Anchor   string // in-page link target, "file-<sha>"
+	Crit     string // severity class of the file's strongest finding
+	Windows  []fileWindow
 }
 
 // fileWindow is one rendered context window. Its traits are labeled inline on
@@ -68,15 +68,6 @@ type fileView struct {
 // template renders it).
 type fileWindow struct {
 	Blocks []contextBlock
-}
-
-// compositeFinding is a cross-file conclusion with no window of its own: it
-// shows its member trail instead.
-type compositeFinding struct {
-	ID      string
-	Desc    string
-	Crit    string
-	Sources []compositeLink
 }
 
 // compositeLink points a cross-file composite at one member it drew from. Anchor
@@ -111,51 +102,44 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 
 	forced, inject := compositeLegs(files)
 
+	// Pick the headline traits up front and force-render the files they point at,
+	// so every top-trait location resolves to a real, clickable section instead of
+	// dangling past the file cap.
+	tcands := headlineTraits(files)
+	for _, c := range tcands {
+		for _, id := range traitTargetIDs(c.f, c.host) {
+			if c.crit > forced[id] {
+				forced[id] = c.crit
+			}
+		}
+	}
+
 	type fileData struct {
-		file       *cleaveFile
-		lws        []labeledWindow
-		composites []*finding
-		maxCrit    int
+		file    *cleaveFile
+		lws     []labeledWindow
+		maxCrit int
 	}
 	var datas []fileData
 
 	for i := range files {
 		file := &files[i]
 
-		shown := make(map[string]bool)
 		fd := fileData{file: file}
 		for _, lw := range labeledWindows(file) {
-			for _, n := range lw.Notes {
-				shown[n.ID] = true // covered by a window; skip as a bare composite
-			}
 			fd.lws = append(fd.lws, lw)
 			if lw.Crit > fd.maxCrit {
 				fd.maxCrit = lw.Crit
 			}
 		}
 
-		// A composite's primary leg carries the composite name inline, on the row
-		// at its first source location (the other legs keep the native trait that
-		// fired there, rendered above).
+		// Composites are folded into the source view, not shown as separate cards:
+		// a composite's primary leg carries the composite name inline on the row at
+		// its first source location (the other legs keep the native trait that
+		// fired there). Cross-file composites surface as a whole in the top-traits
+		// headline (with a member trail), so there are no bare composite cards.
 		for _, a := range inject[file.ID] {
 			attachComposite(fd.lws, a)
 		}
-
-		// Cross-file composites native to this file that didn't anchor a local
-		// window: list them with their member trail.
-		for j := range file.Findings {
-			f := &file.Findings[j]
-			if len(f.From) <= 1 || f.Crit < minFileCrit || shown[f.ID] {
-				continue
-			}
-			fd.composites = append(fd.composites, f)
-			if f.Crit > fd.maxCrit {
-				fd.maxCrit = f.Crit
-			}
-		}
-		sort.SliceStable(fd.composites, func(a, b int) bool {
-			return fd.composites[a].Crit > fd.composites[b].Crit
-		})
 
 		// Inside-archive members below the content-criticality floor are noise;
 		// skip building their content view entirely. The top-level file (depth 0)
@@ -170,7 +154,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 				fd.maxCrit = c
 			}
 		}
-		if !lowCrit && (len(fd.lws) > 0 || len(fd.composites) > 0) {
+		if !lowCrit && len(fd.lws) > 0 {
 			datas = append(datas, fd)
 		}
 	}
@@ -189,7 +173,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 	if len(datas) > maxFilesShown {
 		for _, fd := range datas[maxFilesShown:] {
 			omitted.Files++
-			omitted.Results += len(fd.lws) + len(fd.composites)
+			omitted.Results += len(fd.lws)
 		}
 		datas = datas[:maxFilesShown]
 	}
@@ -213,45 +197,54 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		for _, lw := range fd.lws {
 			view.Windows = append(view.Windows, fileWindow{Blocks: []contextBlock{lw.Block}})
 		}
-		for _, f := range fd.composites {
-			view.Composites = append(view.Composites, compositeFinding{
-				ID:      traitDisplayID(f.ID),
-				Desc:    f.Desc,
-				Crit:    critIntToString(f.Crit),
-				Sources: compositeLinks(f.From, idToFile, rendered),
-			})
-		}
 		views = append(views, view)
 	}
-	return views, topTraits(files, idToFile, rendered), omitted
+	top := make([]topTrait, len(tcands))
+	for i, c := range tcands {
+		top[i] = topTrait{
+			Desc:    c.desc,
+			Crit:    critIntToString(c.crit),
+			Sources: traitSources(c.f, c.host, idToFile, rendered),
+		}
+	}
+	return views, top, omitted
 }
 
-// topTrait is one entry in the Content tab's headline: the most significant
-// traits in the sample, each linking to the section where its evidence renders.
+// topTrait is one entry in the Content tab's headline: a most-significant trait,
+// shown as its description plus a clickable "filename:loc" trail (Sources). Every
+// entry — atomic, single-leg, or cross-file composite — carries the location so
+// it reads the same and its navigability is obvious.
 type topTrait struct {
-	Desc   string
-	Crit   string // severity class for coloring
-	Anchor string // in-page target "file-<sha>", empty when no section rendered
+	Desc    string
+	Crit    string // severity class for coloring
+	Sources []compositeLink
+}
+
+// topCand is a selected headline trait before its links are resolved against the
+// finally-rendered file set. buildFileViews force-renders each candidate's target
+// files (traitTargetIDs) so the resolved links land.
+type topCand struct {
+	f    *finding
+	host *cleaveFile
+	desc string
+	crit int
 }
 
 // maxTopTraits caps the headline. Three keeps it a glanceable summary, not a
 // second findings list.
 const maxTopTraits = 3
 
-// topTraits selects the sample's most significant traits — highest
+// headlineTraits picks the sample's most significant traits — highest
 // crit×confidence, suspicious or above — across every file, atomic and composite
-// alike, deduped by trait ID. Each links to the section where its evidence shows
-// (the member a composite/inherited finding fired on, else the file it is native
-// to) when that section was rendered. Offset-0 noise is excluded, matching the
-// content view.
-func topTraits(files []cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) []topTrait {
-	type cand struct {
-		desc   string
-		anchor string
-		score  float64
-		crit   int
+// alike, deduped by trait ID and capped at maxTopTraits. Offset-0 noise is
+// excluded, matching the content view. Links are resolved later (traitSources).
+func headlineTraits(files []cleaveFile) []topCand {
+	type scored struct {
+		topCand
+
+		score float64
 	}
-	best := make(map[string]cand)
+	best := make(map[string]scored)
 	for i := range files {
 		for j := range files[i].Findings {
 			f := &files[i].Findings[j]
@@ -259,51 +252,66 @@ func topTraits(files []cleaveFile, idToFile map[int]*cleaveFile, rendered map[st
 				continue
 			}
 			score := float64(f.Crit) * f.Conf
-			if existing, ok := best[f.ID]; ok && existing.score >= score {
+			if e, ok := best[f.ID]; ok && e.score >= score {
 				continue
 			}
 			desc := f.Desc
 			if desc == "" {
 				desc = traitDisplayID(f.ID)
 			}
-			best[f.ID] = cand{score: score, crit: f.Crit, desc: desc, anchor: traitAnchor(f, &files[i], idToFile, rendered)}
+			best[f.ID] = scored{topCand{f: f, host: &files[i], desc: desc, crit: f.Crit}, score}
 		}
 	}
-	cands := make([]cand, 0, len(best))
-	for _, c := range best {
-		cands = append(cands, c)
+	all := make([]scored, 0, len(best))
+	for _, s := range best {
+		all = append(all, s)
 	}
-	sort.SliceStable(cands, func(a, b int) bool {
-		if cands[a].score != cands[b].score {
-			return cands[a].score > cands[b].score
+	sort.SliceStable(all, func(a, b int) bool {
+		if all[a].score != all[b].score {
+			return all[a].score > all[b].score
 		}
-		return cands[a].desc < cands[b].desc
+		return all[a].desc < all[b].desc
 	})
-	if len(cands) > maxTopTraits {
-		cands = cands[:maxTopTraits]
+	if len(all) > maxTopTraits {
+		all = all[:maxTopTraits]
 	}
-	out := make([]topTrait, len(cands))
-	for i, c := range cands {
-		out[i] = topTrait{Desc: c.desc, Crit: critIntToString(c.crit), Anchor: c.anchor}
+	out := make([]topCand, len(all))
+	for i, s := range all {
+		out[i] = s.topCand
 	}
 	return out
 }
 
-// traitAnchor resolves the section a top trait jumps to: the member a
-// composite/inherited finding drew from (its first leg), else the file the
-// finding is native to. Returns "" when that section was not rendered, so the
-// headline entry shows without a dangling link.
-func traitAnchor(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) string {
+// traitTargetIDs lists the file IDs a top trait points at — every leg of a
+// composite/inherited finding, or the host for a native one — so buildFileViews
+// can force-render them and keep the headline's links live.
+func traitTargetIDs(f *finding, host *cleaveFile) []int {
 	if len(f.From) > 0 {
-		if m := idToFile[f.From[0].File]; m != nil && rendered[m.SHA256] {
-			return "file-" + m.SHA256
+		ids := make([]int, 0, len(f.From))
+		for _, s := range f.From {
+			ids = append(ids, s.File)
 		}
-		return ""
+		return ids
 	}
+	return []int{host.ID}
+}
+
+// traitSources renders a top trait's "filename:loc" trail: every leg of a
+// composite/inherited finding, or the host file for a native one. A leg links to
+// its section when that file rendered (force-rendering the targets keeps these
+// live); otherwise the location shows as plain text.
+func traitSources(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) []compositeLink {
+	if len(f.From) > 0 {
+		return compositeLinks(f.From, idToFile, rendered)
+	}
+	link := compositeLink{Label: extractBasename(host.Path)}
 	if rendered[host.SHA256] {
-		return "file-" + host.SHA256
+		link.Anchor = "file-" + host.SHA256
 	}
-	return ""
+	if len(f.Spans) > 0 {
+		link.Loc = "0x" + strconv.FormatInt(f.Spans[0][0], 16)
+	}
+	return []compositeLink{link}
 }
 
 // anchorAnno is a composite annotation to attach inline on its primary member:

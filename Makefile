@@ -1,4 +1,4 @@
-.PHONY: build lint run test integration clean deploy help install-precommit
+.PHONY: build lint run dev dev-watch test integration clean deploy help install-precommit
 
 help:
 	@echo "Available targets:"
@@ -6,6 +6,8 @@ help:
 	@echo "  make lint                   Run golangci-lint"
 	@echo "  make test                   Run tests"
 	@echo "  make run                    Run locally (requires cleave in PATH)"
+	@echo "  make dev                    Run locally against PRODUCTION hopper-db + hopper-api"
+	@echo "  make dev-watch              Like 'dev' but auto-rebuilds/restarts on changes (needs air)"
 	@echo "  make clean                  Clean build artifacts"
 	@echo "  make deploy                 git pull + bastille rollout (BUILD=build RUN=prism)"
 	@echo "  make install-precommit      Install the pre-commit hook (test + lint + no go.mod overrides)"
@@ -35,6 +37,34 @@ integration:
 
 run: build
 	PORT=8080 CLEAVE_PATH=cleave ./prism
+
+# Local dev pointed at PRODUCTION hopper: reads come from hopper-db, analysis
+# publishes go to hopper-api. Requires:
+#   - "hopper-db" and "hopper-api" resolvable (e.g. /etc/hosts entries)
+#   - ~/.pgpass holding the hopper-db password, chmod 600
+# NOTE: this is LIVE prod data. Browsing is read-only, but write actions
+# (the per-file rescan button, uploads if enabled) hit production — use with care.
+DEV_PORT ?= 8080
+DEV_ENV := \
+	PORT=$(DEV_PORT) \
+	HOPPER_DSN='postgres://hopper@hopper-db:5432/hopper?sslmode=disable' \
+	HOPPER_API_ADDR=hopper-api:8081 \
+	PGPASSFILE=$(HOME)/.pgpass \
+	PRISM_CSRF_KEY=local-dev-csrf-key-not-a-secret-0123456789 \
+	CLEAVE_PATH=cleave
+
+dev: build
+	@echo "prism dev → http://localhost:$(DEV_PORT)  (PRODUCTION hopper-db + hopper-api)"
+	$(DEV_ENV) ./prism
+
+dev-watch:
+	@command -v air >/dev/null 2>&1 || { echo "air not found — install with: go install github.com/air-verse/air@latest"; exit 1; }
+	@echo "prism dev (auto-reload) → http://localhost:$(DEV_PORT)  (PRODUCTION hopper-db + hopper-api)"
+	$(DEV_ENV) air \
+		-build.cmd 'CGO_ENABLED=0 go build -o prism -ldflags="-s -w -X main.buildCommit=$(GIT_COMMIT)" .' \
+		-build.bin './prism' \
+		-build.include_ext 'go,html,js,css' \
+		-build.exclude_dir 'dist,out,.git,.revelara'
 
 clean:
 	rm -f prism
