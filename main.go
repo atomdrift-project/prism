@@ -6146,7 +6146,15 @@ func highlightEvidence(evidence, filename string) []EvidenceToken {
 	}
 	var out []EvidenceToken
 	for tok := iter(); tok != chroma.EOF; tok = iter() {
-		out = append(out, EvidenceToken{Class: chroma.StandardTypes[tok.Type], Text: tok.Value})
+		// Evidence is a fragment, not a whole document, so a lexer's state
+		// machine often loses context (e.g. JSON snippets that start mid-object
+		// mark every ':' ',' '}' as chroma.Error). Those aren't real errors, so
+		// render them as plain text rather than the style's red error span.
+		class := chroma.StandardTypes[tok.Type]
+		if tok.Type == chroma.Error {
+			class = ""
+		}
+		out = append(out, EvidenceToken{Class: class, Text: tok.Value})
 	}
 	return out
 }
