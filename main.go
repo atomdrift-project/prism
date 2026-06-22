@@ -4978,23 +4978,67 @@ var errUploadTokenUnavailable = errors.New("hopper upload token unavailable")
 // previously-valid token; the next read picks up the new value.
 const uploadTokenKey = "upload_token"
 
-// uploadToHopper POSTs buf to hopper /api/upload with a Bearer token read
-// from hopper's KV table. buf is already buffered by the caller so the
-// request can be safely retried with backoff (and so the 401 rotation path
-// can resend the same bytes). On a 401 (token rotation signal) we re-read the
-// token from KV and retry the upload exactly once.
-func uploadToHopper(ctx context.Context, buf []byte, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
+// buildUploadEnvelope encodes the multipart body hopper's /api/upload expects:
+// a "provenance" part (the required sidecar) followed by the "file" part. A
+// browser submission has no package origin, so the provenance is minimal —
+// collector "prism", category "submitted", and the artifact identity. hopper
+// treats these as claims and never derives a sample's label from them. The
+// whole envelope is buffered so postOnce can replay it on retry.
+func buildUploadEnvelope(buf []byte, sha, filename string) ([]byte, string, error) {
+	prov := hopper.Sidecar{
+		SchemaVersion: hopper.SidecarSchemaVersion,
+		Artifact:      hopper.Artifact{Filename: filename, SHA256: sha, SizeBytes: int64(len(buf))},
+		Fetch:         hopper.Fetch{Collector: "prism", Category: "submitted", At: time.Now().UTC()},
+	}
+	provJSON, err := json.Marshal(&prov)
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal provenance: %w", err)
+	}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	pf, err := mw.CreateFormField("provenance")
+	if err != nil {
+		return nil, "", fmt.Errorf("provenance part: %w", err)
+	}
+	if _, err := pf.Write(provJSON); err != nil {
+		return nil, "", fmt.Errorf("write provenance: %w", err)
+	}
+	ff, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, "", fmt.Errorf("file part: %w", err)
+	}
+	if _, err := ff.Write(buf); err != nil {
+		return nil, "", fmt.Errorf("write file: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart: %w", err)
+	}
+	return body.Bytes(), mw.FormDataContentType(), nil
+}
+
+// uploadToHopper POSTs the provenance+file envelope to hopper /api/upload with
+// a Bearer token read from hopper's KV table. The envelope is buffered so the
+// request can be safely retried with backoff (and so the 401 rotation path can
+// resend the same bytes). On a 401 (token rotation signal) we re-read the token
+// from KV and retry the upload exactly once.
+func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, errUploadTokenUnavailable
 	}
 	target := hopperUploadURL(filename)
 
+	body, contentType, err := buildUploadEnvelope(buf, sha, filename)
+	if err != nil {
+		return nil, err
+	}
+
 	token, err := fetchUploadToken(ctx, db, log)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := postUploadWithRetry(ctx, target, buf, token, log)
+	resp, err := postUploadWithRetry(ctx, target, body, contentType, token, log)
 	if err != nil {
 		return nil, err
 	}
@@ -5005,7 +5049,7 @@ func uploadToHopper(ctx context.Context, buf []byte, filename string, log *slog.
 		if err != nil {
 			return nil, err
 		}
-		resp, err = postUploadWithRetry(ctx, target, buf, token, log) //nolint:bodyclose // closed by readUploadResponse below
+		resp, err = postUploadWithRetry(ctx, target, body, contentType, token, log) //nolint:bodyclose // closed by readUploadResponse below
 		if err != nil {
 			return nil, err
 		}
@@ -5059,11 +5103,11 @@ func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (str
 // and jitter. Only transport errors and 5xx responses trigger a retry —
 // 4xx (including 401) is returned to the caller as-is so token-rotation
 // handling stays in uploadToHopper. The retry budget is bounded by ctx.
-func postUploadWithRetry(ctx context.Context, target string, buf []byte, token string, log *slog.Logger) (*http.Response, error) {
+func postUploadWithRetry(ctx context.Context, target string, body []byte, contentType, token string, log *slog.Logger) (*http.Response, error) {
 	var resp *http.Response
 	err := retry.Do(
 		func() error {
-			r, err := postOnce(ctx, target, buf, token)
+			r, err := postOnce(ctx, target, body, contentType, token)
 			if err != nil {
 				// An open breaker means hopper-api is already known-down;
 				// retrying would only add to the load. Stop immediately.
@@ -5097,18 +5141,19 @@ func postUploadWithRetry(ctx context.Context, target string, buf []byte, token s
 }
 
 // postOnce performs a single POST /api/upload with the given Bearer token.
-// Body is read from buf so retries can replay it.
-func postOnce(ctx context.Context, target string, buf []byte, token string) (*http.Response, error) {
+// The body (the multipart provenance+file envelope) is fully buffered so
+// retries — including the 401 token-rotation replay — can resend it.
+func postOnce(ctx context.Context, target string, body []byte, contentType, token string) (*http.Response, error) {
 	if err := apiBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-api", "upload", "rejected", time.Time{})
 		return nil, fmt.Errorf("hopper-api upload: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		// Local build error: hopper was never contacted; don't move the breaker.
 		return nil, fmt.Errorf("build hopper request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Authorization", "Bearer "+token)
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
@@ -5240,7 +5285,7 @@ func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
 	)
 
 	wg.Go(func() {
-		if _, err := uploadToHopper(ctx, buf, filename, log); err != nil {
+		if _, err := uploadToHopper(ctx, buf, sha, filename, log); err != nil {
 			log.Error("upload to hopper failed", "error", err)
 			return
 		}

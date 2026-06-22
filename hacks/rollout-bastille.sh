@@ -177,7 +177,7 @@ pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
-prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp"
+prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=postgres://hopper@hopper-db/hopper PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel:3100/otlp/v1/logs"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --uploads"
 
 run_rc_command "$1"
@@ -325,6 +325,7 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
                 HOPPER_DSN=postgres://hopper@hopper-db/hopper \
                 PRISM_CSRF_KEY="$PRISM_CSRF_KEY" \
                 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp \
+                OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel:3100/otlp/v1/logs \
                 /usr/local/bin/prism --public --uploads
         set -x
 
