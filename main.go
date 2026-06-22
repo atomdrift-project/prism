@@ -4093,6 +4093,141 @@ func refreshFromHopper(ctx context.Context, sha string, reqLogger *slog.Logger) 
 	reqLogger.Debug("background refresh from hopper completed")
 }
 
+// Download-from-hopper retry tuning. hopper's retryable answers (a 503 while
+// warming up, extraction slots momentarily full, or a transient I/O blip) carry
+// a Retry-After and usually clear within a beat, but a cold or busy hopper can
+// take longer, so we wait patiently rather than failing the user's click.
+const (
+	// downloadAttemptTimeout bounds the wait for hopper to *start* responding to
+	// one attempt. It does not cap the stream itself: once a 200 arrives the body
+	// flows under the client's longer timeout, so a large file isn't truncated.
+	downloadAttemptTimeout = 60 * time.Second
+	// downloadMaxRetryWait clamps a Retry-After hint so a misbehaving or
+	// pathological value can't strand the waiting user for minutes.
+	downloadMaxRetryWait = 60 * time.Second
+)
+
+// downloadBackoff is the default wait before each download retry: 15s, then
+// 30s — three attempts in all. A 503's Retry-After overrides the matching entry
+// when hopper sends one (clamped to downloadMaxRetryWait).
+var downloadBackoff = []time.Duration{15 * time.Second, 30 * time.Second}
+
+// parseRetryAfter reads a delta-seconds Retry-After header (RFC 9110 §10.2.3).
+// hopper emits integer seconds; a missing, negative, or HTTP-date value falls
+// back to def.
+func parseRetryAfter(v string, def time.Duration) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return def
+	}
+	return time.Duration(n) * time.Second
+}
+
+// sleepCtx waits for d or until ctx is cancelled, reporting whether the full
+// wait elapsed. A false return (client went away mid-backoff) tells the caller
+// to abandon the retry rather than issue a request nobody is waiting for.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// drainClose reads and discards a small tail of body then closes it, so an
+// idle keep-alive connection can be reused instead of dropped after a non-2xx
+// response we don't otherwise read.
+func drainClose(body io.ReadCloser, log *slog.Logger) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, 4096)) //nolint:errcheck // diagnostics-free drain for connection reuse
+	if err := body.Close(); err != nil {
+		log.Debug("hopper download body close failed", "error", err)
+	}
+}
+
+// retryAfterSeconds renders a backoff duration as the integer delta-seconds a
+// Retry-After header carries, never less than 1.
+func retryAfterSeconds(d time.Duration) int {
+	if s := int(d / time.Second); s >= 1 {
+		return s
+	}
+	return 1
+}
+
+// fetchHopperFile performs GET /api/file/{sha} with a patient, Retry-After
+// aware retry loop. On success it returns the live response and a cancel func
+// the caller MUST defer — it keeps the streaming context alive, so cancelling
+// early would truncate the body. On failure it writes the appropriate status to
+// w and returns (nil, nil); the caller simply returns.
+func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart time.Time, reqLogger *slog.Logger) (*http.Response, context.CancelFunc) {
+	for attempt := 1; ; attempt++ {
+		// Bound the wait for hopper to *start* responding without capping the
+		// stream: the AfterFunc cancels this attempt only if no response has
+		// arrived in time. On a kept response we stop the timer and let the body
+		// flow under the client's longer timeout, so a multi-GB file isn't
+		// truncated at downloadAttemptTimeout.
+		attemptCtx, cancel := context.WithCancel(r.Context())
+		timer := time.AfterFunc(downloadAttemptTimeout, cancel)
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, hopperFileURL(sha), http.NoBody)
+		if err != nil {
+			timer.Stop()
+			cancel()
+			http.Error(w, "failed to prepare download", http.StatusInternalServerError)
+			return nil, nil
+		}
+		resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
+		if err != nil {
+			timer.Stop()
+			cancel()
+			// A fired attempt timer (or a parent cancel) surfaces here as a context
+			// error; either way the attempt failed, so trip the breaker and retry.
+			apiBreaker.failure()
+			recordDep(r.Context(), "hopper-api", "download", "error", dlStart)
+			if attempt <= len(downloadBackoff) && sleepCtx(r.Context(), downloadBackoff[attempt-1]) {
+				reqLogger.Warn("hopper download attempt failed; retrying",
+					"attempt", attempt, "error", err, "backoff", downloadBackoff[attempt-1])
+				continue
+			}
+			status, msg := http.StatusBadGateway, "download unavailable"
+			if errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+				status, msg = http.StatusGatewayTimeout, "download timed out; please try again"
+			}
+			reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
+			http.Error(w, msg, status)
+			return nil, nil
+		}
+		// 503 is hopper backpressure (warming up, extraction slots momentarily
+		// full, or a transient I/O blip), not a fault — it carries a Retry-After
+		// and must not trip the breaker. Honor the hint (clamped), retry within
+		// budget, and on the last attempt hand the Retry-After back so the client
+		// backs off by the amount hopper asked for.
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			timer.Stop()
+			idx := min(attempt-1, len(downloadBackoff)-1)
+			wait := min(parseRetryAfter(resp.Header.Get("Retry-After"), downloadBackoff[idx]), downloadMaxRetryWait)
+			drainClose(resp.Body, reqLogger)
+			cancel()
+			recordDep(r.Context(), "hopper-api", "download", "rejected", dlStart)
+			if attempt <= len(downloadBackoff) && sleepCtx(r.Context(), wait) {
+				reqLogger.Warn("hopper download unavailable; retrying", "attempt", attempt, "retry_after", wait)
+				continue
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(wait)))
+			http.Error(w, "download temporarily unavailable; please try again shortly", http.StatusServiceUnavailable)
+			return nil, nil
+		}
+		// A response we'll act on (200 or a terminal status). Stop the response
+		// timer; if the caller streams the body it's bounded by the client timeout.
+		timer.Stop()
+		return resp, cancel
+	}
+}
+
 func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	if !validSHA256(sha) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
@@ -4136,25 +4271,18 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hopperFileURL(sha), http.NoBody)
-	if err != nil {
-		http.Error(w, "failed to prepare download", http.StatusInternalServerError)
-		return
-	}
 	dlStart := time.Now()
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
-	if err != nil {
-		apiBreaker.failure()
-		recordDep(r.Context(), "hopper-api", "download", "error", dlStart)
-		reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
-		http.Error(w, "download unavailable", http.StatusBadGateway)
-		return
+	resp, streamCancel := fetchHopperFile(w, r, sha, dlStart, reqLogger)
+	if resp == nil {
+		return // fetchHopperFile already wrote the error response.
 	}
+	defer streamCancel()
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
 			reqLogger.Debug("hopper download body close failed", "error", err)
 		}
 	}()
+
 	if resp.StatusCode >= http.StatusInternalServerError {
 		apiBreaker.failure()
 		recordDep(r.Context(), "hopper-api", "download", "error", dlStart)
@@ -4167,10 +4295,18 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		switch resp.StatusCode {
 		case http.StatusNotFound:
 			http.Error(w, "not found", http.StatusNotFound)
+		case http.StatusGone:
+			// hopper has the DB row but the bytes were deleted from disk — permanent.
+			http.Error(w, "this file is no longer available", http.StatusGone)
 		case http.StatusBadRequest:
 			http.Error(w, "invalid sha256", http.StatusBadRequest)
-		case http.StatusServiceUnavailable:
-			http.Error(w, "download unavailable", http.StatusServiceUnavailable)
+		case http.StatusRequestEntityTooLarge:
+			http.Error(w, "file is too large to download from the browser; use the litmus CLI", http.StatusRequestEntityTooLarge)
+		case http.StatusUnsupportedMediaType:
+			http.Error(w, "this archive type can't be served for download", http.StatusUnsupportedMediaType)
+		case http.StatusUnprocessableEntity:
+			// Encrypted, corrupt, or otherwise unextractable archive member — permanent.
+			http.Error(w, "this file could not be extracted for download", http.StatusUnprocessableEntity)
 		default:
 			reqLogger.Warn("hopper download returned unexpected status", "status", resp.StatusCode)
 			http.Error(w, "download unavailable", http.StatusBadGateway)

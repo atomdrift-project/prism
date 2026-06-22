@@ -3,8 +3,8 @@ module codeberg.org/atomdrift/prism
 go 1.26
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260617181714-32e4b17c4a92
-	codeberg.org/atomdrift/obs v0.0.0-20260618102920-63996188a61d
+	codeberg.org/atomdrift/hopper v0.0.0-20260622004349-be6f56614020
+	codeberg.org/atomdrift/obs v0.0.0-20260619160844-cb5f9d8bdccd
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
@@ -16,7 +16,11 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/bodgit/plumbing v1.3.0 // indirect
+	github.com/bodgit/sevenzip v1.6.4 // indirect
+	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 // indirect
@@ -26,19 +30,24 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
-	github.com/mattn/go-sqlite3 v1.14.46 // indirect
+	github.com/mattn/go-sqlite3 v1.14.47 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.69.0 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/stangelandcl/ppmd v0.1.1 // indirect
+	github.com/ulikunitz/xz v0.5.15 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelslog v0.19.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
@@ -53,11 +62,12 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
+	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260615183401-62b3387ff324 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260615183401-62b3387ff324 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260618152121-87f3d3e198d3 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260618152121-87f3d3e198d3 // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
