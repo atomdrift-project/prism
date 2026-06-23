@@ -660,6 +660,11 @@ type resultData struct {
 	// EcosystemURL is the in-app feed link for this ecosystem (e.g.
 	// "/npm/"). Empty when Ecosystem is empty.
 	EcosystemURL string
+	// PURL is the full versioned canonical Package URL shown in the hero
+	// (e.g. "pkg:npm/lodash@4.17.21") — hopper's version-less PURLBase with
+	// the version appended. Empty for uploads and ecosystems without a PURL
+	// type; the template hides the meta row when empty.
+	PURL         string
 	Layout       string
 	BuildCommit  string
 	FileFindings []FileFindingsDisplay
@@ -742,6 +747,11 @@ type storedResult struct {
 	Feed            string
 	Package         string
 	Version         string
+	// PURLBase is hopper's version-less canonical Package URL (e.g.
+	// "pkg:npm/lodash"); empty for uploads and ecosystems without a defined
+	// PURL type. The full versioned PURL shown in the hero is this plus
+	// "@"+Version.
+	PURLBase        string
 	Filename        string
 	LabelSource     string
 	TraitsVersion   string
@@ -2794,6 +2804,7 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		Feed:            sample.Feed,
 		Package:         sample.Package,
 		Version:         sample.Version,
+		PURLBase:        sample.PURLBase,
 		Label:           sample.Label,
 		LabelSource:     sample.LabelSource,
 		TraitsVersion:   sample.TraitsVersion,
@@ -2844,6 +2855,17 @@ type ProvenanceGroup struct {
 	Rows  []ProvenanceRow
 }
 
+// purlDisplay renders the full versioned Package URL for the result page:
+// hopper's version-less PURLBase with "@"+Version appended when a version is
+// known. Empty when the sample has no PURLBase (uploads, ecosystems without a
+// defined PURL type), so callers can hide the row.
+func purlDisplay(res *storedResult) string {
+	if res.PURLBase == "" || res.Version == "" {
+		return res.PURLBase
+	}
+	return res.PURLBase + "@" + res.Version
+}
+
 // provenanceGroups assembles the Provenance tab's record from the stored
 // sample. Every fact originates in hopper's database (res), so this never
 // depends on the litmus envelope parse: uploads, which carry no provenance,
@@ -2870,6 +2892,7 @@ func provenanceGroups(sha256Hex, filename string, res *storedResult) []Provenanc
 			{Label: "Filename", Value: filename},
 			{Label: "Package", Value: res.Package},
 			{Label: "Version", Value: res.Version, Mono: true},
+			{Label: "PURL", Value: purlDisplay(res), Mono: true},
 		}},
 		{Title: "Origin", Rows: []ProvenanceRow{
 			{Label: "Source", Value: res.Source},
@@ -5120,7 +5143,7 @@ const uploadTokenKey = "upload_token"
 // collector "prism", category "submitted", and the artifact identity. hopper
 // treats these as claims and never derives a sample's label from them. The
 // whole envelope is buffered so postOnce can replay it on retry.
-func buildUploadEnvelope(buf []byte, sha, filename string) ([]byte, string, error) {
+func buildUploadEnvelope(buf []byte, sha, filename string) (payload []byte, contentType string, err error) {
 	prov := hopper.Sidecar{
 		SchemaVersion: hopper.SidecarSchemaVersion,
 		Artifact:      hopper.Artifact{Filename: filename, SHA256: sha, SizeBytes: int64(len(buf))},
@@ -5686,6 +5709,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Ecosystem = res.Ecosystem
 		data.EcosystemURL = ecosystemURL(res.Ecosystem)
 	}
+	data.PURL = purlDisplay(res)
 	if !res.CreatedAt.IsZero() {
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))

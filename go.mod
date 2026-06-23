@@ -3,7 +3,7 @@ module codeberg.org/atomdrift/prism
 go 1.26
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260622004349-be6f56614020
+	codeberg.org/atomdrift/hopper v0.0.0-20260622174334-320f44c2648b
 	codeberg.org/atomdrift/obs v0.0.0-20260619160844-cb5f9d8bdccd
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/codeGROOVE-dev/fido v1.11.0
@@ -66,8 +66,8 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260618152121-87f3d3e198d3 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260618152121-87f3d3e198d3 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260622175928-b703f567277d // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260622175928-b703f567277d // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

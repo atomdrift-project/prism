@@ -517,6 +517,12 @@
             font-size: 12.5px;
             text-align: right;
         }
+        /* PURLs (e.g. "pkg:maven/org.foo/bar@1.2.3") can outrun the meta
+           column; let them wrap rather than spill past the card edge. */
+        .purl-value {
+            min-width: 0;
+            word-break: break-all;
+        }
         /* Small inline rescan button — shown whenever the last analysis
            is older than rescanCooldown. Subtle by default so it doesn't
            compete with the analysis timestamp; toxic accent on hover
@@ -1624,6 +1630,12 @@
                             {{.AnalyzedAgo}}
                             {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
                         </span>
+                    </div>
+                    {{end}}
+                    {{if .PURL}}
+                    <div class="meta-row">
+                        <span class="meta-label">Package</span>
+                        <span class="meta-value purl-value" title="Package URL">{{.PURL}}</span>
                     </div>
                     {{end}}
                     {{if .Ecosystem}}
