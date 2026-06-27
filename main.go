@@ -88,6 +88,13 @@ var (
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	logger             *slog.Logger
 	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
+	// readOnlyMode is set by the PRISM_READONLY env var. When prism reads from a
+	// logical replica (which is writable but whose writes neither reach the
+	// analysis workers nor flow upstream, and can conflict with replication),
+	// the lone DB-write path — requestRescan — is refused up front instead of
+	// silently corrupting the replica. All page-load queries are reads and are
+	// unaffected.
+	readOnlyMode bool
 	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
@@ -1400,6 +1407,13 @@ func main() {
 		}
 	}
 
+	// PRISM_READONLY marks the configured hopper DB as a read replica, so the
+	// rescan write path is refused rather than applied to a replica.
+	switch strings.ToLower(os.Getenv("PRISM_READONLY")) {
+	case "1", "true", "yes", "on":
+		readOnlyMode = true
+	}
+
 	if dbDSN == "" {
 		dbDSN = os.Getenv("HOPPER_DSN")
 	}
@@ -2497,6 +2511,11 @@ func feedDate(t, now time.Time) string {
 // single user-facing message covering both possibilities.
 var errSampleNotEligible = errors.New("sample not found, is an archive child, is marked skip, or is within the rescan cooldown")
 
+// errReadOnlyReplica is returned by requestRescan when prism runs against a
+// read replica (PRISM_READONLY): a rescan write there would not reach the
+// analysis workers and could conflict with replication, so it is refused.
+var errReadOnlyReplica = errors.New("rescan unavailable: prism is connected to a read-only replica")
+
 // tokenBucket is a minimal global rate limiter. Tokens refill continuously
 // at refillRate per second up to capacity; Allow consumes one token and
 // returns false when none are available. Safe for concurrent use.
@@ -2558,6 +2577,9 @@ var rescanLimiter = newTokenBucket(1.0, 10)
 // would belong as a hopper.DB.RequestRescan method but is kept local to
 // avoid a hopper version bump for this single operator action.
 func requestRescan(ctx context.Context, sha string) error {
+	if readOnlyMode {
+		return errReadOnlyReplica
+	}
 	db := hopperDB.Load()
 	if db == nil {
 		return errors.New("hopper database unavailable")
@@ -4355,6 +4377,10 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 	if err := requestRescan(r.Context(), sha); err != nil {
 		if errors.Is(err, errSampleNotEligible) {
 			writeJSONError(w, http.StatusTooManyRequests, "not_eligible", "sample is not eligible — either it's an archive child, skipped, or was analyzed within the last 15 minutes")
+			return
+		}
+		if errors.Is(err, errReadOnlyReplica) {
+			writeJSONError(w, http.StatusServiceUnavailable, "read_only", "rescan is unavailable on this read-only replica; try again from the primary instance")
 			return
 		}
 		reqLogger.Error("rescan: hopper update failed", "error", err)
