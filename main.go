@@ -97,7 +97,12 @@ var (
 )
 
 const (
-	defaultHopperDSN     = "postgres://hopper@hopper-db:5432/hopper?sslmode=disable"
+	// Reads go to the logical replica (hopper-replica) to offload the master;
+	// prism's own pool is read-only — all writes route through hopper's HTTP
+	// API (hopperAPIAddr), which still targets the master, so a read-only
+	// subscriber is safe here. application_name tags the connection for
+	// server-side attribution in pg_stat_activity.
+	defaultHopperDSN     = "postgres://hopper@hopper-replica:5432/hopper?sslmode=disable&application_name=prism"
 	defaultHopperAPIAddr = "hopper-api:8081"
 	// defaultLitmusAddr is the dedicated litmus analysis server (litmus serve's
 	// default listen port). Uploads are analyzed here first; when it returns,
