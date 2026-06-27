@@ -73,13 +73,13 @@ doas bastille cmd "$RUN" true || die "run jail '$RUN' not accessible"
 #   HOPPER_DB_HOST=hopper-replica HOPPER_DB_PASS='<replica hopper password>' make deploy
 #
 # A logical replica's `hopper` role has its OWN password (logical replication
-# does not copy roles), so pass it via HOPPER_DB_PASS. Read it from the replica
-# jail's .pgpass localhost line — note the jail name may differ from the
-# hostname (e.g. jail "postgres" serving host "hopper-replica"):
-#   doas bastille cmd postgres awk -F: '$1=="localhost"&&$4=="hopper"{print $5;exit}' /var/db/postgres/.pgpass
-# When HOPPER_DB_PASS is unset the password is auto-sourced from
-# HOPPER_DB_JAIL:HOPPER_DB_PGPASS (default the hopper-db jail) — correct for the
-# primary, wrong for a replica.
+# does not copy roles). When HOPPER_DB_PASS is unset, the password is
+# auto-sourced from HOPPER_DB_JAIL:HOPPER_DB_PGPASS, whose defaults follow the
+# target: the hopper-db jail for the primary, and the postgres jail's
+# /var/db/postgres/.pgpass localhost line for any replica (the local replica
+# jail is named "postgres", distinct from the hostname "hopper-replica" prism
+# dials). Override HOPPER_DB_JAIL / HOPPER_DB_PGPASS / HOPPER_DB_PGPASS_HOST, or
+# pass HOPPER_DB_PASS directly, when your layout differs.
 #
 # Any non-primary host also sets PRISM_READONLY=1 so prism refuses its lone DB
 # write (the rescan button). Reads — every page-load query — are unaffected.
@@ -91,14 +91,21 @@ if [ -z "${HOPPER_DB_HOST:-}" ]; then
     HOPPER_DB_HOST=$(printf '%s\n' "$_persisted_dsn" | sed -n 's#^postgres://[^@]*@\([^:/?]*\).*#\1#p')
     [ -z "$HOPPER_DB_HOST" ] && HOPPER_DB_HOST="hopper-db"
 fi
-HOPPER_DB_JAIL="${HOPPER_DB_JAIL:-hopper-db}"
-HOPPER_DB_PGPASS="${HOPPER_DB_PGPASS:-/home/hopper/.pgpass}"
-HOPPER_DB_PGPASS_HOST="${HOPPER_DB_PGPASS_HOST:-}"   # .pgpass host-field to match; empty = first hopper line
 HOPPER_DB_SSLMODE="${HOPPER_DB_SSLMODE:-disable}"
 HOPPER_DSN="postgres://hopper@${HOPPER_DB_HOST}:5432/hopper?sslmode=${HOPPER_DB_SSLMODE}"
+# Credential-source defaults follow the target. The primary's hopper password
+# lives in the hopper-db jail's .pgpass; a logical replica's hopper role has its
+# OWN password, recorded by the replica setup on the localhost line of the
+# postgres jail's .pgpass. All overridable; HOPPER_DB_PASS short-circuits both.
 if [ "$HOPPER_DB_HOST" = "hopper-db" ]; then
+    HOPPER_DB_JAIL="${HOPPER_DB_JAIL:-hopper-db}"
+    HOPPER_DB_PGPASS="${HOPPER_DB_PGPASS:-/home/hopper/.pgpass}"
+    HOPPER_DB_PGPASS_HOST="${HOPPER_DB_PGPASS_HOST:-}"   # empty = first hopper line
     PRISM_READONLY="${PRISM_READONLY:-0}"
 else
+    HOPPER_DB_JAIL="${HOPPER_DB_JAIL:-postgres}"
+    HOPPER_DB_PGPASS="${HOPPER_DB_PGPASS:-/var/db/postgres/.pgpass}"
+    HOPPER_DB_PGPASS_HOST="${HOPPER_DB_PGPASS_HOST:-localhost}"
     PRISM_READONLY="${PRISM_READONLY:-1}"
 fi
 log "prism DB endpoint: $HOPPER_DB_HOST (read-only=$PRISM_READONLY)"
