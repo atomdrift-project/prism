@@ -898,6 +898,7 @@ type cleaveFile struct {
 	Strings        []json.RawMessage          `json:"ss,omitempty"`
 	Imports        []string                   `json:"is,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
+	Refs           []cleaveRef                `json:"refs,omitempty"`
 	Metrics        json.RawMessage            `json:"ms,omitempty"`
 	Probability    float64                    `json:"-"`
 	Threshold      float64                    `json:"-"`
@@ -905,6 +906,16 @@ type cleaveFile struct {
 	Size           int64                      `json:"size"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
+}
+
+// cleaveRef is one reference a file declares — what it points at and, when
+// cleave resolved it to another file in the same report, that file's id. An
+// external dependency carries a PURL/URL in To; an internal reference carries a
+// relative path. TargetFile is the file→file edge the galaxy draws.
+type cleaveRef struct {
+	TargetFile *int   `json:"file,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
 }
 
 type cleaveFacts struct {
@@ -3638,59 +3649,36 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 	if db == nil {
 		return nil
 	}
-	locs, err := db.LocationsForSHA(ctx, childSHA)
+	refs, err := db.ParentArchivesForChild(ctx, childSHA, maxParentArchives)
 	if err != nil {
-		log.Debug("parent archive lookup: locations failed", "error", err)
+		log.Debug("parent archive lookup failed", "error", err)
 		return nil
 	}
-	seen := make(map[string]bool, len(locs))
-	out := make([]ParentArchive, 0, maxParentArchives)
-	for _, loc := range locs {
-		if ctx.Err() != nil {
-			// Deadline hit mid-loop — return what we have so the page
-			// renders something rather than nothing.
-			break
-		}
-		if loc.ParentSHA256 == "" || seen[loc.ParentSHA256] {
-			continue
-		}
-		seen[loc.ParentSHA256] = true
-		parent, err := db.SampleBySHA256(ctx, loc.ParentSHA256)
-		if err != nil {
-			// Missing parent rows are normal (e.g. extracted-then-deleted);
-			// skip silently. A real DB error logs once and continues.
-			if !errors.Is(err, hopper.ErrNotFound) {
-				log.Debug("parent archive lookup: sample fetch failed",
-					"parent_sha", loc.ParentSHA256, "error", err)
-			}
-			continue
-		}
+	out := make([]ParentArchive, 0, len(refs))
+	for _, ref := range refs {
 		entry := ParentArchive{
-			SHA256:      parent.SHA256,
-			SHA256Short: shortSHA(parent.SHA256),
-			Filename:    firstNonEmpty(parent.Filename, filepath.Base(parent.Path)),
-			Path:        loc.Path,
+			SHA256:      ref.SHA256,
+			SHA256Short: shortSHA(ref.SHA256),
+			Filename:    firstNonEmpty(ref.Filename, filepath.Base(ref.SamplePath)),
+			Path:        ref.Path,
 		}
-		if len(parent.LitmusResult) > 0 {
+		if len(ref.LitmusResult) > 0 {
 			var ml litmusMlResponse
-			if json.Unmarshal(parent.LitmusResult, &ml) == nil {
+			if json.Unmarshal(ref.LitmusResult, &ml) == nil {
 				entry.Classification = classificationName(ml.verdictClass())
 			}
 		}
-		if parent.AnalyzedAt != nil {
-			entry.AnalyzedAt = parent.AnalyzedAt.Format("2 Jan 2006 15:04 UTC")
-			entry.AnalyzedAgo = timeAgo(time.Since(*parent.AnalyzedAt))
+		if ref.AnalyzedAt != nil {
+			entry.AnalyzedAt = ref.AnalyzedAt.Format("2 Jan 2006 15:04 UTC")
+			entry.AnalyzedAgo = timeAgo(time.Since(*ref.AnalyzedAt))
 		}
 		out = append(out, entry)
-		if len(out) >= maxParentArchives {
-			break
-		}
 	}
 	return out
 }
 
-// parentLookupTimeout bounds the N+1 SampleBySHA256 lookups behind
-// ParentArchives so a slow hopper-db degrades the backlinks, not the page.
+// parentLookupTimeout bounds the single ParentArchivesForChild lookup so a slow
+// hopper-db degrades the backlinks, not the page.
 const parentLookupTimeout = 2 * time.Second
 
 // hopperCacheTTL is how long a cached result is served without consulting
@@ -3846,17 +3834,22 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		return res, err
 	}
 	if hopperWasCompacted(sample.CleaveResult) {
-		// Identify the archive's members, load the heavy cleave/litmus blobs for
-		// the top-N we'll render, and hand both to hopper, which owns reassembly
-		// (the inverse of the split it applied on storage). The member SHAs come
-		// from sample_locations when populated, else from the SHAs cleave
-		// embedded in the compacted envelope.
-		shas, _ := archiveMemberSHAs(ctx, db, sha, sample.CleaveResult)
-		if len(shas) > 0 {
-			children, cerr := db.SamplesBySHAs(ctx, shas)
-			if cerr != nil {
-				logger.Debug("samples by shas failed", "sha", sha, "error", cerr)
-			} else if enriched, eerr := hopper.Reassemble(sample, children); eerr != nil {
+		// Hydrate the members we'll render and hand them to hopper, which owns
+		// reassembly (the inverse of the split it applied on storage). One query
+		// does it: the score-ranked top-N from sample_locations, plus the members
+		// a container-level finding draws from (linked, included regardless of
+		// their standalone score), falling back to the stub SHAs the compacted
+		// envelope embedded only when the parent has no edges yet.
+		linked := compositeLinkedSHAs(sample.CleaveResult, sha)
+		fallback := envelopeChildSHAs(sample.CleaveResult, sha)
+		if len(fallback) > archiveMemberFetchLimit {
+			fallback = fallback[:archiveMemberFetchLimit]
+		}
+		children, cerr := db.MembersWithSamplesByParent(ctx, sha, archiveMemberFetchLimit, linked, fallback)
+		if cerr != nil {
+			logger.Debug("members with samples by parent failed", "sha", sha, "error", cerr)
+		} else if len(children) > 0 {
+			if enriched, eerr := hopper.Reassemble(sample, children); eerr != nil {
 				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
 			} else {
 				res.RawLitmus = string(enriched)
@@ -3864,45 +3857,6 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		}
 	}
 	return res, nil
-}
-
-// archiveMemberSHAs returns the SHAs of an archive's members to fetch (capped at
-// archiveMemberFetchLimit) and the archive's total member count. It prefers the
-// sample_locations edge table, which is score-ranked; when that yields nothing —
-// e.g. the parent edges were never populated — it falls back to the child SHAs
-// cleave recorded in the compacted envelope, so the Content view still
-// reassembles instead of collapsing to a duplicate of the Traits view.
-func archiveMemberSHAs(ctx context.Context, db *hopper.DB, sha string, cleaveResult []byte) (shas []string, total int) {
-	// Files a notable+ finding draws from are the archive's point — a member
-	// whose malice is only detected in aggregate (e.g. an obfuscated bundle
-	// chunk) scores ~0 on its own, so the score-ranked sources below would drop
-	// it. Fetch those first so hostile-linked members always hydrate and their
-	// sections (and the trail links pointing at them) render.
-	linked := compositeLinkedSHAs(cleaveResult, sha)
-
-	members, total, err := db.MembersByParent(ctx, sha, archiveMemberFetchLimit)
-	if err != nil {
-		logger.Debug("members by parent failed", "sha", sha, "error", err)
-	}
-	var primary []string
-	if len(members) > 0 {
-		primary = make([]string, len(members))
-		for i := range members {
-			primary[i] = members[i].SHA256
-		}
-	} else {
-		// No sample_locations edges: fall back to the stub SHAs cleave recorded.
-		primary = envelopeChildSHAs(cleaveResult, sha)
-		if total == 0 {
-			total = len(primary)
-		}
-	}
-
-	merged := mergeCappedSHAs(linked, primary, archiveMemberFetchLimit)
-	if len(merged) == 0 {
-		return nil, total
-	}
-	return merged, total
 }
 
 // compositeLinkedSHAs returns the content SHAs of members that a notable+
@@ -4013,26 +3967,6 @@ func compositeLinkedSHAs(cleaveResult []byte, parentSHA string) []string {
 	return out
 }
 
-// mergeCappedSHAs concatenates SHA lists in priority order, dropping blanks and
-// duplicates, and caps the result. The first list wins placement on a tie.
-func mergeCappedSHAs(first, second []string, limit int) []string {
-	seen := make(map[string]bool, limit)
-	out := make([]string, 0, limit)
-	for _, group := range [][]string{first, second} {
-		for _, s := range group {
-			if s == "" || seen[s] {
-				continue
-			}
-			seen[s] = true
-			out = append(out, s)
-			if len(out) >= limit {
-				return out
-			}
-		}
-	}
-	return out
-}
-
 // envelopeChildSHAs returns the member SHAs of a compacted archive envelope: the
 // files[] entries other than the container, which compaction keeps as
 // lightweight stubs. Returns nil for an envelope that carries no member stubs
@@ -4054,7 +3988,7 @@ func envelopeChildSHAs(cleaveResult []byte, parentSHA string) []string {
 	}
 	// Rank by the per-file risk the stub carries so a capped fetch pulls the
 	// most significant members first — the same intent as the score-ranked
-	// MembersByParent primary path.
+	// edge path in MembersWithSamplesByParent.
 	type member struct {
 		sha  string
 		risk int
@@ -6027,7 +5961,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			}
 
 			if len(ff) > 0 {
+				refs := make([]galaxyRef, len(file.Refs))
+				for j, r := range file.Refs {
+					refs[j] = galaxyRef{Kind: r.Kind, TargetFile: r.TargetFile}
+				}
 				fileFindings = append(fileFindings, FileFindings{
+					ID:             file.ID,
 					Path:           file.Path,
 					Risk:           critIntToString(maxCritInFile(file)),
 					Classification: file.Classification,
@@ -6035,6 +5974,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 					Formula:        file.Formula,
 					Findings:       ff,
 					Strings:        galaxyStrings(file),
+					Refs:           refs,
 				})
 			}
 		}

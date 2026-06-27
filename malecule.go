@@ -262,10 +262,16 @@ type FileMolecule struct {
 	Probability    float64        `json:"probability,omitempty"` // litmus ML probability
 }
 
-// GalaxyLink represents a dropper relationship between files.
+// GalaxyLink represents a reference relationship between files.
 type GalaxyLink struct {
-	From int `json:"from"` // Index of source molecule
-	To   int `json:"to"`   // Index of target molecule
+	// Kind classifies the edge for rendering: "local" (a cleave-resolved
+	// file→file reference within the bundle), "dependency" (a reference to a
+	// fetched-and-scored dependency that itself scored suspicious/hostile), or
+	// "inferred" (the legacy basename-in-strings guess, kept as a fallback only
+	// where cleave resolved no precise edge).
+	Kind string `json:"kind,omitempty"`
+	From int    `json:"from"` // Index of source molecule
+	To   int    `json:"to"`   // Index of target molecule
 }
 
 // GalaxyData contains multiple molecules for archive visualization.
@@ -776,8 +782,20 @@ type FileFindings struct {
 	Classification string // litmus ML classification
 	Formula        string // Formula from cleave
 	Findings       []FindingForFormula
-	Strings        []string // Extracted strings for dropper detection
-	Probability    float64  // litmus ML probability
+	Strings        []string    // Extracted strings for dropper detection (fallback)
+	Refs           []galaxyRef // cleave-resolved references to other report files
+	Probability    float64     // litmus ML probability
+	ID             int         // cleave files[] id, the target of a ref's TargetFile
+}
+
+// galaxyRef is one reference a file makes to another file in the report, as the
+// galaxy consumes it: the coarse kind (`local`, `dependency`, `command`,
+// `url_fetch`, `repository`) and the referenced file's cleave id when cleave
+// resolved it. An unresolved (truly remote) reference has TargetFile nil and
+// draws no edge.
+type galaxyRef struct {
+	TargetFile *int
+	Kind       string
 }
 
 // BuildGalaxy creates a galaxy of molecules from multiple files.
@@ -792,8 +810,8 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	// Check if we have archive contents (paths with "!!")
 	// If so, filter out the archive container itself
 	hasArchiveContents := false
-	for _, file := range files {
-		if strings.Contains(file.Path, "!!") {
+	for i := range files {
+		if strings.Contains(files[i].Path, "!!") {
 			hasArchiveContents = true
 			break
 		}
@@ -802,11 +820,11 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	if hasArchiveContents {
 		inner := make([]FileFindings, 0, len(files))
 		outer := make([]FileFindings, 0, len(files))
-		for _, file := range files {
-			if strings.Contains(file.Path, "!!") {
-				inner = append(inner, file)
+		for i := range files {
+			if strings.Contains(files[i].Path, "!!") {
+				inner = append(inner, files[i])
 			} else {
-				outer = append(outer, file)
+				outer = append(outer, files[i])
 			}
 		}
 		// Keep outer containers only when no inner file has findings the
@@ -814,8 +832,8 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 		// outer's findings (e.g. polyglot, archive-level traits) would be
 		// dropped entirely and the galaxy would render empty.
 		innerHasNotable := false
-		for _, f := range inner {
-			for _, find := range f.Findings {
+		for i := range inner {
+			for _, find := range inner[i].Findings {
 				if find.Severity >= SeverityNotable {
 					innerHasNotable = true
 					break
@@ -844,9 +862,9 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 
 	// Build basename to index map for dropper detection
 	basenameToIdx := make(map[string]int)
-	for i, file := range files {
+	for i := range files {
 		// Extract basename from "archive!!path/file.ext" format
-		path := file.Path
+		path := files[i].Path
 		if strings.Contains(path, "!!") {
 			parts := strings.Split(path, "!!")
 			path = parts[len(parts)-1]
@@ -861,8 +879,8 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	// drops[i] = list of file indices that file i drops
 	drops := make(map[int][]int)
 
-	for i, file := range files {
-		for _, s := range file.Strings {
+	for i := range files {
+		for _, s := range files[i].Strings {
 			for basename, targetIdx := range basenameToIdx {
 				if targetIdx == i {
 					continue
@@ -871,6 +889,65 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 					droppedBy[targetIdx] = append(droppedBy[targetIdx], i)
 					drops[i] = append(drops[i], targetIdx)
 				}
+			}
+		}
+	}
+
+	// Each file's strongest severity — drives the dependency-edge gate below,
+	// depth, and inclusion.
+	fileMaxSev := make([]Severity, len(files))
+	for i := range files {
+		for _, f := range files[i].Findings {
+			if f.Severity > fileMaxSev[i] {
+				fileMaxSev[i] = f.Severity
+			}
+		}
+	}
+
+	// Precise file→file edges from cleave's resolved references — these
+	// supersede the basename guess above. idToIdx maps a cleave files[] id to
+	// its index in this slice. refLocal holds internal (intra-bundle) edges;
+	// refDep holds edges to a fetched-and-scored dependency that itself scored
+	// suspicious or hostile (a benign or unresolved remote dependency draws
+	// nothing — there is no node for it and no verdict to justify one).
+	idToIdx := make(map[int]int, len(files))
+	for i := range files {
+		idToIdx[files[i].ID] = i
+	}
+	refLocal := make(map[int][]int)
+	refDep := make(map[int][]int)
+	localPair := make(map[[2]int]bool)
+	depPair := make(map[[2]int]bool)
+	for i := range files {
+		for _, r := range files[i].Refs {
+			if r.TargetFile == nil {
+				continue // truly remote / unresolved — no node, no edge
+			}
+			j, ok := idToIdx[*r.TargetFile]
+			if !ok || j == i {
+				continue
+			}
+			switch r.Kind {
+			case "local":
+				refLocal[i] = append(refLocal[i], j)
+				localPair[[2]int{i, j}] = true
+			case "dependency", "command", "url_fetch":
+				if fileMaxSev[j] >= SeveritySuspicious {
+					refDep[i] = append(refDep[i], j)
+					depPair[[2]int{i, j}] = true
+				}
+			default:
+				// Any other ref kind draws no edge.
+			}
+		}
+	}
+	// Feed precise edges into the dropper graph so depth and inclusion account
+	// for them (a referrer is a parent of what it pulls in).
+	for _, edges := range []map[int][]int{refLocal, refDep} {
+		for from, tos := range edges {
+			for _, to := range tos {
+				drops[from] = append(drops[from], to)
+				droppedBy[to] = append(droppedBy[to], from)
 			}
 		}
 	}
@@ -911,15 +988,6 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	// Determine which files are interesting enough to display.
 	// For small archives (≤16 files) show everything with notable+ findings.
 	// For large archives, focus on suspicious+ files and anything linked to them.
-	fileMaxSev := make([]Severity, len(files))
-	for i, file := range files {
-		for _, f := range file.Findings {
-			if f.Severity > fileMaxSev[i] {
-				fileMaxSev[i] = f.Severity
-			}
-		}
-	}
-
 	include := make([]bool, len(files))
 	notableCount := 0
 	for i := range files {
@@ -948,6 +1016,28 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 			}
 			for _, j := range droppedBy[i] {
 				include[j] = include[j] || fileMaxSev[j] >= SeverityNotable
+			}
+		}
+	}
+
+	// A deliberate, cleave-resolved reference to a threat is part of the threat
+	// graph: pull in both ends of every precise edge reachable from an already-
+	// included file, so a benign-looking loader or manifest that points at a
+	// flagged file still appears (its own severity may be below the threshold).
+	preciseEdges := make([][2]int, 0, len(localPair)+len(depPair))
+	for p := range localPair {
+		preciseEdges = append(preciseEdges, p)
+	}
+	for p := range depPair {
+		preciseEdges = append(preciseEdges, p)
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, p := range preciseEdges {
+			a, b := p[0], p[1]
+			if (include[a] || include[b]) && (!include[a] || !include[b]) {
+				include[a], include[b] = true, true
+				changed = true
 			}
 		}
 	}
@@ -1034,26 +1124,42 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 		}
 	}
 
-	// Build links from the drops map
+	// Build typed links: cleave's precise local + dependency edges first, then
+	// the basename guess only for pairs cleave did not resolve (marked
+	// "inferred"). The first kind to claim a molecule pair wins.
 	seen := make(map[[2]int]bool)
-	for fromFileIdx, toFileIdxs := range drops {
+	addLink := func(fromFileIdx, toFileIdx int, kind string) {
 		fromMolIdx, ok := fileToMolIdx[fromFileIdx]
 		if !ok {
-			continue
+			return
 		}
+		toMolIdx, ok := fileToMolIdx[toFileIdx]
+		if !ok {
+			return
+		}
+		key := [2]int{fromMolIdx, toMolIdx}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		galaxy.Links = append(galaxy.Links, GalaxyLink{From: fromMolIdx, To: toMolIdx, Kind: kind})
+	}
+	for from, tos := range refLocal {
+		for _, to := range tos {
+			addLink(from, to, "local")
+		}
+	}
+	for from, tos := range refDep {
+		for _, to := range tos {
+			addLink(from, to, "dependency")
+		}
+	}
+	for fromFileIdx, toFileIdxs := range drops {
 		for _, toFileIdx := range toFileIdxs {
-			toMolIdx, ok := fileToMolIdx[toFileIdx]
-			if !ok {
-				continue
+			if localPair[[2]int{fromFileIdx, toFileIdx}] || depPair[[2]int{fromFileIdx, toFileIdx}] {
+				continue // cleave resolved this pair precisely
 			}
-			link := [2]int{fromMolIdx, toMolIdx}
-			if !seen[link] {
-				seen[link] = true
-				galaxy.Links = append(galaxy.Links, GalaxyLink{
-					From: fromMolIdx,
-					To:   toMolIdx,
-				})
-			}
+			addLink(fromFileIdx, toFileIdx, "inferred")
 		}
 	}
 

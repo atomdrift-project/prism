@@ -784,6 +784,27 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         }
         .galaxy-info.visible { display: block; }
+        .galaxy-legend {
+            position: absolute;
+            left: 12px;
+            bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 10px;
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid var(--mist);
+            border-radius: 6px;
+            font-size: 11px;
+            color: var(--carbon);
+            pointer-events: none;
+        }
+        .galaxy-legend[hidden] { display: none; }
+        .galaxy-legend-item { display: flex; align-items: center; gap: 7px; }
+        .galaxy-legend-swatch { width: 18px; height: 0; border-top-width: 2px; border-top-style: solid; }
+        .galaxy-legend-swatch.local { border-top-color: #5aa9e6; }
+        .galaxy-legend-swatch.dependency { border-top-color: #e0a458; }
+        .galaxy-legend-swatch.inferred { border-top-color: #7c8a84; border-top-style: dashed; opacity: 0.7; }
         .galaxy-info-header {
             display: flex;
             justify-content: space-between;
@@ -1600,6 +1621,11 @@
                         </div>
                         <div class="galaxy-info-formula" id="galaxy-info-formula"></div>
                         <div class="galaxy-info-findings" id="galaxy-info-findings"></div>
+                    </div>
+                    <div class="galaxy-legend" id="galaxy-legend" hidden>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch local"></span>Local reference</span>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch dependency"></span>Suspicious dependency</span>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch inferred"></span>Inferred</span>
                     </div>
                 </div>
             </div>

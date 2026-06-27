@@ -737,14 +737,33 @@ if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.l
 
   // Dropper relationships between embedded files.
   if (moleculeData.links && moleculeData.links.length > 0) {
-    const lineMat = new THREE.LineDashedMaterial({
+    // Edge style by kind. "local" — a cleave-resolved file→file reference
+    // inside the bundle — is a solid teal line (a definite structural edge).
+    // "dependency" — a reference to a fetched-and-scored dependency that itself
+    // scored suspicious/hostile — is a solid amber line, drawn to stand out as
+    // an incorporated threat. "inferred" (and any legacy untyped link) — the
+    // basename-in-strings guess — stays a faint grey dashes, signalling it is
+    // uncertain.
+    const matLocal = new THREE.LineBasicMaterial({
+      color: 0x5aa9e6,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const matDependency = new THREE.LineBasicMaterial({
+      color: 0xe0a458,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const matInferred = new THREE.LineDashedMaterial({
       color: 0x7c8a84,
       dashSize: 0.12,
       gapSize: 0.22,
       linewidth: 1,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.55,
     });
+    const matForKind = (kind) =>
+      kind === "local" ? matLocal : kind === "dependency" ? matDependency : matInferred;
 
     moleculeData.links.forEach((link) => {
       const fromMol = moleculeData.molecules[link.from];
@@ -763,10 +782,27 @@ if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.l
       const lineEnd = end.clone().sub(dir.clone().multiplyScalar(inset));
 
       const geometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
-      const line = new THREE.Line(geometry, lineMat);
+      const line = new THREE.Line(geometry, matForKind(link.kind));
+      // Dashed material needs per-vertex line distances; solid lines ignore it.
       line.computeLineDistances();
       moleculeGroup.add(line);
     });
+
+    // Reveal the edge legend, showing only the kinds actually drawn.
+    const kinds = new Set(moleculeData.links.map((l) => l.kind || "inferred"));
+    const legend = document.getElementById("galaxy-legend");
+    if (legend) {
+      legend.hidden = false;
+      legend.querySelectorAll(".galaxy-legend-item").forEach((item) => {
+        const sw = item.querySelector(".galaxy-legend-swatch");
+        const kind = sw?.classList.contains("local")
+          ? "local"
+          : sw?.classList.contains("dependency")
+            ? "dependency"
+            : "inferred";
+        item.style.display = kinds.has(kind) ? "" : "none";
+      });
+    }
   }
 
   // Center + auto-fit galaxy

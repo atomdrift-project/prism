@@ -927,3 +927,78 @@ func TestPrepareResultData_MultiFileArchivePreserved(t *testing.T) {
 		t.Errorf("FileFindings: got %d entries, want >=2 for multi-file archive", len(data.FileFindings))
 	}
 }
+
+// TestGalaxyTypedReferenceLinks verifies the galaxy draws cleave's precise,
+// resolved references: an internal file→file edge ("local"), a dependency edge
+// only to a fetched-and-scored dependency that itself scored suspicious+
+// ("dependency"), and nothing for a benign or unresolved remote dependency. A
+// neutral referrer is pulled in because it points at a flagged file.
+func TestGalaxyTypedReferenceLinks(t *testing.T) {
+	id := func(n int) *int { return &n }
+	files := []FileFindings{
+		{ // referrer: neutral on its own, but references a hostile sibling + deps
+			ID:   1,
+			Path: "pkg.zip!!package.json",
+			Risk: "baseline",
+			Findings: []FindingForFormula{
+				{ID: "metadata/relationship::references-flagged-component", Severity: SeverityNeutral},
+			},
+			Refs: []galaxyRef{
+				{Kind: "local", TargetFile: id(2)},      // → hostile sibling
+				{Kind: "dependency", TargetFile: id(3)}, // → suspicious vendored dep
+				{Kind: "dependency", TargetFile: id(4)}, // → benign dep: no edge
+				{Kind: "url_fetch", TargetFile: nil},    // unresolved remote: no edge
+			},
+		},
+		{
+			ID: 2, Path: "pkg.zip!!payload.js", Risk: "hostile",
+			Findings: []FindingForFormula{{ID: "well-known/malware/x", Severity: SeverityHostile}},
+		},
+		{
+			ID: 3, Path: "pkg.zip!!node_modules/evil/evil.js", Risk: "suspicious",
+			Findings: []FindingForFormula{{ID: "objectives/c2", Severity: SeveritySuspicious}},
+		},
+		{
+			ID: 4, Path: "pkg.zip!!node_modules/lodash/lodash.js", Risk: "notable",
+			Findings: []FindingForFormula{{ID: "net/socket", Severity: SeverityNotable}},
+		},
+	}
+
+	galaxy := BuildGalaxy(files)
+	if !galaxy.IsGalaxy {
+		t.Fatal("expected a galaxy")
+	}
+	base := func(p string) string {
+		if i := strings.LastIndex(p, "!!"); i >= 0 {
+			p = p[i+2:]
+		}
+		if i := strings.LastIndex(p, "/"); i >= 0 {
+			p = p[i+1:]
+		}
+		return p
+	}
+	idx := map[string]int{}
+	for i, m := range galaxy.Molecules {
+		idx[base(m.Path)] = i
+	}
+	if _, ok := idx["package.json"]; !ok {
+		t.Fatal("neutral referrer should be pulled into the galaxy by its references")
+	}
+	linkKind := func(from, to string) string {
+		for _, l := range galaxy.Links {
+			if l.From == idx[from] && l.To == idx[to] {
+				return l.Kind
+			}
+		}
+		return ""
+	}
+	if k := linkKind("package.json", "payload.js"); k != "local" {
+		t.Errorf("package.json→payload.js: want kind local, got %q", k)
+	}
+	if k := linkKind("package.json", "evil.js"); k != "dependency" {
+		t.Errorf("package.json→evil.js (suspicious dep): want kind dependency, got %q", k)
+	}
+	if k := linkKind("package.json", "lodash.js"); k != "" {
+		t.Errorf("package.json→lodash.js (benign dep): want no edge, got kind %q", k)
+	}
+}
