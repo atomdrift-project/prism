@@ -214,6 +214,21 @@ fi
 doas bastille sysrc "$RUN" prism_hopper_dsn="$HOPPER_DSN" >/dev/null
 doas bastille sysrc "$RUN" prism_readonly="$PRISM_READONLY" >/dev/null
 
+# Grafana Cloud OTLP token. obs reads the base64 credential from $HOME/.tok/graf
+# (HOME=/home/prism, set in the service env below) and pushes telemetry to
+# Grafana Cloud. Stage the deploying host's token into the jail: 0700 dir, 0600
+# file, owned by prism. Idempotent — re-running re-copies the same bytes.
+GRAF_SRC="${GRAF_TOKEN:-$HOME/.tok/graf}"
+if [ -r "$GRAF_SRC" ]; then
+    log "Installing Grafana Cloud token into run jail"
+    doas bastille cmd "$RUN" install -d -o prism -g prism -m 0700 /home/prism/.tok
+    doas bastille cp "$RUN" "$GRAF_SRC" /home/prism/.tok/graf
+    doas bastille cmd "$RUN" chown prism:prism /home/prism/.tok/graf
+    doas bastille cmd "$RUN" chmod 600 /home/prism/.tok/graf
+else
+    log "No $GRAF_SRC on deploy host — OTLP push to Grafana Cloud disabled until provided"
+fi
+
 # rc.d/prism — written via stage-and-cmp so we only update (and trigger a
 # restart) when the script content actually changes.
 log "Staging rc.d/prism"
@@ -242,8 +257,10 @@ load_rc_config $name
 pidfile="/var/run/${name}.pid"
 prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
-# HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
-prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=${prism_hopper_dsn} PRISM_READONLY=${prism_readonly} PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel:3100/otlp/v1/logs"
+# HOME is set so pgx can locate ~prism/.pgpass for the hopper database password,
+# and so obs finds the Grafana Cloud token at $HOME/.tok/graf. No OTLP endpoint
+# is set: obs falls back to the Grafana Cloud gateway via that token.
+prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=${prism_hopper_dsn} PRISM_READONLY=${prism_readonly} PRISM_CSRF_KEY=${prism_csrf_key}"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --uploads"
 
 run_rc_command "$1"
@@ -395,8 +412,6 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
                 HOPPER_DSN="$PRISM_HOPPER_DSN" \
                 PRISM_READONLY="$PRISM_READONLY_VAL" \
                 PRISM_CSRF_KEY="$PRISM_CSRF_KEY" \
-                OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:9090/api/v1/otlp \
-                OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel:3100/otlp/v1/logs \
                 /usr/local/bin/prism --public --uploads
         set -x
 
