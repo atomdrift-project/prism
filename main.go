@@ -3761,8 +3761,15 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := enrichedResult(r.Context(), sha)
 	if err != nil {
-		// Pending or missing: nothing to add. The page keeps its parent-only view.
-		w.WriteHeader(http.StatusNotFound)
+		// Best-effort enhancement: the page keeps its parent-only view either
+		// way, but distinguish a genuine 404 from a transient hopper fault so
+		// the client (and dashboards) can tell "no such sample" from "retry".
+		logger.Debug("members enrich failed", "sha256", sha, "error", err)
+		if errors.Is(err, hopper.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
 		return
 	}
 	data := prepareResultData(res.Filename, sha, &res)
@@ -3970,78 +3977,71 @@ type pendingAnalysisError struct {
 
 func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
 
-// fetchFromHopper loads a sample from hopper and reshapes it into the
-// storedResult shape expected by the rest of prism. Returns an error whose
-// message contains "not found" when the sample is absent, so HTTP handlers
-// render a 404 instead of a 500. Returns *pendingAnalysisError when the
-// sample row exists but no worker has produced a cleave result yet — the
-// expected state during the upload→worker handoff.
-//
-// When the sample's stored cleave result has been compacted (children
-// stripped — see hopper.compactCleaveResultForStorage), reassemble children
-// from sibling rows so downstream display and JSON export see a full archive
-// view. The reassembled envelope is what gets cached.
-func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
+// loadParentSample reads a sample's parent row from hopper under the shared
+// circuit breaker and query timeout, mapping hopper's not-found and not-yet-
+// analyzed states to the errors the HTTP handlers expect (a "not found" message
+// for a 404, *pendingAnalysisError while a worker is still running). It is the
+// common preamble for the cached parent-only path (fetchFromHopper) and the
+// member-complete path (enrichedResult); callers layer their own span, logging,
+// and member reassembly on top.
+func loadParentSample(ctx context.Context, sha string) (*hopper.Sample, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
+		return nil, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
 	}
 	if err := dbBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-db", "lookup", "rejected", time.Time{})
-		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
+		return nil, fmt.Errorf("hopper-db lookup: %w", err)
 	}
-	// Bound the lookup (and any archive-reassembly reads below) so a slow
-	// hopper-db can't pin the caller; a timeout trips the breaker.
+	// Bound the read so a slow hopper-db can't pin the caller; a timeout trips
+	// the breaker.
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
-
-	// Phase 1: load the sample row. For an archive this detoasts the parent's
-	// (possibly multi-megabyte) cleave_result, so it is spanned and timed
-	// separately from the member reassembly below — the two are the candidate
-	// culprits when a detail page is slow, and only a phase breakdown tells
-	// them apart.
-	sampleStart := time.Now()
-	sctx, sampleSpan := obs.Span(ctx, "prism.detail.sample_lookup")
-	sample, err := db.SampleBySHA256(sctx, sha)
-	sampleSpan.End()
+	start := time.Now()
+	sample, err := db.SampleBySHA256(ctx, sha)
 	if err != nil {
 		if errors.Is(err, hopper.ErrNotFound) {
 			// The DB answered; "not found" is a healthy response, not a fault.
 			dbBreaker.success()
-			recordDep(ctx, "hopper-db", "lookup", "ok", sampleStart)
-			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
+			recordDep(ctx, "hopper-db", "lookup", "ok", start)
+			return nil, fmt.Errorf("sample not found in hopper: %w", err)
 		}
 		dbBreaker.failure()
-		recordDep(ctx, "hopper-db", "lookup", "error", sampleStart)
-		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
+		recordDep(ctx, "hopper-db", "lookup", "error", start)
+		return nil, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
 	}
 	dbBreaker.success()
-	recordDep(ctx, "hopper-db", "lookup", "ok", sampleStart)
-	sampleDur := time.Since(sampleStart)
-
+	recordDep(ctx, "hopper-db", "lookup", "ok", start)
 	if len(sample.CleaveResult) == 0 {
-		return storedResult{}, &pendingAnalysisError{
-			SHA:      sha,
-			Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
-		}
+		return nil, &pendingAnalysisError{SHA: sha, Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path))}
 	}
+	return sample, nil
+}
 
-	// Archive member bodies are hydrated lazily (GET /file/{sha}/members), not
-	// here: the detail page renders everything the parent envelope already
-	// provides on first paint, and the browser fetches the member Content +
-	// galaxy afterward. So the cached result carries the compacted envelope and
-	// this hot path is a single SampleBySHA256 — a crawler (no JS) never
-	// triggers the member queries at all.
+// fetchFromHopper maps a sample to the parent-only storedResult the detail page
+// renders on first paint. Archive member bodies are hydrated lazily (GET
+// /file/{sha}/members), so this hot path — reached by every visitor, crawlers
+// included, via lookupResult's cache — is a single SampleBySHA256 that never
+// touches the member queries.
+func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
+	start := time.Now()
+	sctx, span := obs.Span(ctx, "prism.detail.sample_lookup")
+	sample, err := loadParentSample(sctx, sha)
+	span.End()
+	if err != nil {
+		return storedResult{}, err
+	}
 	res := storedResultFromHopperSample(sample)
+	dur := time.Since(start)
 	level := slog.LevelDebug
-	if sampleDur >= slowDetailThreshold {
+	if dur >= slowDetailThreshold {
 		level = slog.LevelWarn
 	}
 	logger.Log(ctx, level, "hopper detail fetch",
 		"sha256", sha,
 		"compacted", hopperWasCompacted(sample.CleaveResult),
 		"cleave_bytes", len(sample.CleaveResult),
-		"sample_ms", sampleDur.Milliseconds(),
+		"sample_ms", dur.Milliseconds(),
 	)
 	return res, nil
 }
@@ -4050,13 +4050,13 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 // maxFilesShown by per-file criticality (from the compacted envelope's risk-
 // sorted stubs) plus any composite-linked members — and splices them back into
 // the parent envelope via hopper.Reassemble. Returns the enriched envelope JSON
-// (nil when nothing needed splicing) and the member count. One deterministic
-// SamplesBySHAs primary-key fetch, called off the render hot path so only real
-// JS-running clients pay for it.
-func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) (enriched []byte, members int, err error) {
+// (nil when nothing needed splicing). One deterministic SamplesBySHAs primary-
+// key fetch, called off the render hot path so only real JS-running clients pay
+// for it.
+func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]byte, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return nil, 0, errors.New("hopper not connected")
+		return nil, errors.New("hopper not connected")
 	}
 	membersStart := time.Now()
 	mctx, memSpan := obs.Span(ctx, "prism.detail.members")
@@ -4069,58 +4069,34 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) (enri
 	memSpan.End()
 	if err != nil {
 		recordDep(ctx, "hopper-db", "members", "error", membersStart)
-		return nil, 0, err
+		return nil, err
 	}
 	recordDep(ctx, "hopper-db", "members", "ok", membersStart)
 	if len(children) == 0 {
-		return nil, 0, nil
+		return nil, nil
 	}
 	_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
-	enriched, err = hopper.Reassemble(sample, children)
+	enriched, err := hopper.Reassemble(sample, children)
 	reSpan.End()
 	if err != nil {
-		return nil, len(children), err
+		return nil, err
 	}
-	return enriched, len(children), nil
+	return enriched, nil
 }
 
 // enrichedResult loads a sample and returns its storedResult with the archive
 // members spliced in — the member-complete view the lazy /members endpoint and
 // the JSON export need (the cached fetchFromHopper result is parent-only). It
-// re-reads the parent row rather than the cache because Reassemble needs the
-// raw *hopper.Sample; that lookup is cheap and only JS-running clients / API
-// callers reach it.
+// re-reads the parent row because Reassemble needs the raw *hopper.Sample; that
+// lookup is cheap and only JS-running clients / API callers reach it.
 func enrichedResult(ctx context.Context, sha string) (storedResult, error) {
-	db := hopperDB.Load()
-	if db == nil {
-		return storedResult{}, errors.New("hopper not connected")
-	}
-	if err := dbBreaker.allow(); err != nil {
-		recordDep(ctx, "hopper-db", "lookup", "rejected", time.Time{})
-		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
-	defer cancel()
-	start := time.Now()
-	sample, err := db.SampleBySHA256(ctx, sha)
+	sample, err := loadParentSample(ctx, sha)
 	if err != nil {
-		if errors.Is(err, hopper.ErrNotFound) {
-			dbBreaker.success()
-			recordDep(ctx, "hopper-db", "lookup", "ok", start)
-			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
-		}
-		dbBreaker.failure()
-		recordDep(ctx, "hopper-db", "lookup", "error", start)
-		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
-	}
-	dbBreaker.success()
-	recordDep(ctx, "hopper-db", "lookup", "ok", start)
-	if len(sample.CleaveResult) == 0 {
-		return storedResult{}, &pendingAnalysisError{SHA: sha, Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path))}
+		return storedResult{}, err
 	}
 	res := storedResultFromHopperSample(sample)
 	if hopperWasCompacted(sample.CleaveResult) {
-		if enriched, _, eerr := enrichMembers(ctx, sha, sample); eerr != nil {
+		if enriched, eerr := enrichMembers(ctx, sha, sample); eerr != nil {
 			logger.Debug("member enrichment failed; serving parent-only", "sha", sha, "error", eerr)
 		} else if len(enriched) > 0 {
 			res.RawLitmus = string(enriched)
