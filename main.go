@@ -3885,24 +3885,24 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		}
 		return false, storedResult{}, err
 	}
-	// Self-heal stale cache entries from before the enrichment deploy: if a
-	// cache hit still has truncated/omitted_files markers in its raw envelope,
-	// it predates fetchFromHopper's reassembly. Re-fetch synchronously so the
-	// caller gets the enriched view this request — without this, users would
-	// see the un-enriched page until the TTL-based refresh below kicked in.
-	if cacheHit && hopperDB.Load() != nil && envelopeNeedsEnrichment(res.RawLitmus) {
-		reqLogger.Debug("cached envelope still compacted, re-enriching")
-		if fresh, ferr := fetchFromHopper(ctx, sha); ferr == nil {
-			res = fresh
-			if err := cache.SetAsync(ctx, sha, fresh); err != nil {
-				reqLogger.Debug("post-enrichment cache update failed", "error", err)
-			}
-		} else {
-			reqLogger.Debug("re-enrichment fetch failed; serving cached value", "error", ferr)
-		}
-	}
-	if cacheHit && hopperDB.Load() != nil && time.Since(res.CachedAt) > hopperCacheTTL {
+	// Refresh a cache hit in the background — never on the request path — when
+	// it either still carries envelope-compaction markers (it predates
+	// fetchFromHopper's reassembly, or a prior reassembly timed out and cached
+	// the compacted view) or has aged past the TTL. A synchronous re-fetch here
+	// would block the page on the member-reassembly query, which on a large
+	// archive or a degraded hopper can burn the full query timeout and pin an
+	// interactive load for a minute — for a view the next request serves
+	// enriched anyway. Both cases share the refreshInFlight guard, so a sha
+	// never runs two concurrent background fetches. This trades a first,
+	// slightly-degraded (compacted) view for a page that always renders at
+	// cache-hit speed.
+	needsEnrich := cacheHit && envelopeNeedsEnrichment(res.RawLitmus)
+	stale := cacheHit && time.Since(res.CachedAt) > hopperCacheTTL
+	if (needsEnrich || stale) && hopperDB.Load() != nil {
 		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
+			if needsEnrich {
+				reqLogger.Debug("cached envelope still compacted, enriching in background")
+			}
 			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
 		}
 	}
