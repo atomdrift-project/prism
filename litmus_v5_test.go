@@ -196,10 +196,10 @@ func TestLitmusMlResponseV6(t *testing.T) {
 			wantLevel: new(-1),
 		},
 		{
-			name:      "suspicious at level 50 (above critical line)",
-			raw:       `{"v":"6","prob":0.998,"l":50,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
+			name:      "suspicious in the band (above the L50 critical line)",
+			raw:       `{"v":"6","prob":0.998,"l":75,"version":"vtest","fs":[{"id":0,"prob":0.998}]}`,
 			wantClass: 1,
-			wantLevel: new(50),
+			wantLevel: new(75),
 		},
 		{
 			name:      "hostile at level 0 (strictest)",
@@ -265,8 +265,11 @@ func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(new(CriticalLevel + 1)); got != 1 {
 		t.Errorf("envelopeClass(CriticalLevel+1) = %d, want 1 (suspicious just above critical)", got)
 	}
-	if got := envelopeClass(new(1000)); got != 1 {
-		t.Errorf("envelopeClass(1000) = %d, want 1 (suspicious in loose tail)", got)
+	if got := envelopeClass(new(SuspiciousCeiling)); got != 1 {
+		t.Errorf("envelopeClass(SuspiciousCeiling) = %d, want 1 (suspicious at the ceiling)", got)
+	}
+	if got := envelopeClass(new(1000)); got != 0 {
+		t.Errorf("envelopeClass(1000) = %d, want 0 (benign: past the L100 ceiling)", got)
 	}
 }
 

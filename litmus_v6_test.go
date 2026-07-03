@@ -28,7 +28,7 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 			wantConf:  97,
 		},
 		{
-			name:      "hostile at the band edge, level 50",
+			name:      "hostile at the critical line, level 50",
 			raw:       `{"v":"6","prob":0.91,"l":50,"conf":90,"version":"vtest","fs":[{"id":0,"prob":0.91,"l":50,"conf":90}]}`,
 			wantClass: 2,
 			wantL:     50,
@@ -42,11 +42,18 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 			wantConf:  89,
 		},
 		{
-			name:      "suspicious, level 100 (range ceiling)",
+			name:      "suspicious at the ceiling, level 100",
 			raw:       `{"v":"6","prob":0.66,"l":100,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":100,"conf":85}]}`,
 			wantClass: 1,
 			wantL:     100,
 			wantConf:  85,
+		},
+		{
+			name:      "benign past the ceiling, level 250",
+			raw:       `{"v":"6","prob":0.5,"l":250,"conf":80,"version":"vtest","fs":[{"id":0,"prob":0.5,"l":250,"conf":80}]}`,
+			wantClass: 0,
+			wantL:     250,
+			wantConf:  80,
 		},
 		{
 			name:      "benign sentinel, level -1",
@@ -185,10 +192,11 @@ func TestClassFromLevel(t *testing.T) {
 		{name: "nil (manual thresholds) is hostile", nilL: true, want: 2},
 		{name: "benign sentinel", l: -1, want: 0},
 		{name: "level 0 is hostile", l: 0, want: 2},
-		{name: "level 50 is hostile", l: 50, want: 2},
-		{name: "level 51 is suspicious", l: 51, want: 1},
-		{name: "level 100 (range ceiling) is suspicious", l: 100, want: 1},
-		{name: "out-of-range level stays suspicious", l: 500, want: 1},
+		{name: "level 50 (critical line) is hostile", l: 50, want: 2},
+		{name: "level 51 (just past the critical line) is suspicious", l: 51, want: 1},
+		{name: "level 100 (suspicious ceiling) is suspicious", l: 100, want: 1},
+		{name: "level 101 (just past the ceiling) is benign", l: 101, want: 0},
+		{name: "far past the ceiling is benign", l: 500, want: 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -7113,19 +7113,31 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// CriticalLevel is prism's consumer-side cutoff between hostile and suspicious
-// on the per-100M-benigns scale. A v6/v7 envelope's level is the strictest grid
-// level at which the file fires; level <= CriticalLevel means it fires at or
-// below our critical line (hostile), higher levels mean it only fires
-// in the noisier tail (suspicious), and `-1` means it never fires (benign).
-// Mirrors DefaultSeverityLevel in collimator/litmus/autocollie/promoter; see
+// CriticalLevel is prism's single consumer-side cutoff between hostile and
+// suspicious on the per-100M-benigns scale. A v6/v7 envelope's level is the
+// strictest grid level at which the file fires; level <= CriticalLevel means it
+// fires at or below our critical line (hostile), higher levels mean it only
+// fires in the noisier tail (suspicious, up to SuspiciousCeiling), and `-1`
+// means it never fires (benign). Both derivations (envelopeClass and
+// classFromLevel) use this one constant — there is no second cutoff.
+//
+// Set to L50, matching scan's DEFAULT_SEVERITY_LEVEL operating point (the level
+// the model is currently deployed and calibrated at). See
 // collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
-const CriticalLevel = 4
+const CriticalLevel = 50
+
+// SuspiciousCeiling is the loosest fired-level (FP per 100M benigns) that still
+// reads as suspicious. Above it a firing is benign informational noise rather
+// than a suspicious verdict. Set to L100 — the precision elbow from hopper's
+// fired-level analysis (L250 and looser add more false positives than true
+// positives). Mirrors scan's SUSPICIOUS_LEVEL_CEILING and hopper/promoter's
+// SuspiciousCeiling; keep the cross-repo group in sync.
+const SuspiciousCeiling = 100
 
 // envelopeClass derives the legacy 0/1/2 classification from a v6/v7 envelope's
-// level field. -1 → benign (0); 0..=CriticalLevel → hostile (2); above
-// CriticalLevel → suspicious (1); nil/null (manual mode, no level info) →
-// hostile (2), fail-safe.
+// level field. -1 → benign (0); 0..=CriticalLevel → hostile (2); CriticalLevel <
+// l <= SuspiciousCeiling → suspicious (1); looser → benign (0, past the elbow);
+// nil/null (manual mode, no level info) → hostile (2), fail-safe.
 func envelopeClass(l *int) int {
 	if l == nil {
 		return 2
@@ -7135,8 +7147,10 @@ func envelopeClass(l *int) int {
 		return 0
 	case *l <= CriticalLevel:
 		return 2
-	default:
+	case *l <= SuspiciousCeiling:
 		return 1
+	default:
+		return 0
 	}
 }
 
@@ -7165,8 +7179,11 @@ func (r *litmusMlResponse) verdictClass() int {
 // classFromLevel applies prism's consumer-side level policy to a v6/v7 level
 // marker (../litmus/docs/JSON.md). The sentinel -1 is benign; a nil marker is
 // hostile produced under manual thresholds (no level table applies); levels
-// 0..=50 are hostile; 51 and above are suspicious. Lower levels fire at
-// stricter false-positive cutoffs, so they carry higher confidence.
+// 0..=CriticalLevel are hostile; CriticalLevel < l <= SuspiciousCeiling are
+// suspicious; looser levels are benign (past the L100 precision elbow). Lower
+// levels fire at stricter false-positive cutoffs, so they carry higher
+// confidence. Uses the same CriticalLevel constant as envelopeClass — one
+// cutoff, no divergence.
 func classFromLevel(l *int) int {
 	if l == nil {
 		return 2 // hostile under manual thresholds
@@ -7174,10 +7191,12 @@ func classFromLevel(l *int) int {
 	switch v := *l; {
 	case v == -1:
 		return 0 // benign sentinel
-	case v <= 50:
+	case v <= CriticalLevel:
 		return 2 // hostile
-	default:
+	case v <= SuspiciousCeiling:
 		return 1 // suspicious
+	default:
+		return 0 // benign: looser than the ceiling
 	}
 }
 
