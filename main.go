@@ -38,6 +38,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"codeberg.org/atomdrift/hopper"
 	"codeberg.org/atomdrift/obs"
@@ -682,12 +683,11 @@ type resultData struct {
 	RiskLabel        string
 	// LLMInterpretation is the one-sentence rationale from the optional LLM
 	// interpretation pass (litmus `llm.interpretation`), shown in the hero when
-	// present — typically only on suspicious/hostile samples. LLMReview is set
-	// when the model and ML disagreed, so the hero can flag it for review.
-	// LLMConfidence is the blended confidence as a percentage. All empty/zero
-	// when no interpretation ran (the common case).
+	// present — typically only on suspicious/hostile samples. LLMConfidence is
+	// the blended confidence as a percentage. Both empty/zero when no
+	// interpretation ran (the common case). An ML/LLM disagreement is surfaced
+	// through VerdictTip rather than a separate badge.
 	LLMInterpretation string
-	LLMReview         bool
 	LLMConfidence     int
 	FirstSeenAgo      string
 	FirstSeenAt       string
@@ -765,10 +765,15 @@ type resultData struct {
 	// percentage shown on the litmus badge (from ml.conf, falling back to
 	// levelConfidence for cached envelopes).
 	LevelConfidence int
-	Probability     float64
-	IsArchive       bool
-	LimitedInfo     bool
-	RescanAllowed   bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
+	// VerdictTip is the hover text for the level percentage badge: normally a
+	// terse "[L250] 80% confident hostile (lower levels are stricter)", but when
+	// the LLM interpretation moved the verdict off the raw ML class it instead
+	// reads "[L250] ML rated as hostile, LLM downgraded to suspicious".
+	VerdictTip    string
+	Probability   float64
+	IsArchive     bool
+	LimitedInfo   bool
+	RescanAllowed bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -1812,7 +1817,8 @@ func loadConfig() {
 	// link plus hopper's local fsync + DB insert. Reads from /api/file
 	// and similar smaller fetches finish well inside this budget.
 	hopperClient = &http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout:   5 * time.Minute,
+		Transport: backendTransport(),
 	}
 
 	// litmus analysis server. Precedence: flag > LITMUS_ADDR env > default.
@@ -1830,7 +1836,8 @@ func loadConfig() {
 	// The litmus analyze can run the full ingest budget; give the client a
 	// slightly longer backstop so the context deadline fires first.
 	litmusClient = &http.Client{
-		Timeout: uploadIngestTimeout + time.Minute,
+		Timeout:   uploadIngestTimeout + time.Minute,
+		Transport: backendTransport(),
 	}
 
 	csrfKey = loadCSRFKey()
@@ -1840,6 +1847,26 @@ func loadConfig() {
 		"LITMUS_ADDR", litmusAddr,
 		"PORT", os.Getenv("PORT"),
 	)
+}
+
+// backendTransport builds an HTTP transport tuned for prism's backends. Both
+// the hopper and litmus clients talk to a single host each, so the default
+// transport's MaxIdleConnsPerHost of 2 would force connection churn (a fresh
+// TCP+TLS handshake and teardown) once more than two calls to a backend are in
+// flight — exactly the case under a download burst or concurrent uploads.
+// Cloning DefaultTransport preserves its proxy, dialer, and TLS defaults; we
+// only widen the idle-connection pool so keep-alives are actually reused.
+func backendTransport() *http.Transport {
+	t := &http.Transport{}
+	// DefaultTransport is always *http.Transport; clone it to keep its proxy,
+	// dialer, and TLS settings when the assertion holds, else start from zero.
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = base.Clone()
+	}
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 64
+	t.IdleConnTimeout = 90 * time.Second
+	return t
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code and bytes written.
@@ -2774,6 +2801,48 @@ func classificationClass(name string) (int, bool) {
 	}
 }
 
+// classLabel is the inverse of classificationClass: the lowercase verdict name
+// for a 0/1/2 severity class. Unknown classes render as "unknown".
+func classLabel(class int) string {
+	switch class {
+	case 0:
+		return "benign"
+	case 1:
+		return "suspicious"
+	case 2:
+		return "hostile"
+	default:
+		return "unknown"
+	}
+}
+
+// verdictTip builds the hover text for the level percentage badge. The badge
+// renders only for a non-benign level (non-nil, != -1), so an empty string is
+// returned otherwise. When an LLM interpretation pass ran and moved the verdict
+// off the raw ML class, the tip names the disagreement — e.g. "[L250] ML rated
+// as hostile, LLM downgraded to suspicious". Otherwise it states the level:
+// "[L250] 80% confident hostile (lower levels are stricter)".
+func verdictTip(level *int, pct int, finalClass string, rawClass *int, llm llmInterpretation) string {
+	if level == nil || *level == -1 {
+		return ""
+	}
+	if llm.Grade != "" && rawClass != nil {
+		if outClass, ok := classificationClass(llm.Outcome); ok && outClass != *rawClass {
+			dir := "escalated"
+			if outClass < *rawClass {
+				dir = "downgraded"
+			}
+			return fmt.Sprintf("[L%d] ML rated as %s, LLM %s to %s",
+				*level, classLabel(*rawClass), dir, llm.Outcome)
+		}
+	}
+	label := finalClass
+	if label == "" {
+		label = classLabel(envelopeClass(level))
+	}
+	return fmt.Sprintf("[L%d] %d%% confident %s (lower levels are stricter)", *level, pct, label)
+}
+
 // parseBoolQuery treats common truthy strings ("1", "true", "yes", "on") as
 // true and everything else (including empty) as false. Used for opt-in URL
 // flags where we'd rather accept "/?feeds=1" and "/?feeds=true" alike than
@@ -3188,8 +3257,20 @@ func sanitizeFilter(s string) string {
 // "requests ", and "  requests" all collapse to one cache key and one query:
 // sanitize, lowercase (the hopper Search predicate is case-insensitive), and
 // collapse internal whitespace runs to a single space.
+//
+// Terms shorter than three characters are dropped to "". The hopper Search
+// predicate is `filename ILIKE '%term%'`, served by pg_trgm's GIN index whose
+// operator class only indexes trigrams — a one- or two-character substring
+// can't use it and forces a full scan of the feed working set, while every
+// distinct short term is also its own cache-miss key. A 1–2 char term is too
+// coarse to filter usefully, so it falls back to the unfiltered feed. A pasted
+// SHA is handled earlier by shaFromSearchQuery, so no exact lookup is lost.
 func normalizeSearch(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(sanitizeFilter(s)), " "))
+	q := strings.ToLower(strings.Join(strings.Fields(sanitizeFilter(s)), " "))
+	if utf8.RuneCountInString(q) < 3 {
+		return ""
+	}
+	return q
 }
 
 // normalizeDomain canonicalizes the ?domain= filter to the lowercase eTLD+1
@@ -3844,9 +3925,13 @@ func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, erro
 
 	var content, traits bytes.Buffer
 	if err := resultTemplate.ExecuteTemplate(&content, "contentBody", data); err != nil {
+		// A template failure is a server bug, not a transient fault — surface it
+		// at Error so it isn't buried at the handler's Debug level.
+		logger.Error("members render failed", "template", "contentBody", "sha256", sha, "error", err)
 		return cachedMembers{}, fmt.Errorf("members render contentBody %s: %w", sha, err)
 	}
 	if err := resultTemplate.ExecuteTemplate(&traits, "findingsbody", data); err != nil {
+		logger.Error("members render failed", "template", "findingsbody", "sha256", sha, "error", err)
 		return cachedMembers{}, fmt.Errorf("members render findingsbody %s: %w", sha, err)
 	}
 
@@ -6006,13 +6091,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// subset of samples get it). The `llm` section is a top-level envelope
 	// sibling of `ml`, not nested inside it. Gate on a non-empty rationale so a
 	// pass that failed (carries only `error`) doesn't render an empty line.
+	var llm llmInterpretation
 	if len(fullResp.LLM) > 0 {
-		var llm llmInterpretation
 		if err := json.Unmarshal(fullResp.LLM, &llm); err != nil {
 			logger.Debug("failed to parse llm section", "sha256", sha256Hex, "error", err)
 		} else if llm.Interpretation != "" {
 			data.LLMInterpretation = llm.Interpretation
-			data.LLMReview = llm.Review
 			data.LLMConfidence = int(llm.Conf*100 + 0.5)
 		}
 	}
@@ -6187,6 +6271,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	if mlResp.V != "6" && mlResp.V != "7" {
 		data.LevelConfidence = levelConfidence(data.Level)
 	}
+
+	// VerdictTip is the hover text for the level percentage badge. The badge only
+	// renders for a non-benign level (Level set and != -1), so build the tip for
+	// that case. When the LLM interpretation moved the verdict off the raw ML
+	// class, the tip names the disagreement; otherwise it states the level.
+	data.VerdictTip = verdictTip(data.Level, data.LevelConfidence, res.Classification, mlResp.RawClass, llm)
 
 	// Flag when we have limited analysis info (unknown file type AND no findings)
 	if (data.FileType == "UNKNOWN" || data.FileType == "") && totalFindings == 0 {
@@ -7242,17 +7332,17 @@ type litmusFullResponse struct {
 // llmInterpretation is the optional `llm` object a litmus envelope carries when
 // the LLM interpretation pass ran. The pass is gated (on ML probability), so it
 // is present only for a subset of samples — typically suspicious/hostile.
-// Interpretation is the human-readable rationale shown in the hero; Review flags
-// ML/LLM disagreement; the rest mirror scan's interpret::Interpretation. All
-// fields are absent (zero) when no pass ran.
+// Interpretation is the human-readable rationale shown in the hero; Grade and
+// Outcome carry the LLM's raw verdict and the final blended verdict; the rest
+// mirror scan's interpret::Interpretation. All fields are absent (zero) when no
+// pass ran.
 type llmInterpretation struct {
 	Grade          string  `json:"grade"`   // LLM's raw verdict; "" when the call failed
 	Outcome        string  `json:"outcome"` // final blended verdict
 	Interpretation string  `json:"interpretation"`
 	Model          string  `json:"model"`
-	Error          string  `json:"error"`  // failure reason; "" on success
-	Conf           float64 `json:"conf"`   // blended confidence [0,1]
-	Review         bool    `json:"review"` // ML and LLM disagree → human review
+	Error          string  `json:"error"` // failure reason; "" on success
+	Conf           float64 `json:"conf"`  // blended confidence [0,1]
 }
 
 // litmusMlResponse matches the ml section of the litmus response. Accepts
@@ -7292,6 +7382,11 @@ type litmusMlResponse struct {
 	Level          *int       `json:"-"` // v=5 only; kept for back-compat parsing
 	Classification int        `json:"-"`
 	Probability    float64    `json:"-"`
+	// RawClass is the model's *pre-interpretation* verdict — the most severe
+	// class across the per-route detection modules (`ml.mods[].cls`), before any
+	// LLM blend overwrote the top-level level. nil when the envelope carries no
+	// `mods` (v<7, or cached rows). Used to surface an ML/LLM disagreement.
+	RawClass *int `json:"-"`
 }
 
 // UnmarshalJSON parses a litmus ml-section envelope. It accepts v=7 (the
@@ -7324,10 +7419,24 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 			ID   int     `json:"id"`
 			Prob float64 `json:"prob"`
 		} `json:"fs"`
+		// Mods is the per-route detection output (v7). Each `cls` is that route's
+		// raw class; the sample's raw ML verdict is the most severe across them.
+		Mods []struct {
+			Cls int `json:"cls"`
+		} `json:"mods"`
 		Prob float64 `json:"prob"` // raw model score used for the top-level decision
 	}
 	if err := json.Unmarshal(data, &current); err != nil {
 		return err
+	}
+	if len(current.Mods) > 0 {
+		raw := current.Mods[0].Cls
+		for _, m := range current.Mods[1:] {
+			if m.Cls > raw {
+				raw = m.Cls
+			}
+		}
+		r.RawClass = &raw
 	}
 	if current.L == nil {
 		current.L = current.OldL

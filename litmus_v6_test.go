@@ -166,9 +166,6 @@ func TestLitmusEnvelopeLLM(t *testing.T) {
 	if llm.Grade != "benign" || llm.Outcome != "benign" {
 		t.Errorf("grade/outcome = %q/%q, want benign/benign", llm.Grade, llm.Outcome)
 	}
-	if llm.Review {
-		t.Error("review should be false")
-	}
 	if llm.Conf < 0.56 || llm.Conf > 0.57 {
 		t.Errorf("conf = %v, want ~0.5623", llm.Conf)
 	}

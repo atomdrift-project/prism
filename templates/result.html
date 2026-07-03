@@ -335,8 +335,8 @@
         /* AI interpretation — a quiet callout under the SHA line. Sits on a soft
            surface with rounded corners so it reads as an intentional panel rather
            than floating text, matching the card idiom used elsewhere on the page.
-           The "AI" chip carries the carbon/toxic brand accent; the needs-review
-           state tints the whole callout amber and recolors the chip to match. */
+           The "AI" chip carries the carbon/toxic brand accent. Any ML/LLM
+           disagreement surfaces in the level badge's hover text, not here. */
         .hero-llm {
             display: flex;
             align-items: center;
@@ -367,20 +367,6 @@
             font-style: italic;
             color: var(--iron);
         }
-        .hero-llm-review {
-            flex: none;
-            margin-left: auto;
-            padding: 2px 9px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 600;
-            background: rgba(234, 179, 8, 0.18);
-            color: #854d0e;
-        }
-        .hero-llm.needs-review {
-            background: rgba(234, 179, 8, 0.08);
-        }
-        .hero-llm.needs-review .hero-llm-tag { background: rgba(234, 179, 8, 0.22); color: #713f12; }
         /* Verdict pill — small chip in the hero head corner, tinted by severity. */
         .verdict {
             display: inline-flex;
@@ -1635,12 +1621,11 @@
                     <span class="hero-toggle-icon" aria-hidden="true">▴</span>
                 </button>
             </div>
-            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="{{.LevelConfidence}}% calibrated confidence from level L{{deref .Level}} on the per-100M-benigns scale. Lower levels are stricter; off-grid L25001/L25002 mark litmus trait-floor overrides.">&nbsp;·&nbsp;{{.LevelConfidence}}%</span>{{end}}{{end}}</div>
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="{{.VerdictTip}}">&nbsp;·&nbsp;{{.LevelConfidence}}%</span>{{end}}{{end}}</div>
             {{if .LLMInterpretation}}
-            <div class="hero-llm{{if .LLMReview}} needs-review{{end}}">
+            <div class="hero-llm">
                 <span class="hero-llm-tag" title="AI interpretation{{if .LLMConfidence}} · {{.LLMConfidence}}% confidence{{end}}">AI</span>
                 <span class="hero-llm-text">{{.LLMInterpretation}}</span>
-                {{if .LLMReview}}<span class="hero-llm-review" title="The LLM and the ML classifier disagree — flagged for a human to review">⚠ needs review</span>{{end}}
             </div>
             {{end}}
             <div class="hero-body" id="hero-details">
