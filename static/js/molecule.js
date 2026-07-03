@@ -719,6 +719,7 @@ canvas.addEventListener("mousemove", (event) => {
 // ============================================================
 // Build scene
 // ============================================================
+const moleculeBuildStart = performance.now();
 if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.length > 0) {
   // Galaxy mode - multiple molecules for archives
   moleculeData.molecules.forEach((mol, molIndex) => {
@@ -821,15 +822,50 @@ if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.l
   moleculeGroup.add(mesh);
 }
 
+// Scene-graph construction is done; capture its cost and the molecule size for
+// the render-timing beacon below.
+const moleculeBuildMs = performance.now() - moleculeBuildStart;
+const moleculeAtomCount = moleculeData?.molecules
+  ? moleculeData.molecules.reduce((n, m) => n + (m.atoms ? m.atoms.length : 0), 0)
+  : moleculeData?.atoms
+    ? moleculeData.atoms.length
+    : 0;
+
+// Report browser-side render timing to the server once, after the first paint,
+// so slow client renders show up in Grafana next to the server-side phase log.
+// Fire-and-forget; a telemetry failure must never affect the page.
+function reportRenderTiming() {
+  try {
+    if (!navigator.sendBeacon) return;
+    const nav = performance.getEntriesByType("navigation")[0];
+    const sha = location.pathname.split("/").filter(Boolean).pop() || "";
+    const body = JSON.stringify({
+      ttfb_ms: nav ? Math.round(nav.responseStart) : 0,
+      dom_content_ms: nav ? Math.round(nav.domContentLoadedEventEnd) : 0,
+      molecule_build_ms: Math.round(moleculeBuildMs),
+      first_render_ms: Math.round(performance.now()),
+      atoms: moleculeAtomCount,
+    });
+    navigator.sendBeacon(`/file/${sha}/rum`, new Blob([body], { type: "application/json" }));
+  } catch {
+    // ignore — telemetry must not break the page
+  }
+}
+
 // Stop auto-rotate when user interacts
 controls.addEventListener("start", () => {
   controls.autoRotate = false;
 });
 
+let firstFramePainted = false;
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
+  if (!firstFramePainted) {
+    firstFramePainted = true;
+    reportRenderTiming();
+  }
 }
 
 animate();

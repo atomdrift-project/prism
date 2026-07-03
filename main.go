@@ -1715,6 +1715,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
 	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
+	mux.HandleFunc("POST /file/{sha256}/rum", handleFileRUM)
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /help/query", handleHelpQuery)
@@ -3534,7 +3535,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		invalidateSampleCaches(r.Context(), sha, "hard-refresh")
 	}
 
-	cacheHit, res, err := lookupResult(r.Context(), sha, reqLogger)
+	ctx := r.Context()
+	lookupStart := time.Now()
+	lctx, lookupSpan := obs.Span(ctx, "prism.detail.lookup")
+	cacheHit, res, err := lookupResult(lctx, sha, reqLogger)
+	lookupSpan.End()
+	lookupDur := time.Since(lookupStart)
 	if err != nil {
 		var pend *pendingAnalysisError
 		if errors.As(err, &pend) {
@@ -3570,24 +3576,31 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		"cache_hit", cacheHit,
 		"duration_ms", time.Since(requestStart).Milliseconds(),
 	)
+	prepStart := time.Now()
 	data := prepareResultData(res.Filename, sha, &res)
+	prepDur := time.Since(prepStart)
 	data.Nonce = nonceFor(r)
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "rescan")
 	data.DownloadToken = csrfToken(r, "download")
+	var reportDur, parentsDur time.Duration
 	if hopperDB.Load() != nil {
-		if cached, ok := latestReport(r.Context(), sha, reqLogger); ok {
+		reportStart := time.Now()
+		if cached, ok := latestReport(ctx, sha, reqLogger); ok {
 			data.ReportContent = cached.Content
 			data.ReportProvider = cached.Provider
 			if !cached.CreatedAt.IsZero() {
 				data.ReportCreated = cached.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 			}
 		}
+		reportDur = time.Since(reportStart)
 		// Parent archives: only meaningful on a standalone child view, not
 		// when the user is already looking at the archive itself.
 		if !data.IsArchive {
-			data.Parents = lookupParentArchives(r.Context(), sha, reqLogger)
+			parentsStart := time.Now()
+			data.Parents = lookupParentArchives(ctx, sha, reqLogger)
+			parentsDur = time.Since(parentsStart)
 		}
 	}
 	switch r.URL.Query().Get("layout") {
@@ -3600,11 +3613,124 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Build", buildCommit)
 	w.Header().Set("X-Layout", data.Layout)
+	// template_ms below includes the streamed write to the client, so a slow
+	// client (not a slow server) inflates it — read it alongside the client
+	// RUM beacon (handleFileRUM), which times the browser side directly.
+	tmplStart := time.Now()
 	if err := resultTemplate.Execute(w, data); err != nil {
 		reqLogger.Error("template execution failed",
 			"template", "result",
 			"error", err,
 		)
+	}
+	tmplDur := time.Since(tmplStart)
+
+	// Always-on phase breakdown of the whole detail render. Emitted for every
+	// request (not just sampled traces) so a slow page is never invisible, and
+	// escalated to WARN past the slow threshold. molecule_bytes is the payload
+	// the browser must parse and lay out — the server-side proxy for client
+	// render cost.
+	totalDur := time.Since(requestStart)
+	level := slog.LevelInfo
+	if totalDur >= slowDetailThreshold {
+		level = slog.LevelWarn
+	}
+	reqLogger.Log(ctx, level, "detail render timing",
+		"cache_hit", cacheHit,
+		"is_archive", data.IsArchive,
+		"molecule_bytes", len(data.MoleculeJSON),
+		"lookup_ms", lookupDur.Milliseconds(),
+		"prepare_ms", prepDur.Milliseconds(),
+		"report_ms", reportDur.Milliseconds(),
+		"parents_ms", parentsDur.Milliseconds(),
+		"template_ms", tmplDur.Milliseconds(),
+		"total_ms", totalDur.Milliseconds(),
+	)
+}
+
+// clientTiming is the render-timing beacon molecule.js posts after the detail
+// page's first paint. Values are milliseconds since navigation start except
+// MoleculeBuildMs (the Three.js scene-graph construction); Atoms is the
+// molecule's node count, the dominant driver of browser render cost. Every
+// field is clamped on ingest so a malformed or hostile beacon cannot skew the
+// histogram.
+type clientTiming struct {
+	TTFBMs          float64 `json:"ttfb_ms"`
+	DOMContentMs    float64 `json:"dom_content_ms"`
+	MoleculeBuildMs float64 `json:"molecule_build_ms"`
+	FirstRenderMs   float64 `json:"first_render_ms"`
+	Atoms           int     `json:"atoms"`
+}
+
+// handleFileRUM ingests the browser render-timing beacon for a detail page,
+// recording the client-render histogram plus a structured log correlated by
+// sha. It performs no privileged action and mutates no state — it only clamps
+// and records bounded telemetry — so it needs no CSRF token; the browser posts
+// it fire-and-forget via navigator.sendBeacon and ignores the 204.
+func handleFileRUM(w http.ResponseWriter, r *http.Request) {
+	sha := strings.ToLower(r.PathValue("sha256"))
+	if !validSHA256(sha) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// A timing beacon is a few hundred bytes; cap the body hard.
+	var t clientTiming
+	if err := json.NewDecoder(io.LimitReader(r.Body, 512)).Decode(&t); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	size := moleculeSizeBucket(t.Atoms)
+	ttfb := clampMillis(t.TTFBMs)
+	domContent := clampMillis(t.DOMContentMs)
+	build := clampMillis(t.MoleculeBuildMs)
+	firstRender := clampMillis(t.FirstRenderMs)
+	// The histogram is in seconds; the log carries the raw milliseconds.
+	recordClientRender(ctx, "ttfb", size, ttfb/1000)
+	recordClientRender(ctx, "dom_content", size, domContent/1000)
+	recordClientRender(ctx, "molecule_build", size, build/1000)
+	recordClientRender(ctx, "first_render", size, firstRender/1000)
+	logger.Info("client render timing",
+		"sha256", sha,
+		"atoms", t.Atoms,
+		"size", size,
+		"ttfb_ms", int64(ttfb),
+		"dom_content_ms", int64(domContent),
+		"molecule_build_ms", int64(build),
+		"first_render_ms", int64(firstRender),
+	)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// clampMillis bounds a client-reported millisecond value to [0, 10min]. JSON
+// numbers cannot carry NaN/Inf, so a plain range clamp keeps a bogus beacon
+// from injecting absurd samples.
+func clampMillis(ms float64) float64 {
+	switch {
+	case ms < 0:
+		return 0
+	case ms > 600000:
+		return 600000
+	default:
+		return ms
+	}
+}
+
+// moleculeSizeBucket maps a molecule's atom count to a bounded label so
+// client-render latency stays correlatable with molecule complexity without an
+// unbounded-cardinality metric label.
+func moleculeSizeBucket(atoms int) string {
+	switch {
+	case atoms <= 0:
+		return "unknown"
+	case atoms < 50:
+		return "small"
+	case atoms < 250:
+		return "medium"
+	case atoms < 1000:
+		return "large"
+	default:
+		return "huge"
 	}
 }
 
@@ -3715,6 +3841,12 @@ const parentLookupTimeout = 2 * time.Second
 // hopper. Older entries are still served immediately; the refresh happens
 // in a background goroutine so the request path never waits on the database.
 const hopperCacheTTL = time.Hour
+
+// slowDetailThreshold is the total uncached hopper-fetch time past which
+// fetchFromHopper and handleFile log their phase breakdowns at WARN instead of
+// Debug/Info, so pathological detail-page loads surface in logs regardless of
+// trace sampling.
+const slowDetailThreshold = time.Second
 
 // refreshInFlight deduplicates concurrent background refreshes per sha so a
 // stale entry under load triggers one hopper query, not one per request.
@@ -3836,21 +3968,30 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	// hopper-db can't pin the caller; a timeout trips the breaker.
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
-	start := time.Now()
-	sample, err := db.SampleBySHA256(ctx, sha)
+
+	// Phase 1: load the sample row. For an archive this detoasts the parent's
+	// (possibly multi-megabyte) cleave_result, so it is spanned and timed
+	// separately from the member reassembly below — the two are the candidate
+	// culprits when a detail page is slow, and only a phase breakdown tells
+	// them apart.
+	sampleStart := time.Now()
+	sctx, sampleSpan := obs.Span(ctx, "prism.detail.sample_lookup")
+	sample, err := db.SampleBySHA256(sctx, sha)
+	sampleSpan.End()
 	if err != nil {
 		if errors.Is(err, hopper.ErrNotFound) {
 			// The DB answered; "not found" is a healthy response, not a fault.
 			dbBreaker.success()
-			recordDep(ctx, "hopper-db", "lookup", "ok", start)
+			recordDep(ctx, "hopper-db", "lookup", "ok", sampleStart)
 			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
 		}
 		dbBreaker.failure()
-		recordDep(ctx, "hopper-db", "lookup", "error", start)
+		recordDep(ctx, "hopper-db", "lookup", "error", sampleStart)
 		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
 	}
 	dbBreaker.success()
-	recordDep(ctx, "hopper-db", "lookup", "ok", start)
+	recordDep(ctx, "hopper-db", "lookup", "ok", sampleStart)
+	sampleDur := time.Since(sampleStart)
 
 	if len(sample.CleaveResult) == 0 {
 		return storedResult{}, &pendingAnalysisError{
@@ -3860,29 +4001,69 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	}
 
 	res := storedResultFromHopperSample(sample)
-	if hopperWasCompacted(sample.CleaveResult) {
+	compacted := hopperWasCompacted(sample.CleaveResult)
+	var membersDur, reassembleDur time.Duration
+	var memberCount int
+	if compacted {
 		// Hydrate the members we'll render and hand them to hopper, which owns
 		// reassembly (the inverse of the split it applied on storage). One query
 		// does it: the score-ranked top-N from sample_locations, plus the members
 		// a container-level finding draws from (linked, included regardless of
 		// their standalone score), falling back to the stub SHAs the compacted
 		// envelope embedded only when the parent has no edges yet.
+		//
+		// The span and timer start before the envelope parse so members_ms covers
+		// the whole resolution — no cost hides between the sample load and the
+		// reassembly below.
+		membersStart := time.Now()
+		mctx, memSpan := obs.Span(ctx, "prism.detail.members")
 		linked := compositeLinkedSHAs(sample.CleaveResult, sha)
 		fallback := envelopeChildSHAs(sample.CleaveResult, sha)
 		if len(fallback) > archiveMemberFetchLimit {
 			fallback = fallback[:archiveMemberFetchLimit]
 		}
-		children, cerr := db.MembersWithSamplesByParent(ctx, sha, archiveMemberFetchLimit, linked, fallback)
+		children, cerr := db.MembersWithSamplesByParent(mctx, sha, archiveMemberFetchLimit, linked, fallback)
+		memSpan.End()
+		membersDur = time.Since(membersStart)
 		if cerr != nil {
-			logger.Debug("members with samples by parent failed", "sha", sha, "error", cerr)
-		} else if len(children) > 0 {
-			if enriched, eerr := hopper.Reassemble(sample, children); eerr != nil {
-				logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
-			} else {
-				res.RawLitmus = string(enriched)
+			recordDep(ctx, "hopper-db", "members", "error", membersStart)
+			logger.Debug("members with samples by parent failed", "sha", sha, "error", cerr, "members_ms", membersDur.Milliseconds())
+		} else {
+			recordDep(ctx, "hopper-db", "members", "ok", membersStart)
+			memberCount = len(children)
+			if memberCount > 0 {
+				reassembleStart := time.Now()
+				_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
+				enriched, eerr := hopper.Reassemble(sample, children)
+				reSpan.End()
+				reassembleDur = time.Since(reassembleStart)
+				if eerr != nil {
+					logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
+				} else {
+					res.RawLitmus = string(enriched)
+				}
 			}
 		}
 	}
+
+	// One structured breakdown of the uncached fetch. Emitted at WARN past the
+	// slow threshold so a pathological archive reassembly surfaces in logs even
+	// when this trace was not sampled; Debug otherwise for routine correlation.
+	total := sampleDur + membersDur + reassembleDur
+	level := slog.LevelDebug
+	if total >= slowDetailThreshold {
+		level = slog.LevelWarn
+	}
+	logger.Log(ctx, level, "hopper detail fetch",
+		"sha256", sha,
+		"compacted", compacted,
+		"cleave_bytes", len(sample.CleaveResult),
+		"members", memberCount,
+		"sample_ms", sampleDur.Milliseconds(),
+		"members_ms", membersDur.Milliseconds(),
+		"reassemble_ms", reassembleDur.Milliseconds(),
+		"total_ms", total.Milliseconds(),
+	)
 	return res, nil
 }
 

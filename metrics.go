@@ -29,6 +29,12 @@ import (
 var (
 	depRequests metric.Int64Counter
 	depDuration metric.Float64Histogram
+	// clientRenderDuration records browser-side detail-page render phases from
+	// the molecule.js RUM beacon (handleFileRUM) — the wall-clock the user
+	// actually experienced (TTFB, DOM-ready, Three.js molecule build, first
+	// paint). The phase and size attributes are bounded; no sha or user data is
+	// ever a label.
+	clientRenderDuration metric.Float64Histogram
 )
 
 // depLatencyBucketsSec mirrors obs's shared latency policy so prism's
@@ -64,6 +70,17 @@ func initDependencyMetrics() {
 		depDuration = h
 	} else {
 		logger.Warn("dependency duration histogram unavailable", "error", err)
+	}
+
+	if h, err := m.Float64Histogram(
+		"prism.page.client_render.duration",
+		metric.WithDescription("Browser-side detail-page render phases reported by the RUM beacon."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(depLatencyBucketsSec...),
+	); err == nil {
+		clientRenderDuration = h
+	} else {
+		logger.Warn("client render histogram unavailable", "error", err)
 	}
 
 	// Circuit-breaker position as an async gauge: 0=closed, 1=open,
@@ -106,4 +123,18 @@ func recordDep(ctx context.Context, dependency, operation, outcome string, start
 	if !start.IsZero() && depDuration != nil {
 		depDuration.Record(ctx, time.Since(start).Seconds(), attrs)
 	}
+}
+
+// recordClientRender records one browser-side render phase (in seconds) under
+// its phase and molecule-size buckets. A non-positive value is dropped so an
+// unmeasured phase never lands as a zero sample. Safe before
+// initDependencyMetrics: a nil instrument makes this a no-op.
+func recordClientRender(ctx context.Context, phase, size string, seconds float64) {
+	if clientRenderDuration == nil || seconds <= 0 {
+		return
+	}
+	clientRenderDuration.Record(ctx, seconds, metric.WithAttributes(
+		attribute.String("phase", phase),
+		attribute.String("size", size),
+	))
 }
