@@ -7295,18 +7295,22 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 // means it never fires (benign). Both derivations (envelopeClass and
 // classFromLevel) use this one constant — there is no second cutoff.
 //
-// Set to L50, matching scan's DEFAULT_SEVERITY_LEVEL operating point (the level
-// the model is currently deployed and calibrated at). See
-// collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
-const CriticalLevel = 50
+// Set to L25, matching scan's DEFAULT_SEVERITY_LEVEL operating point (the level
+// the model is currently deployed and calibrated at; tightened from L50 in
+// 2026-07 to the knee of the hostile curve, just below the sharp L30->L40 FP
+// cliff). See collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
+const CriticalLevel = 25
 
 // SuspiciousCeiling is the loosest fired-level (FP per 100M benigns) that still
 // reads as suspicious. Above it a firing is benign informational noise rather
-// than a suspicious verdict. Set to L100 — the precision elbow from hopper's
-// fired-level analysis (L250 and looser add more false positives than true
-// positives). Mirrors scan's SUSPICIOUS_LEVEL_CEILING and hopper/promoter's
-// SuspiciousCeiling; keep the cross-repo group in sync.
-const SuspiciousCeiling = 100
+// than a suspicious verdict. Set to L3000 — an EXPERIMENTAL widening (2026-07),
+// the loosest robustly-stable point on the calibrate curve (recall peaks at L4000
+// then collapses ~8pp at L5000). Overrides the prior L100 precision elbow from
+// hopper's fired-level analysis (L250 and looser add more false positives than
+// true positives); re-measure and tighten back if the suspicious bucket floods.
+// Mirrors scan's SUSPICIOUS_LEVEL_CEILING and hopper/promoter's SuspiciousCeiling;
+// keep the cross-repo group in sync.
+const SuspiciousCeiling = 3000
 
 // envelopeClass derives the legacy 0/1/2 classification from a v6/v7 envelope's
 // level field. -1 → benign (0); 0..=CriticalLevel → hostile (2); CriticalLevel <

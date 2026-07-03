@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -10,7 +11,8 @@ import (
 // replaced by the single `l` verdict-and-level marker both at the top level
 // and inside fs[]. Unlike TestLitmusMlResponseV6 in litmus_v5_test.go (which
 // exercises the envelopeClass 0/2 mapping), this asserts the classFromLevel
-// policy, including the suspicious band at level >= 51.
+// policy. Boundary levels are derived from CriticalLevel/SuspiciousCeiling so
+// the cases track the operating point instead of hardcoding it.
 func TestLitmusMlResponseV6Verdict(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -28,31 +30,31 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 			wantConf:  97,
 		},
 		{
-			name:      "hostile at the critical line, level 50",
-			raw:       `{"v":"6","prob":0.91,"l":50,"conf":90,"version":"vtest","fs":[{"id":0,"prob":0.91,"l":50,"conf":90}]}`,
+			name:      "hostile at the critical line",
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.91,"l":%[1]d,"conf":90,"version":"vtest","fs":[{"id":0,"prob":0.91,"l":%[1]d,"conf":90}]}`, CriticalLevel),
 			wantClass: 2,
-			wantL:     50,
+			wantL:     CriticalLevel,
 			wantConf:  90,
 		},
 		{
-			name:      "suspicious just past the edge, level 51",
-			raw:       `{"v":"6","prob":0.78,"l":51,"conf":89,"version":"vtest","fs":[{"id":0,"prob":0.78,"l":51,"conf":89}]}`,
+			name:      "suspicious just past the critical line",
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.78,"l":%[1]d,"conf":89,"version":"vtest","fs":[{"id":0,"prob":0.78,"l":%[1]d,"conf":89}]}`, CriticalLevel+1),
 			wantClass: 1,
-			wantL:     51,
+			wantL:     CriticalLevel + 1,
 			wantConf:  89,
 		},
 		{
-			name:      "suspicious at the ceiling, level 100",
-			raw:       `{"v":"6","prob":0.66,"l":100,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":100,"conf":85}]}`,
+			name:      "suspicious at the ceiling",
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.66,"l":%[1]d,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":%[1]d,"conf":85}]}`, SuspiciousCeiling),
 			wantClass: 1,
-			wantL:     100,
+			wantL:     SuspiciousCeiling,
 			wantConf:  85,
 		},
 		{
-			name:      "benign past the ceiling, level 250",
-			raw:       `{"v":"6","prob":0.5,"l":250,"conf":80,"version":"vtest","fs":[{"id":0,"prob":0.5,"l":250,"conf":80}]}`,
+			name:      "benign past the ceiling",
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.5,"l":%[1]d,"conf":80,"version":"vtest","fs":[{"id":0,"prob":0.5,"l":%[1]d,"conf":80}]}`, SuspiciousCeiling+1),
 			wantClass: 0,
-			wantL:     250,
+			wantL:     SuspiciousCeiling + 1,
 			wantConf:  80,
 		},
 		{
@@ -192,11 +194,11 @@ func TestClassFromLevel(t *testing.T) {
 		{name: "nil (manual thresholds) is hostile", nilL: true, want: 2},
 		{name: "benign sentinel", l: -1, want: 0},
 		{name: "level 0 is hostile", l: 0, want: 2},
-		{name: "level 50 (critical line) is hostile", l: 50, want: 2},
-		{name: "level 51 (just past the critical line) is suspicious", l: 51, want: 1},
-		{name: "level 100 (suspicious ceiling) is suspicious", l: 100, want: 1},
-		{name: "level 101 (just past the ceiling) is benign", l: 101, want: 0},
-		{name: "far past the ceiling is benign", l: 500, want: 0},
+		{name: "critical line is hostile", l: CriticalLevel, want: 2},
+		{name: "just past the critical line is suspicious", l: CriticalLevel + 1, want: 1},
+		{name: "suspicious ceiling is still suspicious", l: SuspiciousCeiling, want: 1},
+		{name: "just past the ceiling is benign", l: SuspiciousCeiling + 1, want: 0},
+		{name: "far past the ceiling is benign", l: SuspiciousCeiling * 2, want: 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
