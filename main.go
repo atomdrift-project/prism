@@ -57,6 +57,14 @@ var templatesFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
+// faviconSVG is served at the well-known /favicon.ico path. Browsers request
+// that path unprompted; without a route it falls through to GET /{ecosystem}
+// and runs a bogus feed query (ecosystem="favicon.ico"). Serving the SVG here
+// gives the tab its icon and stops that stray database hit.
+//
+//go:embed static/favicon.svg
+var faviconSVG []byte
+
 // buildCommit is set via -ldflags at build time (see Makefile).
 var buildCommit = "dev"
 
@@ -87,6 +95,7 @@ var (
 	feedDropdownCache  *fido.TieredCache[string, feedDropdowns]
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
+	membersCache       *fido.TieredCache[string, cachedMembers]
 	logger             *slog.Logger
 	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
 	// readOnlyMode is set by the PRISM_READONLY env var. When prism reads from a
@@ -610,6 +619,19 @@ type cachedReport struct {
 // distinguished from a cache miss.
 type cachedParents struct {
 	Entries []ParentArchive
+}
+
+// cachedMembers holds the fully-rendered GET /file/{sha}/members response. The
+// archive analysis is immutable once stored, so this is deterministic per sha:
+// caching it lets a hit skip the member DB fetch, hopper.Reassemble, and both
+// template executions, leaving only a cheap re-encode of the finished strings.
+// The json tags are the client-facing field names. Dropped by
+// invalidateSampleCaches on rescan.
+type cachedMembers struct {
+	ContentHTML string          `json:"content_html"`
+	TraitsHTML  string          `json:"traits_html"`
+	Galaxy      json.RawMessage `json:"galaxy"`
+	HasContent  bool            `json:"has_content"`
 }
 
 // resultData is the page-data shape consumed by result.html. Field order is
@@ -1469,6 +1491,7 @@ func main() {
 		feedDropdownCache = openNullCache[feedDropdowns]("feed dropdowns")
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
+		membersCache = openNullCache[cachedMembers]("members cache")
 	} else {
 		cacheDir := os.Getenv("CACHE_DIR")
 		if cacheDir == "" {
@@ -1498,6 +1521,10 @@ func main() {
 		feedDropdownCache = openNullCache[feedDropdowns]("feed dropdowns")
 		reportCache = openLocalFSCache[cachedReport]("prism-report", cacheDir, "report cache")
 		parentArchiveCache = openLocalFSCache[cachedParents]("prism-parents", cacheDir, "parent-archive cache")
+		// Keyed by real sha256s, so the localfs tier's growth is bounded by the
+		// sample set — persisting these survives restarts and keeps warmed
+		// archive pages instant.
+		membersCache = openLocalFSCache[cachedMembers]("prism-members", cacheDir, "members cache")
 	}
 
 	// Parse templates. isPublic is available in all templates so base.html
@@ -1639,6 +1666,11 @@ func main() {
 				logger.Error("failed to close fido parent-archive cache", "error", err)
 			}
 		}
+		if membersCache != nil {
+			if err := membersCache.Close(); err != nil {
+				logger.Error("failed to close fido members cache", "error", err)
+			}
+		}
 
 		// Flush OTel exporters last so the shutdown logs/spans go out.
 		if err := obsShutdown(shutdownCtx); err != nil {
@@ -1711,6 +1743,7 @@ func newMux() *http.ServeMux {
 		panic(err) // impossible: embedded FS is always valid
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
+	mux.HandleFunc("GET /favicon.ico", handleFavicon)
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
@@ -2664,6 +2697,7 @@ func invalidateSampleCaches(ctx context.Context, sha, reason string) {
 		{name: "result", del: cache.Delete},
 		{name: "report", del: reportCache.Delete},
 		{name: "parents", del: parentArchiveCache.Delete},
+		{name: "members", del: membersCache.Delete},
 	} {
 		if err := c.del(ctx, sha); err != nil {
 			logger.Debug("sample cache invalidation failed", "sha256", sha, "cache", c.name, "reason", reason, "error", err)
@@ -3732,6 +3766,17 @@ func moleculeSizeBucket(atoms int) string {
 	}
 }
 
+// handleFavicon serves the embedded SVG icon at /favicon.ico. It is
+// content-typed as SVG (browsers honor the type, not the .ico extension) and
+// cached hard since the asset ships with the binary.
+func handleFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	if _, err := w.Write(faviconSVG); err != nil {
+		logger.Debug("favicon write failed", "error", err)
+	}
+}
+
 // membersDeferred reports whether res is a compacted-archive envelope whose
 // member bodies are lazy-loaded by the browser. The raw (cleave) section keeps
 // hopper's "truncated" marker until the members are spliced back in, so this is
@@ -3759,7 +3804,14 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	res, err := enrichedResult(r.Context(), sha)
+	// The response is deterministic per sha, so build it once and serve the
+	// finished bytes thereafter. FetchTTL singleflights concurrent first-viewers
+	// onto one build, so a burst on a freshly-crawled archive costs one member
+	// fetch, not one per tab. renderMembersResponse holds the DB + reassembly +
+	// render cost; on a hit none of that runs.
+	cached, err := membersCache.FetchTTL(r.Context(), sha, auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
+		return renderMembersResponse(lctx, sha)
+	})
 	if err != nil {
 		// Best-effort enhancement: the page keeps its parent-only view either
 		// way, but distinguish a genuine 404 from a transient hopper fault so
@@ -3772,35 +3824,38 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(cached); err != nil {
+		logger.Debug("members json write failed", "sha256", sha, "error", err)
+	}
+}
+
+// renderMembersResponse builds the GET /file/{sha}/members payload: it hydrates
+// the archive members, renders the Content and Traits partials, and marshals the
+// JSON the client injects. It is the uncached body behind membersCache; a
+// returned error is propagated (not cached) so a transient hopper fault or a
+// 404 is retried on the next request rather than pinned.
+func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, error) {
+	res, err := enrichedResult(ctx, sha)
+	if err != nil {
+		return cachedMembers{}, err
+	}
 	data := prepareResultData(res.Filename, sha, &res)
 
 	var content, traits bytes.Buffer
 	if err := resultTemplate.ExecuteTemplate(&content, "contentBody", data); err != nil {
-		logger.Error("members render failed", "template", "contentBody", "sha256", sha, "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return cachedMembers{}, fmt.Errorf("members render contentBody %s: %w", sha, err)
 	}
 	if err := resultTemplate.ExecuteTemplate(&traits, "findingsbody", data); err != nil {
-		logger.Error("members render failed", "template", "findingsbody", "sha256", sha, "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return cachedMembers{}, fmt.Errorf("members render findingsbody %s: %w", sha, err)
 	}
 
-	resp := struct {
-		ContentHTML string          `json:"content_html"`
-		TraitsHTML  string          `json:"traits_html"`
-		Galaxy      json.RawMessage `json:"galaxy"`
-		HasContent  bool            `json:"has_content"`
-	}{
+	return cachedMembers{
 		ContentHTML: content.String(),
 		TraitsHTML:  traits.String(),
-		HasContent:  len(data.FileViews) > 0,
 		Galaxy:      json.RawMessage(string(data.MoleculeJSON)),
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		logger.Debug("members json write failed", "sha256", sha, "error", err)
-	}
+		HasContent:  len(data.FileViews) > 0,
+	}, nil
 }
 
 // maxParentArchives caps how many "found in" backlinks a child page renders.
@@ -3905,6 +3960,13 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 // parentLookupTimeout bounds the single ParentArchivesForChild lookup so a slow
 // hopper-db degrades the backlinks, not the page.
 const parentLookupTimeout = 2 * time.Second
+
+// memberEnrichTimeout bounds the archive-member hydration behind GET
+// /file/{sha}/members. The parent-only page has already painted, so member
+// splicing is a best-effort enhancement: a distressed hopper-db must shed it
+// fast rather than let unbounded member queries pile on (observed stretching a
+// ~6-row primary-key fetch to 37s when the DB was contended).
+const memberEnrichTimeout = 5 * time.Second
 
 // hopperCacheTTL is how long a cached result is served without consulting
 // hopper. Older entries are still served immediately; the refresh happens
@@ -4058,19 +4120,35 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 	if db == nil {
 		return nil, errors.New("hopper not connected")
 	}
-	membersStart := time.Now()
-	mctx, memSpan := obs.Span(ctx, "prism.detail.members")
 	wanted := envelopeChildSHAs(sample.CleaveResult, sha)
 	if len(wanted) > maxFilesShown {
 		wanted = wanted[:maxFilesShown]
 	}
 	wanted = append(wanted, compositeLinkedSHAs(sample.CleaveResult, sha)...)
-	children, err := db.SamplesBySHAs(mctx, wanted)
+	if len(wanted) == 0 {
+		return nil, nil
+	}
+	// Gate on the same breaker as the parent lookup and bound the read tightly:
+	// the page is already usable parent-only, so a slow/contended hopper-db must
+	// fail this fast instead of hanging the /members request (see
+	// memberEnrichTimeout). Member timeouts feed the breaker so sustained
+	// distress sheds this load entirely.
+	if err := dbBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-db", "members", "rejected", time.Time{})
+		return nil, fmt.Errorf("hopper-db members: %w", err)
+	}
+	mctx, cancel := context.WithTimeout(ctx, memberEnrichTimeout)
+	defer cancel()
+	membersStart := time.Now()
+	sctx, memSpan := obs.Span(mctx, "prism.detail.members")
+	children, err := db.SamplesBySHAs(sctx, wanted)
 	memSpan.End()
 	if err != nil {
+		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "members", "error", membersStart)
 		return nil, err
 	}
+	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "members", "ok", membersStart)
 	if len(children) == 0 {
 		return nil, nil

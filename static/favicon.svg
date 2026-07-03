@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="atomdrift">
+  <circle cx="50" cy="50" r="48" fill="#0a0a0a"/>
+  <path d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z" fill="#d0ff00"/>
+  <path d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z" fill="#d0ff00"/>
+  <path d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z" fill="#d0ff00"/>
+  <circle cx="50" cy="50" r="8" fill="#d0ff00"/>
+</svg>

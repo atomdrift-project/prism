@@ -20,7 +20,7 @@ if (membersSection) {
         content.innerHTML =
           d.has_content && typeof d.content_html === "string" && d.content_html.trim()
             ? d.content_html
-            : '<p class="members-loading">No per-file context for this archive.</p>';
+            : '<p class="members-note">No per-file context for this archive.</p>';
       }
       // Always dispatch so the deferred molecule builds even when the galaxy is
       // empty (buildScene renders a neutral placeholder in that case).
@@ -30,7 +30,7 @@ if (membersSection) {
       const content = document.getElementById("tab-content");
       if (content) {
         content.innerHTML =
-          '<p class="members-loading">File contents could not be loaded — reload to try again.</p>';
+          '<p class="members-note">File contents could not be loaded — reload to try again.</p>';
       }
       // Still build the molecule from whatever we have so the canvas isn't stuck.
       window.dispatchEvent(new CustomEvent("prism:molecule", { detail: {} }));

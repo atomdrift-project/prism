@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {{template "favicon"}}
     <meta name="build" content="{{.BuildCommit}}" />
     <title>Analyzing {{.Filename}} — {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">

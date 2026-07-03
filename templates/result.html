@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {{template "favicon"}}
     <meta name="build" content="{{.BuildCommit}}" />
     <meta name="layout" content="{{.Layout}}" />
     <title>{{.Filename}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
@@ -1328,6 +1329,40 @@
             text-align: center;
             color: var(--iron);
             font-size: 14px;
+        }
+
+
+        .members-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 11px;
+            padding: 52px 24px;
+            color: var(--iron);
+            font-size: 13.5px;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+
+        .members-loading::before {
+            content: "";
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--toxic-muted);
+            animation: members-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes members-pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0.4); opacity: 1; }
+            70%  { box-shadow: 0 0 0 9px rgba(154, 190, 37, 0); opacity: 0.55; }
+            100% { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0); opacity: 1; }
+        }
+
+        .members-note {
+            padding: 44px 24px;
+            text-align: center;
+            color: var(--slate);
+            font-size: 13.5px;
         }
         .limited-info-notice {
             background: var(--isotope-dim);

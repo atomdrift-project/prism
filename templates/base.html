@@ -25,7 +25,9 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}atom<span
 lab<span class="beta-tag">BETA</span>{{else}}lit<span class="logo-accent"
     >mus</span
 ><span class="beta-tag">BETA</span>{{end}}{{end}} {{define
-"tagline"}}Open-source atomic malware analysis{{end}} {{define "banner"}}{{end}} {{define "footer"}}
+"tagline"}}Open-source atomic malware analysis{{end}} {{define "favicon"}}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/static/favicon.svg" />{{end}} {{define "banner"}}{{end}} {{define "footer"}}
 <footer>
     <span>&copy; 2026 <a href="https://atomdrift.org/">The Atomdrift Project</a> - Powered by <a href="https://codeberg.org/atomdrift/prism/commit/{{buildCommit}}" target="_blank">prism {{buildCommitShort}}</a></span>
 </footer>

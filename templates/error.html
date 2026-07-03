@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {{template "favicon"}}
     <title>{{.Title}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
