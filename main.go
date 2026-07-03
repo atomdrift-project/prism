@@ -84,6 +84,7 @@ var (
 	litmusClient       *http.Client // HTTP client for the litmus analysis server
 	cache              *fido.TieredCache[string, storedResult]
 	feedCache          *fido.TieredCache[string, cachedFeedSnapshot]
+	feedDropdownCache  *fido.TieredCache[string, feedDropdowns]
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	logger             *slog.Logger
@@ -127,6 +128,13 @@ const (
 	// expire. The high-traffic default and criticality views are kept fresher
 	// than this by refreshFeedCacheLoop.
 	feedCacheTTL = 30 * time.Minute
+	// feedDropdownTTL bounds how long the cached ecosystem/domain filter
+	// options are reused before a rebuild re-queries them. They are identical
+	// for every feed filter and change slowly (a new ecosystem or domain shows
+	// up a handful of times a day), so one refresh every few minutes backs
+	// every uncached rebuild in that window instead of two DISTINCT-over-the-
+	// corpus scans per request.
+	feedDropdownTTL = 5 * time.Minute
 	// feedRebuildTimeout bounds a single feed-snapshot rebuild. The rebuild
 	// runs under this deadline on a context detached from the caller's
 	// request (see loadFeedSnapshot): in a singleflight cache the loader is
@@ -866,6 +874,15 @@ type cachedFeedSnapshot struct {
 	Bytes int
 }
 
+// feedDropdowns holds the ecosystem and domain filter options rendered on the
+// feed. They are a global property of the corpus — identical for every filter
+// combination — so a single cached copy (feedDropdownCache) backs every feed
+// key instead of two DISTINCT scans on each snapshot rebuild.
+type feedDropdowns struct {
+	Ecosystems []string
+	Domains    []string
+}
+
 type cachedFeedSample struct {
 	CreatedAt      time.Time
 	SHA256         string
@@ -1447,6 +1464,7 @@ func main() {
 		logger.Info("cache disabled via --no-cache flag, using null stores")
 		cache = openNullCache[storedResult]("result cache")
 		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
+		feedDropdownCache = openNullCache[feedDropdowns]("feed dropdowns")
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 	} else {
@@ -1472,6 +1490,10 @@ func main() {
 		// snapshot is cheap to rebuild after a restart. The per-SHA caches
 		// below stay on disk: their keys are bounded by real data.
 		feedCache = openNullCache[cachedFeedSnapshot]("feed cache")
+		// feedDropdownCache holds the single global ecosystem/domain options
+		// set. It's memory-only for the same reason as feedCache, and it needs
+		// no persistence: one key, cheap to rebuild after a restart.
+		feedDropdownCache = openNullCache[feedDropdowns]("feed dropdowns")
 		reportCache = openLocalFSCache[cachedReport]("prism-report", cacheDir, "report cache")
 		parentArchiveCache = openLocalFSCache[cachedParents]("prism-parents", cacheDir, "parent-archive cache")
 	}
@@ -2031,7 +2053,7 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 	var snapshot cachedFeedSnapshot
 	var err error
 	if feedCache == nil {
-		snapshot, err = buildFeedSnapshot(ctx, a, reqLogger)
+		snapshot, err = buildFeedSnapshot(ctx, a)
 	} else {
 		// A hard refresh drops the cached entry first so FetchTTL rebuilds it
 		// live and repopulates the cache for the next visitor.
@@ -2053,7 +2075,7 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 			// still bounds a genuinely stuck rebuild.
 			bctx, cancel := context.WithTimeout(context.WithoutCancel(lctx), feedRebuildTimeout)
 			defer cancel()
-			return buildFeedSnapshot(bctx, a, reqLogger)
+			return buildFeedSnapshot(bctx, a)
 		})
 		if fromCache {
 			diag.Source = "cache"
@@ -2106,8 +2128,8 @@ func diagSafe(s string) string {
 // buildFeedSnapshot runs the live hopper queries and packages the result
 // into a cache-friendly snapshot (stable raw fields, no rendered relative-
 // time strings — those re-derive at request time from CreatedAt).
-func buildFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger) (cachedFeedSnapshot, error) {
-	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, a, reqLogger)
+func buildFeedSnapshot(ctx context.Context, a feedQueryArgs) (cachedFeedSnapshot, error) {
+	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, a)
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
@@ -2124,7 +2146,35 @@ func buildFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Log
 	return snap, nil
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *slog.Logger) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+// feedDropdownOptions returns the ecosystem and domain filter options, cached
+// globally across every feed key. The options don't depend on the query
+// filters, so one cached copy backs every feed render; without this each
+// uncached rebuild — one per distinct ?m=/?q= a crawler mints — would re-run
+// two DISTINCT-over-the-corpus scans for an identical result. fido
+// singleflights the loader, so a stampede of cold feed requests triggers a
+// single refresh, and the loader runs on a detached context (as in
+// loadFeedSnapshot) so one client disconnecting can't abort the shared rebuild.
+func feedDropdownOptions(ctx context.Context) (feedDropdowns, error) {
+	return feedDropdownCache.FetchTTL(ctx, "options", feedDropdownTTL, func(lctx context.Context) (feedDropdowns, error) {
+		db := hopperDB.Load()
+		if db == nil {
+			return feedDropdowns{}, errors.New("hopper not connected")
+		}
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(lctx), hopperQueryTimeout)
+		defer cancel()
+		ecosystems, err := db.FeedEcosystems(qctx, "", "", time.Now().Add(-feedEcosystemWindow))
+		if err != nil {
+			return feedDropdowns{}, err
+		}
+		domains, err := db.FeedDomains(qctx, "", "")
+		if err != nil {
+			return feedDropdowns{}, err
+		}
+		return feedDropdowns{Ecosystems: ecosystems, Domains: domains}, nil
+	})
+}
+
+func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []feedRow, ecosystems, domains []string, total int, err error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, nil, nil, 0, errors.New("hopper not connected")
@@ -2142,28 +2192,25 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 	// timeout becomes a breaker failure that trips it for later callers.
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
-	// Source="" spans every Source value (legacy "harvest" rows from
-	// before the rename, new "forager" rows, manual "upload"s) so the
-	// dropdowns and the result set both work across the transition.
-	// feedStart times the DB-query phase only; the per-sample render loop
-	// below recurses into fetchFromHopper, which records its own lookups.
 	feedStart := time.Now()
 	// fail records a feed-query fault on both the breaker and the metric.
 	fail := func() {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "feed", "error", feedStart)
 	}
-	ecosystems, err = db.FeedEcosystems(ctx, "", "", time.Now().Add(-feedEcosystemWindow))
+	// The ecosystem/domain filter options don't depend on the query filters,
+	// so they come from the global cache and are reused across every feed key
+	// rather than re-scanned on each rebuild.
+	dropdowns, err := feedDropdownOptions(ctx)
 	if err != nil {
 		fail()
 		return nil, nil, nil, 0, err
 	}
-	domains, err = db.FeedDomains(ctx, "", "")
-	if err != nil {
-		fail()
-		return nil, nil, nil, 0, err
-	}
+	ecosystems, domains = dropdowns.Ecosystems, dropdowns.Domains
 
+	// Source="" spans every Source value (legacy "harvest" rows from before
+	// the rename, new "forager" rows, manual "upload"s) so the result set
+	// works across the transition.
 	q := hopper.FeedQuery{
 		OrderBy:       "created_at",
 		Formula:       args.formula,
@@ -2207,16 +2254,12 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs, reqLogger *
 	rows = make([]feedRow, 0, len(samples))
 	now := time.Now()
 	for _, sample := range samples {
-		res, err := cachedResultForSample(ctx, sample, reqLogger)
-		if err != nil {
-			reqLogger.Debug("feed cache unavailable, rendering hopper sample directly", "sha256", sample.SHA256, "error", err)
-			fresh, ferr := storedResultFromHopperSample(sample)
-			if ferr != nil {
-				reqLogger.Debug("hopper sample fallback failed", "sha256", sample.SHA256, "error", ferr)
-				continue
-			}
-			res = fresh
-		}
+		// Build the row straight from the sample hopper already returned.
+		// Every field the feed shows is derivable from it, so there is no need
+		// to consult (and churn) the shared per-SHA result cache: doing so
+		// added a disk round-trip per row and evicted genuinely-hot detail-page
+		// entries from the shared in-memory tier under crawler load.
+		res := storedResultFromHopperSample(sample)
 		classification := res.Classification
 		if classification == "" {
 			continue
@@ -2390,7 +2433,7 @@ func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Dur
 			return nil
 		}
 	}
-	snapshot, err := buildFeedSnapshot(ctx, a, logger)
+	snapshot, err := buildFeedSnapshot(ctx, a)
 	if err != nil {
 		return err
 	}
@@ -2630,31 +2673,6 @@ func invalidateSampleCaches(ctx context.Context, sha, reason string) {
 	}
 }
 
-func cachedResultForSample(ctx context.Context, sample *hopper.Sample, reqLogger *slog.Logger) (storedResult, error) {
-	res, err := cache.Fetch(ctx, sample.SHA256, func(_ context.Context) (storedResult, error) {
-		reqLogger.Debug("feed cache miss, hydrating from hopper sample", "sha256", sample.SHA256)
-		return storedResultFromHopperSample(sample)
-	})
-	if err != nil {
-		return storedResult{}, err
-	}
-	if shouldRefreshCachedSample(&res, sample) {
-		fresh, err := storedResultFromHopperSample(sample)
-		if err != nil {
-			// Refresh failed: serve the stale cached value rather than fail
-			// the whole feed render. Logged at Debug for diagnostics.
-			reqLogger.Debug("feed cache refresh failed; serving stale", "sha256", sample.SHA256, "error", err)
-			return res, nil
-		}
-		if err := cache.SetAsync(ctx, sample.SHA256, fresh); err != nil {
-			reqLogger.Debug("feed cache update failed", "sha256", sample.SHA256, "error", err)
-			return res, nil
-		}
-		return fresh, nil
-	}
-	return res, nil
-}
-
 // criticalityClasses translates a UI/URL criticality token into the litmus
 // class integers the feed query filters on. Accepts either named bands
 // ("benign"/"suspicious"/"hostile") or comparison expressions over the
@@ -2789,17 +2807,7 @@ func sampleThresholds(sample *hopper.Sample) (suspiciousT, hostileT float64) {
 	return defaultSuspiciousT, defaultHostileT
 }
 
-func shouldRefreshCachedSample(res *storedResult, sample *hopper.Sample) bool {
-	sampleUpdated := sampleTime(sample)
-	if !sampleUpdated.IsZero() && sampleUpdated.After(res.CachedAt) {
-		return true
-	}
-	return (res.Formula == "" && sample.Formula != "") ||
-		(res.FileType == "" && sample.FileType != "") ||
-		(res.Classification == "" && len(sample.LitmusResult) > 0)
-}
-
-func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
+func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
 	// hopper owns the column↔envelope mapping ({ml,llm,raw}); use it so the
 	// shape stays in lockstep with the splitter/joiner.
 	rawLitmus := hopper.Envelope(sample)
@@ -2849,7 +2857,7 @@ func storedResultFromHopperSample(sample *hopper.Sample) (storedResult, error) {
 		CanonicalSHA256: sample.CanonicalSHA256,
 		UpdatedAt:       sample.UpdatedAt,
 		FirstAnalyzedAt: firstAnalyzedAt,
-	}, nil
+	}
 }
 
 // sourceDisplay returns the href and label pair for the result page's
@@ -3851,10 +3859,7 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		}
 	}
 
-	res, err := storedResultFromHopperSample(sample)
-	if err != nil {
-		return res, err
-	}
+	res := storedResultFromHopperSample(sample)
 	if hopperWasCompacted(sample.CleaveResult) {
 		// Hydrate the members we'll render and hand them to hopper, which owns
 		// reassembly (the inverse of the split it applied on storage). One query
