@@ -826,12 +826,10 @@ type feedPageData struct {
 	Rows       []feedRow
 	// Pages holds the per-page links (empty when a single page covers every
 	// row); Page is the 1-indexed current page over the cached snapshot.
-	Pages         []feedPageLink
-	TotalCount    int
-	FilteredCount int
-	Page          int
-	Refresh       bool
-	HasHopper     bool
+	Pages     []feedPageLink
+	Page      int
+	Refresh   bool
+	HasHopper bool
 	// UploadEnabled mirrors the package-level toggle so the template can
 	// pick the real upload form vs. the disabled placeholder.
 	UploadEnabled bool
@@ -866,7 +864,6 @@ type cachedFeedSnapshot struct {
 	Rows        []cachedFeedSample
 	Ecosystems  []string
 	Domains     []string
-	TotalCount  int
 	// Bytes is the JSON-serialized size of this snapshot (the same encoding
 	// the localfs cache persists), captured once at build time so the
 	// per-request diagnostics can report payload size without re-marshaling
@@ -2130,7 +2127,7 @@ func diagSafe(s string) string {
 // into a cache-friendly snapshot (stable raw fields, no rendered relative-
 // time strings — those re-derive at request time from CreatedAt).
 func buildFeedSnapshot(ctx context.Context, a feedQueryArgs) (cachedFeedSnapshot, error) {
-	rows, ecosystems, domains, total, err := loadFeedRowsFromHopper(ctx, a)
+	rows, ecosystems, domains, err := loadFeedRowsFromHopper(ctx, a)
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
@@ -2139,7 +2136,6 @@ func buildFeedSnapshot(ctx context.Context, a feedQueryArgs) (cachedFeedSnapshot
 		Rows:        cachedFeedSamplesFromRows(rows),
 		Ecosystems:  ecosystems,
 		Domains:     domains,
-		TotalCount:  total,
 	}
 	if encoded, err := json.Marshal(snap); err == nil {
 		snap.Bytes = len(encoded)
@@ -2175,10 +2171,10 @@ func feedDropdownOptions(ctx context.Context) (feedDropdowns, error) {
 	})
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []feedRow, ecosystems, domains []string, total int, err error) {
+func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []feedRow, ecosystems, domains []string, err error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return nil, nil, nil, 0, errors.New("hopper not connected")
+		return nil, nil, nil, errors.New("hopper not connected")
 	}
 	// Gate the feed behind the shared hopper-db breaker so a degraded
 	// hopper sheds these queries fast instead of every request queueing a
@@ -2186,7 +2182,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	// guards the per-sample lookups in fetchFromHopper.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "feed", "rejected", time.Time{})
-		return nil, nil, nil, 0, fmt.Errorf("hopper-db feed: %w", berr)
+		return nil, nil, nil, fmt.Errorf("hopper-db feed: %w", berr)
 	}
 	// Bound the DB-query phase independently of the caller: a slow hopper
 	// round-trip must not pin a request goroutine (or precache tick), and a
@@ -2205,7 +2201,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	dropdowns, err := feedDropdownOptions(ctx)
 	if err != nil {
 		fail()
-		return nil, nil, nil, 0, err
+		return nil, nil, nil, err
 	}
 	ecosystems, domains = dropdowns.Ecosystems, dropdowns.Domains
 
@@ -2242,12 +2238,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	samples, err := db.FeedSamples(ctx, &q)
 	if err != nil {
 		fail()
-		return nil, nil, nil, 0, err
-	}
-	total, err = db.FeedSamplesCount(ctx, &q)
-	if err != nil {
-		fail()
-		return nil, nil, nil, 0, err
+		return nil, nil, nil, err
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "feed", "ok", feedStart)
@@ -2306,7 +2297,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		})
 	}
 
-	return rows, ecosystems, domains, total, nil
+	return rows, ecosystems, domains, nil
 }
 
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
@@ -2441,7 +2432,7 @@ func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Dur
 	if err := feedCache.SetTTL(ctx, key, snapshot, feedCacheTTL); err != nil {
 		return err
 	}
-	logger.Debug("feed pre-cache refreshed", "key", key, "rows", len(snapshot.Rows), "total", snapshot.TotalCount)
+	logger.Debug("feed pre-cache refreshed", "key", key, "rows", len(snapshot.Rows))
 	return nil
 }
 
@@ -3302,8 +3293,7 @@ func validEcosystem(s string) bool {
 // paginateFeed slices the already-filtered, cached rows down to the page
 // requested via ?page=N (1-indexed) and fills in the navigation links. Every
 // page is served from the same cached snapshot, so only the slice bounds
-// change between pages — no extra hopper query. FilteredCount becomes the
-// number of rows actually shown on the page.
+// change between pages — no extra hopper query.
 func paginateFeed(data *feedPageData, r *http.Request) {
 	total := len(data.Rows)
 	totalPages := max((total+feedPageSize-1)/feedPageSize, 1)
@@ -3319,7 +3309,6 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 	start := (page - 1) * feedPageSize
 	end := min(start+feedPageSize, total)
 	data.Rows = data.Rows[start:end]
-	data.FilteredCount = len(data.Rows)
 
 	if totalPages <= 1 {
 		return
@@ -3408,7 +3397,6 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		}
 		diags = append(diags, diag)
 		data.Rows = feedRowsFromSnapshot(snapshot)
-		data.TotalCount = snapshot.TotalCount
 		data.Domains = snapshot.Domains
 		data.Ecosystems = snapshot.Ecosystems
 		paginateFeed(&data, r)
