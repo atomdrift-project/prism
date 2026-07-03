@@ -631,21 +631,26 @@ type resultData struct {
 	// gated to button-driven flows: the token only validates for the browser
 	// session that fetched the page, within csrfMaxAge. Bots, link previews,
 	// pasted URLs from another browser, and stale wayback captures all fail.
-	DownloadToken  string
-	FileType       string
-	MoleculeJSON   template.JS
-	Duration       string
-	FindingCount   string
-	Nonce          string // script-src nonce
-	StyleNonce     string // style-src nonce
-	Size           string
-	SizeBytes      int64 // raw size of the top-level (or first) file; gates the download button
-	RiskLevel      string
-	ReportCreated  string
-	ReportProvider string
-	ReportContent  string
-	AnalyzedAgo    string
-	AnalyzedAt     string
+	DownloadToken string
+	FileType      string
+	MoleculeJSON  template.JS
+	// DeferredMembers marks a compacted-archive page whose member Content and
+	// galaxy are lazy-loaded by the browser from /file/{sha}/members. The
+	// template renders loading placeholders for those regions; a non-archive or
+	// a fully-inlined archive leaves it false and renders everything up front.
+	DeferredMembers bool
+	Duration        string
+	FindingCount    string
+	Nonce           string // script-src nonce
+	StyleNonce      string // style-src nonce
+	Size            string
+	SizeBytes       int64 // raw size of the top-level (or first) file; gates the download button
+	RiskLevel       string
+	ReportCreated   string
+	ReportProvider  string
+	ReportContent   string
+	AnalyzedAgo     string
+	AnalyzedAt      string
 	// AnalyzedAtMillis is the unix-ms timestamp of the most recent
 	// analysis, exposed to JS via a data-attribute on the rescan button
 	// so the rescan-then-wait flow can ask the server "tell me when a
@@ -1713,6 +1718,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
 	mux.HandleFunc("POST /file/{sha256}/rum", handleFileRUM)
+	mux.HandleFunc("GET /file/{sha256}/members", handleFileMembers)
 	mux.HandleFunc("GET /formats", handleFormats)
 	mux.HandleFunc("GET /powered-by", handlePoweredBy)
 	mux.HandleFunc("GET /help/query", handleHelpQuery)
@@ -3572,6 +3578,10 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "rescan")
 	data.DownloadToken = csrfToken(r, "download")
+	// A compacted-archive envelope carries member stubs but no member bodies;
+	// the browser hydrates the Content + galaxy from /file/{sha}/members after
+	// first paint.
+	data.DeferredMembers = membersDeferred(res.RawLitmus)
 	var reportDur, parentsDur time.Duration
 	if hopperDB.Load() != nil {
 		reportStart := time.Now()
@@ -3719,6 +3729,70 @@ func moleculeSizeBucket(atoms int) string {
 		return "large"
 	default:
 		return "huge"
+	}
+}
+
+// membersDeferred reports whether res is a compacted-archive envelope whose
+// member bodies are lazy-loaded by the browser. The raw (cleave) section keeps
+// hopper's "truncated" marker until the members are spliced back in, so this is
+// the signal that the page should render member-content placeholders and the
+// client should fetch /file/{sha}/members.
+func membersDeferred(rawLitmus string) bool {
+	if rawLitmus == "" {
+		return false
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawLitmus), &env); err != nil {
+		return false
+	}
+	return hopperWasCompacted(env["raw"])
+}
+
+// handleFileMembers serves the lazily-loaded archive-member payload for the
+// detail page: the reassembled Content-tab HTML, the archive Traits HTML, and
+// the galaxy molecule JSON, for the same top-maxFilesShown members the page
+// caps to. Only JS-running clients reach it (a crawler renders the parent-only
+// page and never fetches), so the member DB work happens for real viewers only.
+func handleFileMembers(w http.ResponseWriter, r *http.Request) {
+	sha := strings.ToLower(r.PathValue("sha256"))
+	if !validSHA256(sha) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	res, err := enrichedResult(r.Context(), sha)
+	if err != nil {
+		// Pending or missing: nothing to add. The page keeps its parent-only view.
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	data := prepareResultData(res.Filename, sha, &res)
+
+	var content, traits bytes.Buffer
+	if err := resultTemplate.ExecuteTemplate(&content, "contentBody", data); err != nil {
+		logger.Error("members render failed", "template", "contentBody", "sha256", sha, "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if err := resultTemplate.ExecuteTemplate(&traits, "findingsbody", data); err != nil {
+		logger.Error("members render failed", "template", "findingsbody", "sha256", sha, "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	resp := struct {
+		ContentHTML string          `json:"content_html"`
+		TraitsHTML  string          `json:"traits_html"`
+		Galaxy      json.RawMessage `json:"galaxy"`
+		HasContent  bool            `json:"has_content"`
+	}{
+		ContentHTML: content.String(),
+		TraitsHTML:  traits.String(),
+		HasContent:  len(data.FileViews) > 0,
+		Galaxy:      json.RawMessage(string(data.MoleculeJSON)),
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logger.Debug("members json write failed", "sha256", sha, "error", err)
 	}
 }
 
@@ -3873,43 +3947,17 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		}
 		return false, storedResult{}, err
 	}
-	// Refresh a cache hit in the background — never on the request path — when
-	// it either still carries envelope-compaction markers (it predates
-	// fetchFromHopper's reassembly, or a prior reassembly timed out and cached
-	// the compacted view) or has aged past the TTL. A synchronous re-fetch here
-	// would block the page on the member-reassembly query, which on a large
-	// archive or a degraded hopper can burn the full query timeout and pin an
-	// interactive load for a minute — for a view the next request serves
-	// enriched anyway. Both cases share the refreshInFlight guard, so a sha
-	// never runs two concurrent background fetches. This trades a first,
-	// slightly-degraded (compacted) view for a page that always renders at
-	// cache-hit speed.
-	needsEnrich := cacheHit && envelopeNeedsEnrichment(res.RawLitmus)
-	stale := cacheHit && time.Since(res.CachedAt) > hopperCacheTTL
-	if (needsEnrich || stale) && hopperDB.Load() != nil {
+	// Refresh a stale cache hit in the background so the request path never
+	// blocks on hopper. The cached value is a parent-only envelope now (members
+	// load lazily via /file/{sha}/members), so there's no compaction re-enrich
+	// to do here — only TTL freshness. The refreshInFlight guard keeps a sha to
+	// one concurrent background refresh.
+	if cacheHit && time.Since(res.CachedAt) > hopperCacheTTL && hopperDB.Load() != nil {
 		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
-			if needsEnrich {
-				reqLogger.Debug("cached envelope still compacted, enriching in background")
-			}
 			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
 		}
 	}
 	return cacheHit, res, nil
-}
-
-// envelopeNeedsEnrichment reports whether a cached storedResult's raw
-// litmus envelope still carries the truncated/omitted_files markers that
-// hopper's compactor writes. Used to detect cache entries that predate
-// the enrichment deploy and need to be reassembled on read.
-func envelopeNeedsEnrichment(rawLitmus string) bool {
-	if rawLitmus == "" {
-		return false
-	}
-	var env map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(rawLitmus), &env); err != nil {
-		return false
-	}
-	return hopperWasCompacted(env["raw"])
 }
 
 // pendingAnalysisError signals that a sample exists in hopper but has not
@@ -3921,16 +3969,6 @@ type pendingAnalysisError struct {
 }
 
 func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
-
-// archiveMemberFetchLimit caps how many archive members prism pulls from hopper
-// to reassemble a container whose stored cleave result was compacted (see
-// hopper.compactCleaveResultForStorage). Members are fetched highest-score
-// first, so the most suspicious survive the cap; the remainder are reported as
-// omitted_files in the reassembled envelope rather than silently dropped. Kept
-// small on purpose: the Content tab shows at most maxFilesShown files, so a
-// deep fetch would materialize megabytes of child cleave/litmus blobs to render
-// a handful of rows.
-const archiveMemberFetchLimit = 25
 
 // fetchFromHopper loads a sample from hopper and reshapes it into the
 // storedResult shape expected by the rest of prism. Returns an error whose
@@ -3988,70 +4026,106 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 		}
 	}
 
+	// Archive member bodies are hydrated lazily (GET /file/{sha}/members), not
+	// here: the detail page renders everything the parent envelope already
+	// provides on first paint, and the browser fetches the member Content +
+	// galaxy afterward. So the cached result carries the compacted envelope and
+	// this hot path is a single SampleBySHA256 — a crawler (no JS) never
+	// triggers the member queries at all.
 	res := storedResultFromHopperSample(sample)
-	compacted := hopperWasCompacted(sample.CleaveResult)
-	var membersDur, reassembleDur time.Duration
-	var memberCount int
-	if compacted {
-		// Hydrate the members we'll render and hand them to hopper, which owns
-		// reassembly (the inverse of the split it applied on storage). One query
-		// does it: the score-ranked top-N from sample_locations, plus the members
-		// a container-level finding draws from (linked, included regardless of
-		// their standalone score), falling back to the stub SHAs the compacted
-		// envelope embedded only when the parent has no edges yet.
-		//
-		// The span and timer start before the envelope parse so members_ms covers
-		// the whole resolution — no cost hides between the sample load and the
-		// reassembly below.
-		membersStart := time.Now()
-		mctx, memSpan := obs.Span(ctx, "prism.detail.members")
-		linked := compositeLinkedSHAs(sample.CleaveResult, sha)
-		fallback := envelopeChildSHAs(sample.CleaveResult, sha)
-		if len(fallback) > archiveMemberFetchLimit {
-			fallback = fallback[:archiveMemberFetchLimit]
-		}
-		children, cerr := db.MembersWithSamplesByParent(mctx, sha, archiveMemberFetchLimit, linked, fallback)
-		memSpan.End()
-		membersDur = time.Since(membersStart)
-		if cerr != nil {
-			recordDep(ctx, "hopper-db", "members", "error", membersStart)
-			logger.Debug("members with samples by parent failed", "sha", sha, "error", cerr, "members_ms", membersDur.Milliseconds())
-		} else {
-			recordDep(ctx, "hopper-db", "members", "ok", membersStart)
-			memberCount = len(children)
-			if memberCount > 0 {
-				reassembleStart := time.Now()
-				_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
-				enriched, eerr := hopper.Reassemble(sample, children)
-				reSpan.End()
-				reassembleDur = time.Since(reassembleStart)
-				if eerr != nil {
-					logger.Debug("reassemble envelope failed", "sha", sha, "error", eerr)
-				} else {
-					res.RawLitmus = string(enriched)
-				}
-			}
-		}
-	}
-
-	// One structured breakdown of the uncached fetch. Emitted at WARN past the
-	// slow threshold so a pathological archive reassembly surfaces in logs even
-	// when this trace was not sampled; Debug otherwise for routine correlation.
-	total := sampleDur + membersDur + reassembleDur
 	level := slog.LevelDebug
-	if total >= slowDetailThreshold {
+	if sampleDur >= slowDetailThreshold {
 		level = slog.LevelWarn
 	}
 	logger.Log(ctx, level, "hopper detail fetch",
 		"sha256", sha,
-		"compacted", compacted,
+		"compacted", hopperWasCompacted(sample.CleaveResult),
 		"cleave_bytes", len(sample.CleaveResult),
-		"members", memberCount,
 		"sample_ms", sampleDur.Milliseconds(),
-		"members_ms", membersDur.Milliseconds(),
-		"reassemble_ms", reassembleDur.Milliseconds(),
-		"total_ms", total.Milliseconds(),
 	)
+	return res, nil
+}
+
+// enrichMembers hydrates the archive members prism will display — the top
+// maxFilesShown by per-file criticality (from the compacted envelope's risk-
+// sorted stubs) plus any composite-linked members — and splices them back into
+// the parent envelope via hopper.Reassemble. Returns the enriched envelope JSON
+// (nil when nothing needed splicing) and the member count. One deterministic
+// SamplesBySHAs primary-key fetch, called off the render hot path so only real
+// JS-running clients pay for it.
+func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) (enriched []byte, members int, err error) {
+	db := hopperDB.Load()
+	if db == nil {
+		return nil, 0, errors.New("hopper not connected")
+	}
+	membersStart := time.Now()
+	mctx, memSpan := obs.Span(ctx, "prism.detail.members")
+	wanted := envelopeChildSHAs(sample.CleaveResult, sha)
+	if len(wanted) > maxFilesShown {
+		wanted = wanted[:maxFilesShown]
+	}
+	wanted = append(wanted, compositeLinkedSHAs(sample.CleaveResult, sha)...)
+	children, err := db.SamplesBySHAs(mctx, wanted)
+	memSpan.End()
+	if err != nil {
+		recordDep(ctx, "hopper-db", "members", "error", membersStart)
+		return nil, 0, err
+	}
+	recordDep(ctx, "hopper-db", "members", "ok", membersStart)
+	if len(children) == 0 {
+		return nil, 0, nil
+	}
+	_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
+	enriched, err = hopper.Reassemble(sample, children)
+	reSpan.End()
+	if err != nil {
+		return nil, len(children), err
+	}
+	return enriched, len(children), nil
+}
+
+// enrichedResult loads a sample and returns its storedResult with the archive
+// members spliced in — the member-complete view the lazy /members endpoint and
+// the JSON export need (the cached fetchFromHopper result is parent-only). It
+// re-reads the parent row rather than the cache because Reassemble needs the
+// raw *hopper.Sample; that lookup is cheap and only JS-running clients / API
+// callers reach it.
+func enrichedResult(ctx context.Context, sha string) (storedResult, error) {
+	db := hopperDB.Load()
+	if db == nil {
+		return storedResult{}, errors.New("hopper not connected")
+	}
+	if err := dbBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-db", "lookup", "rejected", time.Time{})
+		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
+	defer cancel()
+	start := time.Now()
+	sample, err := db.SampleBySHA256(ctx, sha)
+	if err != nil {
+		if errors.Is(err, hopper.ErrNotFound) {
+			dbBreaker.success()
+			recordDep(ctx, "hopper-db", "lookup", "ok", start)
+			return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
+		}
+		dbBreaker.failure()
+		recordDep(ctx, "hopper-db", "lookup", "error", start)
+		return storedResult{}, fmt.Errorf("hopper lookup: %w", err)
+	}
+	dbBreaker.success()
+	recordDep(ctx, "hopper-db", "lookup", "ok", start)
+	if len(sample.CleaveResult) == 0 {
+		return storedResult{}, &pendingAnalysisError{SHA: sha, Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path))}
+	}
+	res := storedResultFromHopperSample(sample)
+	if hopperWasCompacted(sample.CleaveResult) {
+		if enriched, _, eerr := enrichMembers(ctx, sha, sample); eerr != nil {
+			logger.Debug("member enrichment failed; serving parent-only", "sha", sha, "error", eerr)
+		} else if len(enriched) > 0 {
+			res.RawLitmus = string(enriched)
+		}
+	}
 	return res, nil
 }
 
@@ -4183,8 +4257,10 @@ func envelopeChildSHAs(cleaveResult []byte, parentSHA string) []string {
 		entries = env.FS
 	}
 	// Rank by the per-file risk the stub carries so a capped fetch pulls the
-	// most significant members first — the same intent as the score-ranked
-	// edge path in MembersWithSamplesByParent.
+	// most significant members first — the same criticality order the Content
+	// tab and galaxy display, so the fetched set and the displayed set agree.
+	// Compaction retains a stub per member up to maxArchiveMembers (100k), so
+	// this sees the whole member set, not a truncated prefix.
 	type member struct {
 		sha  string
 		risk int
@@ -4654,7 +4730,9 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 
-	_, res, err := lookupResult(r.Context(), sha, reqLogger)
+	// The JSON export is the full envelope, so it hydrates archive members
+	// (the interactive page defers them, but an API caller wants everything).
+	res, err := enrichedResult(r.Context(), sha)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -6151,6 +6229,14 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	if len(report.Files) > 1 {
 		var fileFindings []FileFindings
 		for i := range report.Files {
+			// Cap the galaxy to the same top-N (by criticality — report.Files is
+			// already crit-sorted) the Content tab shows, so the two views always
+			// depict the same set of files. For a compacted archive only these N
+			// were fetched anyway; this also bounds the galaxy for a small inlined
+			// archive whose members all arrived in the parent envelope.
+			if len(fileFindings) >= maxFilesShown {
+				break
+			}
 			file := &report.Files[i]
 			var ff []FindingForFormula
 			for _, f := range file.Findings {

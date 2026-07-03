@@ -1711,16 +1711,20 @@
         </section>
         {{end}}
 
-        <section class="tabs-section" aria-label="Analysis details">
+        <section class="tabs-section" aria-label="Analysis details"{{if .DeferredMembers}} data-defer-members="{{.SHA256}}"{{end}}>
             <div class="tabs" role="tablist" aria-label="Analysis sections">
-                {{if .FileViews}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
-                <button type="button" class="tab{{if not .FileViews}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if .FileViews}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if .FileViews}}-1{{else}}0{{end}}">Traits</button>
+                {{if or .FileViews .DeferredMembers}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
+                <button type="button" class="tab{{if not (or .FileViews .DeferredMembers)}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if or .FileViews .DeferredMembers}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if or .FileViews .DeferredMembers}}-1{{else}}0{{end}}">Traits</button>
                 {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
             </div>
 
             {{if .FileViews}}
-            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>{{template "contentBody" .}}</div>
+            {{else if .DeferredMembers}}
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0"><p class="members-loading" aria-live="polite">Loading file contents…</p></div>
+            {{end}}
+{{define "contentBody"}}
                 {{if .TopTraits}}
                 <div class="top-traits" aria-label="Most significant traits">
                     {{range .TopTraits}}
@@ -1748,13 +1752,12 @@
                 {{if .FilesOmitted}}
                 <p class="content-limit-note">Showing the top {{.FilesShownLimit}} files for legibility — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}result{{else}}results{{end}}) hidden. Open a file directly to see its full context.</p>
                 {{end}}
-            </div>
-            {{end}}
+{{end}}
 
             {{/* When no file carries per-line context (legacy or context-free
                  data) the Content tab is omitted entirely and Traits is the
                  default, so the two tabs never render identical evidence. */}}
-            <div class="tab-content{{if not .FileViews}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{template "findingsbody" .}}</div>
+            <div class="tab-content{{if not (or .FileViews .DeferredMembers)}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{if .DeferredMembers}}<p class="members-loading" aria-live="polite">Loading traits…</p>{{else}}{{template "findingsbody" .}}{{end}}</div>
 {{define "findingsbody"}}
                 {{if .IsArchive}}
                     {{if .ArchiveCategories}}
@@ -1910,6 +1913,7 @@
     <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
     <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/members.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/hero-nav.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>

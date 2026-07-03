@@ -8,10 +8,11 @@ import (
 	"testing"
 )
 
-// TestResultTemplateParses ensures the result template parses with the
-// same funcs registered in main(). Catches template syntax errors that
-// would otherwise crash the server at startup.
-func TestResultTemplateParses(t *testing.T) {
+// resultTemplateForTest parses the result template with the same funcs
+// registered in main(), so tests catch syntax errors that would otherwise
+// crash the server at startup.
+func resultTemplateForTest(t *testing.T) *template.Template {
+	t.Helper()
 	funcs := template.FuncMap{
 		"isPublic":         func() bool { return false },
 		"buildCommit":      func() string { return "abcdef0123456789" },
@@ -32,6 +33,13 @@ func TestResultTemplateParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	return tmpl
+}
+
+// TestResultTemplateParses ensures the result template parses and renders the
+// expected structure for the main page states.
+func TestResultTemplateParses(t *testing.T) {
+	tmpl := resultTemplateForTest(t)
 
 	cases := []struct {
 		name     string
@@ -62,6 +70,13 @@ func TestResultTemplateParses(t *testing.T) {
 			"win-section", "ctx-anno", `anno hostile`, "spawns a child process",
 			`top-trait hostile`, "beacons to a remote host",
 		}},
+		// Deferred archive: the compacted-envelope page renders the Content tab
+		// as a loading placeholder plus the client hook; the member file cards
+		// are injected later from /file/{sha}/members.
+		{
+			name: "deferred_archive", data: deferredArchiveData(),
+			want: []string{`id="tabbtn-content"`, "data-defer-members=", "Loading file contents", "Loading traits"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -83,6 +98,38 @@ func TestResultTemplateParses(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// deferredArchiveData is a compacted-archive page before its members load: an
+// archive with no member FileViews yet, flagged for lazy hydration.
+func deferredArchiveData() resultData {
+	d := archiveData()
+	d.FileViews = nil
+	d.DeferredMembers = true
+	return d
+}
+
+// TestResultMemberPartials renders the two named blocks the /members endpoint
+// serves by name (handleFileMembers), guarding that they stay addressable and
+// render the member content the client injects.
+func TestResultMemberPartials(t *testing.T) {
+	tmpl := resultTemplateForTest(t)
+
+	var content bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&content, "contentBody", fileViewData()); err != nil {
+		t.Fatalf("contentBody: %v", err)
+	}
+	if !strings.Contains(content.String(), "file-card") {
+		t.Errorf("contentBody missing file-card; got %q", content.String())
+	}
+
+	var traits bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&traits, "findingsbody", archiveData()); err != nil {
+		t.Fatalf("findingsbody: %v", err)
+	}
+	if traits.Len() == 0 {
+		t.Error("findingsbody rendered empty")
 	}
 }
 

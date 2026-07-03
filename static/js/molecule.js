@@ -720,106 +720,123 @@ canvas.addEventListener("mousemove", (event) => {
 // Build scene
 // ============================================================
 const moleculeBuildStart = performance.now();
-if (moleculeData?.isGalaxy && moleculeData.molecules && moleculeData.molecules.length > 0) {
-  // Galaxy mode - multiple molecules for archives
-  moleculeData.molecules.forEach((mol, molIndex) => {
-    if (mol.atoms && mol.atoms.length > 0) {
-      const cleanedBonds = cleanBonds(mol.bonds);
-      applyLayout(mol.atoms, cleanedBonds, layout);
-      // Offset back to galaxy position
-      mol.atoms.forEach((a) => {
-        a.x += mol.centerX;
-        a.y += mol.centerY;
-        a.z += mol.centerZ;
+
+// buildScene renders the molecule/galaxy from data into moleculeGroup. It runs
+// exactly once: immediately from the embedded data for a normal page, or — for
+// a compacted archive whose galaxy needs member bodies — when members.js
+// dispatches prism:molecule after fetching /file/{sha}/members. Building once
+// (never rebuilding) keeps clickableMeshes / legend / overlay state simple.
+function buildScene(data) {
+  if (data?.isGalaxy && data.molecules && data.molecules.length > 0) {
+    // Galaxy mode - multiple molecules for archives
+    data.molecules.forEach((mol, molIndex) => {
+      if (mol.atoms && mol.atoms.length > 0) {
+        const cleanedBonds = cleanBonds(mol.bonds);
+        applyLayout(mol.atoms, cleanedBonds, layout);
+        // Offset back to galaxy position
+        mol.atoms.forEach((a) => {
+          a.x += mol.centerX;
+          a.y += mol.centerY;
+          a.z += mol.centerZ;
+        });
+        addMolecule(mol.atoms, cleanedBonds, moleculeGroup, molIndex, mol);
+      }
+    });
+
+    // Dropper relationships between embedded files.
+    if (data.links && data.links.length > 0) {
+      // Edge style by kind. "local" — a cleave-resolved file→file reference
+      // inside the bundle — is a solid teal line (a definite structural edge).
+      // "dependency" — a reference to a fetched-and-scored dependency that itself
+      // scored suspicious/hostile — is a solid amber line, drawn to stand out as
+      // an incorporated threat. "inferred" (and any legacy untyped link) — the
+      // basename-in-strings guess — stays a faint grey dashes, signalling it is
+      // uncertain.
+      const matLocal = new THREE.LineBasicMaterial({
+        color: 0x5aa9e6,
+        transparent: true,
+        opacity: 0.85,
       });
-      addMolecule(mol.atoms, cleanedBonds, moleculeGroup, molIndex, mol);
-    }
-  });
-
-  // Dropper relationships between embedded files.
-  if (moleculeData.links && moleculeData.links.length > 0) {
-    // Edge style by kind. "local" — a cleave-resolved file→file reference
-    // inside the bundle — is a solid teal line (a definite structural edge).
-    // "dependency" — a reference to a fetched-and-scored dependency that itself
-    // scored suspicious/hostile — is a solid amber line, drawn to stand out as
-    // an incorporated threat. "inferred" (and any legacy untyped link) — the
-    // basename-in-strings guess — stays a faint grey dashes, signalling it is
-    // uncertain.
-    const matLocal = new THREE.LineBasicMaterial({
-      color: 0x5aa9e6,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const matDependency = new THREE.LineBasicMaterial({
-      color: 0xe0a458,
-      transparent: true,
-      opacity: 0.95,
-    });
-    const matInferred = new THREE.LineDashedMaterial({
-      color: 0x7c8a84,
-      dashSize: 0.12,
-      gapSize: 0.22,
-      linewidth: 1,
-      transparent: true,
-      opacity: 0.55,
-    });
-    const matForKind = (kind) =>
-      kind === "local" ? matLocal : kind === "dependency" ? matDependency : matInferred;
-
-    moleculeData.links.forEach((link) => {
-      const fromMol = moleculeData.molecules[link.from];
-      const toMol = moleculeData.molecules[link.to];
-      if (!fromMol || !toMol) return;
-
-      const start = new THREE.Vector3(fromMol.centerX, fromMol.centerY, fromMol.centerZ);
-      const end = new THREE.Vector3(toMol.centerX, toMol.centerY, toMol.centerZ);
-      const direction = new THREE.Vector3().subVectors(end, start);
-      const length = direction.length();
-      if (length < 1) return;
-
-      const dir = direction.clone().normalize();
-      const inset = Math.min(1.2, length * 0.18);
-      const lineStart = start.clone().add(dir.clone().multiplyScalar(inset));
-      const lineEnd = end.clone().sub(dir.clone().multiplyScalar(inset));
-
-      const geometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
-      const line = new THREE.Line(geometry, matForKind(link.kind));
-      // Dashed material needs per-vertex line distances; solid lines ignore it.
-      line.computeLineDistances();
-      moleculeGroup.add(line);
-    });
-
-    // Reveal the edge legend, showing only the kinds actually drawn.
-    const kinds = new Set(moleculeData.links.map((l) => l.kind || "inferred"));
-    const legend = document.getElementById("galaxy-legend");
-    if (legend) {
-      legend.hidden = false;
-      legend.querySelectorAll(".galaxy-legend-item").forEach((item) => {
-        const sw = item.querySelector(".galaxy-legend-swatch");
-        const kind = sw?.classList.contains("local")
-          ? "local"
-          : sw?.classList.contains("dependency")
-            ? "dependency"
-            : "inferred";
-        item.style.display = kinds.has(kind) ? "" : "none";
+      const matDependency = new THREE.LineBasicMaterial({
+        color: 0xe0a458,
+        transparent: true,
+        opacity: 0.95,
       });
+      const matInferred = new THREE.LineDashedMaterial({
+        color: 0x7c8a84,
+        dashSize: 0.12,
+        gapSize: 0.22,
+        linewidth: 1,
+        transparent: true,
+        opacity: 0.55,
+      });
+      const matForKind = (kind) =>
+        kind === "local" ? matLocal : kind === "dependency" ? matDependency : matInferred;
+
+      data.links.forEach((link) => {
+        const fromMol = data.molecules[link.from];
+        const toMol = data.molecules[link.to];
+        if (!fromMol || !toMol) return;
+
+        const start = new THREE.Vector3(fromMol.centerX, fromMol.centerY, fromMol.centerZ);
+        const end = new THREE.Vector3(toMol.centerX, toMol.centerY, toMol.centerZ);
+        const direction = new THREE.Vector3().subVectors(end, start);
+        const length = direction.length();
+        if (length < 1) return;
+
+        const dir = direction.clone().normalize();
+        const inset = Math.min(1.2, length * 0.18);
+        const lineStart = start.clone().add(dir.clone().multiplyScalar(inset));
+        const lineEnd = end.clone().sub(dir.clone().multiplyScalar(inset));
+
+        const geometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
+        const line = new THREE.Line(geometry, matForKind(link.kind));
+        // Dashed material needs per-vertex line distances; solid lines ignore it.
+        line.computeLineDistances();
+        moleculeGroup.add(line);
+      });
+
+      // Reveal the edge legend, showing only the kinds actually drawn.
+      const kinds = new Set(data.links.map((l) => l.kind || "inferred"));
+      const legend = document.getElementById("galaxy-legend");
+      if (legend) {
+        legend.hidden = false;
+        legend.querySelectorAll(".galaxy-legend-item").forEach((item) => {
+          const sw = item.querySelector(".galaxy-legend-swatch");
+          const kind = sw?.classList.contains("local")
+            ? "local"
+            : sw?.classList.contains("dependency")
+              ? "dependency"
+              : "inferred";
+          item.style.display = kinds.has(kind) ? "" : "none";
+        });
+      }
     }
+
+    // Center + auto-fit galaxy
+    autoFitCamera(moleculeGroup, camera, controls);
+  } else if (data?.atoms && data.atoms.length > 0) {
+    // Single molecule mode — apply layout then render
+    const cleanedBonds = cleanBonds(data.bonds);
+    applyLayout(data.atoms, cleanedBonds, layout);
+    addMolecule(data.atoms, cleanedBonds, moleculeGroup);
+    autoFitCamera(moleculeGroup, camera, controls);
+  } else {
+    // No findings - show a simple neutral atom
+    const mat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.3, metalness: 0.1 });
+    const geo = new THREE.SphereGeometry(0.8, 32, 32);
+    const mesh = new THREE.Mesh(geo, mat);
+    moleculeGroup.add(mesh);
   }
+}
 
-  // Center + auto-fit galaxy
-  autoFitCamera(moleculeGroup, camera, controls);
-} else if (moleculeData?.atoms && moleculeData.atoms.length > 0) {
-  // Single molecule mode — apply layout then render
-  const cleanedBonds = cleanBonds(moleculeData.bonds);
-  applyLayout(moleculeData.atoms, cleanedBonds, layout);
-  addMolecule(moleculeData.atoms, cleanedBonds, moleculeGroup);
-  autoFitCamera(moleculeGroup, camera, controls);
+// A compacted archive's galaxy needs member data, loaded lazily from
+// /file/{sha}/members; build the scene once it arrives (members.js dispatches
+// prism:molecule). Everything else builds immediately from the embedded data.
+if (document.querySelector("[data-defer-members]")) {
+  window.addEventListener("prism:molecule", (e) => buildScene(e.detail), { once: true });
 } else {
-  // No findings - show a simple neutral atom
-  const mat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.3, metalness: 0.1 });
-  const geo = new THREE.SphereGeometry(0.8, 32, 32);
-  const mesh = new THREE.Mesh(geo, mat);
-  moleculeGroup.add(mesh);
+  buildScene(moleculeData);
 }
 
 // Scene-graph construction is done; capture its cost and the molecule size for
@@ -987,11 +1004,12 @@ function applyTabHash() {
 window.addEventListener("hashchange", applyTabHash);
 applyTabHash();
 
-/// Evidence toggles
-document.querySelectorAll(".evidence-toggle").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const evidence = btn.nextElementSibling;
-    const open = evidence.classList.toggle("visible");
-    btn.classList.toggle("open", open);
-  });
+/// Evidence toggles — delegated so lazily-injected member content works too.
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest(".evidence-toggle");
+  if (!btn) return;
+  const evidence = btn.nextElementSibling;
+  if (!evidence) return;
+  const open = evidence.classList.toggle("visible");
+  btn.classList.toggle("open", open);
 });
