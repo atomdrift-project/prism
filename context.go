@@ -325,6 +325,15 @@ func blockKey(b contextBlock) string {
 // native findings confines a window's annotations to traits that actually fired
 // on its bytes; inherited findings are attributed to their member elsewhere.
 func nativeFindings(file *cleaveFile) map[string]*finding {
+	// A packed archive container has no meaningful byte view of its own — its
+	// bytes are compressed/packed member data — so no trait is windowed against
+	// them; each trait is attributed to the member it fired in (the Traits tab
+	// and the top-trait trail). Binary-content containers (elf/pe/macho with a
+	// genuine own-byte view, e.g. an installer with an appended archive) keep
+	// windowing their own code.
+	if file.Container && !isBinaryType(file.FileType) {
+		return nil
+	}
 	byID := make(map[string]*finding, len(file.Findings))
 	for i := range file.Findings {
 		if len(file.Findings[i].From) > 0 {
@@ -360,6 +369,48 @@ func isOffsetZeroNoise(f *finding) bool {
 		}
 	}
 	return true
+}
+
+// markContainers flags every file whose own bytes are packed member data (an
+// archive/compressed container), so nativeFindings never windows a trait against
+// those bytes. A file is a container when some file names it as parent — the
+// structural `pid` edge cleave emits — or, for reports predating `pid` or whose
+// members were omitted from the report, when its own type is a known
+// archive/compressed format. The two signals are unioned: neither produces a
+// false positive (a real parent link, or genuinely packed bytes), and together
+// they survive both the messy `!!`/`!` archive paths and truncated file lists.
+func markContainers(files []cleaveFile) {
+	idToIdx := make(map[int]int, len(files))
+	for i := range files {
+		idToIdx[files[i].ID] = i
+	}
+	for i := range files {
+		if p := files[i].Parent; p != nil {
+			if j, ok := idToIdx[*p]; ok {
+				files[j].Container = true
+			}
+		}
+		if isContainerType(files[i].FileType) {
+			files[i].Container = true
+		}
+	}
+}
+
+// isContainerType reports whether a file type's own bytes are packed/compressed
+// member data rather than the file's own content — the fallback signal used when
+// the structural `pid` edge is absent. Covers the archive families cleave
+// extracts (composite_rules/types.rs) plus the standalone-compression formats.
+func isContainerType(fileType string) bool {
+	switch fileType {
+	case "archive", "zip", "7z", "rar", "cab", "chm", "ar", "cpio", "iso", "img", "dmg", "msi",
+		"tar", "tgz", "tar.gz", "tar.bz2", "tar.xz",
+		"gz", "gzip", "bz2", "bzip2", "xz", "zst", "zstd", "lz4",
+		"npm", "nupkg", "crate", "conda", "egg", "gem", "whl", "python_sdist", "sdist",
+		"deb", "rpm", "apk", "apk_android", "apk_alpine", "pkg_macos", "pkg_freebsd", "pkg_arch",
+		"jar", "war", "ear", "asar", "ipa", "crx", "xpi", "vsix":
+		return true
+	}
+	return false
 }
 
 // hasRichContext reports whether any window carries current-format per-line

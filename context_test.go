@@ -145,3 +145,48 @@ func TestArchiveFromAttribution(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkContainers(t *testing.T) {
+	pid := func(i int) *int { return &i }
+	files := []cleaveFile{
+		{ID: 0, FileType: "tar.gz"},                     // archive by type; parent of 1,2,3
+		{ID: 1, FileType: "javascript", Parent: pid(0)}, // leaf member
+		{ID: 2, FileType: "customfmt", Parent: pid(0)},  // unusual type, container only via child 5
+		{ID: 3, FileType: "asar", Parent: pid(0)},       // archive by type; parent of 4
+		{ID: 4, FileType: "php", Parent: pid(3)},        // leaf member
+		{ID: 5, FileType: "text", Parent: pid(2)},       // makes 2 a structural container
+	}
+	markContainers(files)
+	want := map[int]bool{0: true, 1: false, 2: true, 3: true, 4: false, 5: false}
+	for i := range files {
+		if got := files[i].Container; got != want[files[i].ID] {
+			t.Errorf("id %d (%s): Container=%v want %v", files[i].ID, files[i].FileType, got, want[files[i].ID])
+		}
+	}
+}
+
+func TestContainerBytesNotWindowed(t *testing.T) {
+	// A native trait (no From) whose span lands in a file's own ctx window.
+	newFile := func(ft string, container bool) *cleaveFile {
+		return &cleaveFile{
+			FileType: ft, Container: container,
+			Findings: []finding{{
+				ID:   "metadata/package/quality/empty::npm-has-licenses-array",
+				Crit: 3, Conf: 0.9, Desc: "licenses array",
+				Spans: [][2]int64{{2, 4}},
+			}},
+			Ctx: []contextWindow{{Offset: 0, Data: []byte("packed-member-garbage")}},
+		}
+	}
+	if lw := labeledWindows(newFile("javascript", false)); len(lw) == 0 {
+		t.Error("non-container should window its native trait")
+	}
+	if lw := labeledWindows(newFile("gz", true)); len(lw) != 0 {
+		t.Errorf("compressed container must not window its packed bytes, got %d windows", len(lw))
+	}
+	// A binary-content container (e.g. an ELF installer with an appended
+	// archive) still has a real own-byte view, so its own code keeps windowing.
+	if lw := labeledWindows(newFile("elf", true)); len(lw) == 0 {
+		t.Error("binary-content container should still window its own code")
+	}
+}

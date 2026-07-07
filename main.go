@@ -931,6 +931,7 @@ type cleaveReport struct {
 // Litmus injects "class" and "prob" into each files[] entry.
 type cleaveFile struct {
 	KV             map[string]json.RawMessage `json:"k,omitempty"`
+	Parent         *int                       `json:"pid,omitempty"`
 	Gradient       template.CSS               `json:"-"`
 	Path           string                     `json:"path"`
 	FileType       string                     `json:"type"`
@@ -938,20 +939,21 @@ type cleaveFile struct {
 	Classification string                     `json:"-"`
 	Formula        string                     `json:"mol,omitempty"`
 	Facts          cleaveFacts                `json:"fact,omitzero"`
-	Exports        []symbolInfo               `json:"exports,omitempty"`
-	Findings       []finding                  `json:"find,omitempty"`
-	Ctx            []contextWindow            `json:"ctx,omitempty"`
-	Strings        []json.RawMessage          `json:"ss,omitempty"`
 	Imports        []string                   `json:"is,omitempty"`
+	Exports        []symbolInfo               `json:"exports,omitempty"`
+	Strings        []json.RawMessage          `json:"ss,omitempty"`
+	Findings       []finding                  `json:"find,omitempty"`
 	Sections       []sectionInfo              `json:"sections,omitempty"`
 	Refs           []cleaveRef                `json:"refs,omitempty"`
 	Metrics        json.RawMessage            `json:"ms,omitempty"`
+	Ctx            []contextWindow            `json:"ctx,omitempty"`
 	Probability    float64                    `json:"-"`
 	Threshold      float64                    `json:"-"`
-	Class          int                        `json:"-"`
 	Size           int64                      `json:"size"`
+	Class          int                        `json:"-"`
 	ID             int                        `json:"id"`
 	Depth          int                        `json:"dp"`
+	Container      bool                       `json:"-"`
 }
 
 // cleaveRef is one reference a file declares — what it points at and, when
@@ -6172,6 +6174,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			report.Files[i].Path = filename
 		}
 	}
+
+	// Flag archive/compressed containers so the content view never windows a
+	// trait against their packed bytes (it belongs to a member inside).
+	markContainers(report.Files)
 
 	// Merge ML classifications from ml.files into cleave report files (matched by id).
 	// Threshold is per-file in v=5 envelopes; zero for v=4 inputs. v6/v7 entries
