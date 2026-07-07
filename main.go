@@ -99,13 +99,6 @@ var (
 	membersCache       *fido.TieredCache[string, cachedMembers]
 	logger             *slog.Logger
 	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
-	// readOnlyMode is set by the PRISM_READONLY env var. When prism reads from a
-	// logical replica (which is writable but whose writes neither reach the
-	// analysis workers nor flow upstream, and can conflict with replication),
-	// the lone DB-write path — requestRescan — is refused up front instead of
-	// silently corrupting the replica. All page-load queries are reads and are
-	// unaffected.
-	readOnlyMode bool
 	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
@@ -1453,13 +1446,6 @@ func main() {
 		}
 	}
 
-	// PRISM_READONLY marks the configured hopper DB as a read replica, so the
-	// rescan write path is refused rather than applied to a replica.
-	switch strings.ToLower(os.Getenv("PRISM_READONLY")) {
-	case "1", "true", "yes", "on":
-		readOnlyMode = true
-	}
-
 	if dbDSN == "" {
 		dbDSN = os.Getenv("HOPPER_DSN")
 	}
@@ -2612,11 +2598,6 @@ func feedDate(t, now time.Time) string {
 // single user-facing message covering both possibilities.
 var errSampleNotEligible = errors.New("sample not found, is an archive child, is marked skip, or is within the rescan cooldown")
 
-// errReadOnlyReplica is returned by requestRescan when prism runs against a
-// read replica (PRISM_READONLY): a rescan write there would not reach the
-// analysis workers and could conflict with replication, so it is refused.
-var errReadOnlyReplica = errors.New("rescan unavailable: prism is connected to a read-only replica")
-
 // tokenBucket is a minimal global rate limiter. Tokens refill continuously
 // at refillRate per second up to capacity; Allow consumes one token and
 // returns false when none are available. Safe for concurrent use.
@@ -2666,30 +2647,19 @@ func (b *tokenBucket) Allow() bool {
 // rate). See handleRescan for use.
 var rescanLimiter = newTokenBucket(1.0, 10)
 
-// requestRescan clears the cached analysis fields for the given sample
-// hash so the next worker poll picks it up as Tier 1 (unanalyzed) work.
-// Limited to top-level non-skipped samples (parent is empty, skip is
-// empty) — archive children inherit analysis from their parent, and
-// skipped samples are excluded deliberately. The prism-side result cache
-// is invalidated on success so a subsequent GET /file/<sha> does not
-// serve the stale rendered view.
+// requestRescan re-queues a sample for analysis by asking hopper's HTTP API to
+// clear its cached analysis fields, so the next worker poll picks it up as Tier
+// 1 (unanalyzed) work. The write is routed through hopper-api rather than
+// prism's own pool: prism reads from a replica, and funneling every write
+// through hopper keeps the master authoritative — the same reason uploads and
+// result publishes go over the API. hopper limits the action to top-level
+// non-skipped samples and enforces the re-queue cooldown server-side.
 //
-// This currently uses the raw pgxpool exposed by hopper.DB.Pool(); it
-// would belong as a hopper.DB.RequestRescan method but is kept local to
-// avoid a hopper version bump for this single operator action.
+// On success prism's per-sha caches are invalidated so a subsequent
+// GET /file/<sha> rebuilds from the re-queued state instead of the stale view.
 func requestRescan(ctx context.Context, sha string) error {
-	if readOnlyMode {
-		return errReadOnlyReplica
-	}
-	db := hopperDB.Load()
-	if db == nil {
-		return errors.New("hopper database unavailable")
-	}
-	if err := db.RequestRescan(ctx, sha, rescanCooldown); err != nil {
-		if errors.Is(err, hopper.ErrRescanNotEligible) {
-			return errSampleNotEligible
-		}
-		return fmt.Errorf("hopper rescan: %w", err)
+	if err := postRescanToHopper(ctx, sha); err != nil {
+		return err
 	}
 	// Invalidate every prism-local cache keyed on this sha so the next
 	// GET /file/<sha> rebuilds the whole page from the re-queued state
@@ -4730,13 +4700,13 @@ func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // handleRescan accepts any user's request to re-queue a sample for analysis,
-// gated only by a valid CSRF token (so the request demonstrably came from a
-// recently-rendered page) and a server-side cooldown enforced atomically in
-// the UPDATE statement. The cooldown — rescanCooldown, currently 15
-// minutes — prevents rapid-fire re-queues from one user or a coordinated
-// click. On success the sample's analysis fields are cleared in hopper so
-// the next worker poll picks it up, and prism's local result cache for that
-// SHA is invalidated.
+// gated at prism by a valid CSRF token (so the request demonstrably came from a
+// recently-rendered page) and a global rate limit, then forwarded to hopper's
+// /api/rescan endpoint. hopper enforces the per-sample re-queue cooldown
+// atomically in its UPDATE; prism mirrors that cooldown (rescanCooldown, 15
+// minutes) only to decide when to offer the button. On success the sample's
+// analysis fields are cleared on the master so the next worker poll picks it
+// up, and prism's local result cache for that SHA is invalidated.
 func handleRescan(w http.ResponseWriter, r *http.Request) {
 	sha := strings.ToLower(r.PathValue("sha256"))
 	ip := clientIP(r)
@@ -4766,10 +4736,6 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 	if err := requestRescan(r.Context(), sha); err != nil {
 		if errors.Is(err, errSampleNotEligible) {
 			writeJSONError(w, http.StatusTooManyRequests, "not_eligible", "sample is not eligible — either it's an archive child, skipped, or was analyzed within the last 15 minutes")
-			return
-		}
-		if errors.Is(err, errReadOnlyReplica) {
-			writeJSONError(w, http.StatusServiceUnavailable, "read_only", "rescan is unavailable on this read-only replica; try again from the primary instance")
 			return
 		}
 		reqLogger.Error("rescan: hopper update failed", "error", err)
@@ -6027,6 +5993,69 @@ func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope,
 		return fmt.Errorf("hopper /api/result status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	return nil
+}
+
+// hopperRescanURL builds the absolute URL of hopper's POST /api/rescan/{sha256}
+// endpoint from the admin-configured hopper-api host. Mirrors hopperFileURL.
+func hopperRescanURL(sha string) string {
+	base := strings.TrimSpace(hopperAPIAddr)
+	if base == "" {
+		base = defaultHopperAPIAddr
+	}
+	if !strings.Contains(base, "://") {
+		base = "http://" + base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "http://" + defaultHopperAPIAddr + "/api/rescan/" + sha
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/rescan/" + sha
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// postRescanToHopper POSTs to hopper's /api/rescan/{sha256} so the sample is
+// re-queued on the master. The same per-dependency breaker that guards other
+// hopper-api calls applies. hopper's 409 (sample not eligible, or within its
+// re-queue cooldown) maps to errSampleNotEligible so the handler surfaces the
+// familiar user-facing message; any other non-200 is a generic error. A single
+// attempt is enough — the breaker sheds load when hopper-api is down and the
+// user can simply click again.
+func postRescanToHopper(ctx context.Context, sha string) error {
+	if err := apiBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-api", "rescan", "rejected", time.Time{})
+		return fmt.Errorf("hopper-api rescan: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hopperRescanURL(sha), http.NoBody)
+	if err != nil {
+		// Local build error: hopper was never contacted; don't move the breaker.
+		return fmt.Errorf("build request: %w", err)
+	}
+	start := time.Now()
+	resp, err := hopperClient.Do(req) //nolint:gosec // hopperRescanURL built from admin-configured hopper-api host + validated SHA path
+	if err != nil {
+		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "rescan", "error", start)
+		return fmt.Errorf("hopper request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
+	if resp.StatusCode >= http.StatusInternalServerError {
+		apiBreaker.failure()
+		recordDep(ctx, "hopper-api", "rescan", "error", start)
+	} else {
+		apiBreaker.success()
+		recordDep(ctx, "hopper-api", "rescan", "ok", start)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		return errSampleNotEligible
+	default:
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024)) //nolint:errcheck // diagnostics only
+		return fmt.Errorf("hopper /api/rescan status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
 }
 
 // prepareResultData converts raw cleave output to template data.
