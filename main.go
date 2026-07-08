@@ -6403,12 +6403,15 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.IsArchive = len(report.Files) > 1
 
 	// Containment/provenance hierarchy from the members' pid edges — the
-	// archive → member → fetched-dependency structure. Built for every page
-	// (cheap: a lone file yields one node); the Structure tab renders only when
-	// the root has children. buildFileTree folds large and fetched subtrees shut
-	// so a 10k-member dependency never floods the initial render.
-	data.Tree = buildFileTree(report.Files)
-	data.HasTree = len(data.Tree) > 0 && len(data.Tree[0].Children) > 0
+	// archive → member → fetched-dependency structure. The Structure tab renders
+	// only when the root has children; buildFileTree folds large and fetched
+	// subtrees shut so a 10k-member dependency never floods the initial render.
+	// Older payloads predate pid and would yield a flat forest the tab hides
+	// anyway, so the build (and its sort) is skipped entirely for them.
+	if reportHasPid(report.Files) {
+		data.Tree = buildFileTree(report.Files)
+		data.HasTree = len(data.Tree) > 0 && len(data.Tree[0].Children) > 0
+	}
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).

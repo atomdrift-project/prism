@@ -39,6 +39,20 @@ type treeNode struct {
 	Collapsed   bool // fold shut by default (a large or fetched subtree)
 }
 
+// reportHasPid reports whether any file carries a parent edge — the signal that
+// a payload is new enough to have a containment tree. Older payloads predate
+// `pid` and decode with every Parent nil, so the whole tree build (and the
+// Structure tab) is skipped for them rather than assembling a flat forest the
+// tab would hide anyway.
+func reportHasPid(files []cleaveFile) bool {
+	for i := range files {
+		if files[i].Parent != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // buildFileTree assembles the pid-linked forest from a report's flat files. A
 // file with no resolvable parent is a root; every other file hangs under the
 // node its pid names. Siblings are ordered severity-first then by name, so the

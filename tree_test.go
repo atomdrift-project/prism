@@ -119,3 +119,26 @@ func TestTreeNodeRenders(t *testing.T) {
 		}
 	}
 }
+
+// Older payloads predate pid: every file decodes with Parent==nil, so
+// reportHasPid is false and buildFileTree yields a flat forest with no nesting —
+// the Structure tab stays hidden and no build work is wasted.
+func TestNoPidDegradesGracefully(t *testing.T) {
+	files := []cleaveFile{
+		{ID: 0, Path: "a.zip", FileType: "zip"},
+		{ID: 1, Path: "a.zip!!x.py", FileType: "python"}, // no Parent
+		{ID: 2, Path: "a.zip!!y.sh", FileType: "shell"},  // no Parent
+	}
+	if reportHasPid(files) {
+		t.Fatal("reportHasPid should be false for pid-less payloads")
+	}
+	roots := buildFileTree(files)
+	if len(roots) != len(files) {
+		t.Fatalf("pid-less data should yield %d flat roots, got %d", len(files), len(roots))
+	}
+	for _, r := range roots {
+		if len(r.Children) != 0 {
+			t.Errorf("pid-less root %q unexpectedly has children", r.Name)
+		}
+	}
+}
