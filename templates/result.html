@@ -93,7 +93,7 @@
             outline-offset: 2px;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 40px 24px;
         }
@@ -1287,15 +1287,25 @@
            highlights its span. The inline .ctx-anno below is retained for hex
            rows, whose byte dump has no separate column. */
         .ctx-traits {
-            width: 1%;
-            max-width: 240px;
             padding: 2px 14px !important;
-            white-space: normal !important;
             border-left: 1px solid var(--border);
             font-family: 'Inter', -apple-system, sans-serif;
         }
         .ctx-traits:empty { border-left-color: transparent; }
-        .ctx-traits .anno { display: block; font-size: 12px; line-height: 1.45; }
+        /* Descriptions get a wide lane and truncate with an ellipsis instead of
+           wrapping — the full text is in each anno's title on hover. The max-width
+           is set on the anno, not the cell (a table cell's own max-width is
+           ignored in auto layout, but a child block's is honoured), capping the
+           column near 30em so it can't crowd the code. */
+        .ctx-traits .anno {
+            display: block;
+            max-width: 30em;
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         .ctx-traits .anno + .anno { margin: 3px 0 0; }
         .ctx-anno {
             display: inline-block;
@@ -2018,7 +2028,7 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/tree.js?v={{.BuildCommit}}"></script>
 </body>
 </html>
-{{define "ctxanno"}}{{range .}}<span class="anno {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">{{.Desc}}</span>{{end}}{{end}}
+{{define "ctxanno"}}{{range .}}<span class="anno {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{.Desc}}">{{.Desc}}</span>{{end}}{{end}}
 {{define "ctxblocks"}}
 <div class="ctx-view">
     {{range .}}
