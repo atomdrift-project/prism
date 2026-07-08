@@ -410,19 +410,22 @@ func isOffsetZeroNoise(f *finding) bool {
 
 // markContainers flags every file whose own bytes are packed member data (an
 // archive/compressed container), so nativeFindings never windows a trait against
-// those bytes. A file is a container when some file names it as parent — the
-// structural `pid` edge cleave emits — or, for reports predating `pid` or whose
-// members were omitted from the report, when its own type is a known
-// archive/compressed format. The two signals are unioned: neither produces a
-// false positive (a real parent link, or genuinely packed bytes), and together
-// they survive both the messy `!!`/`!` archive paths and truncated file lists.
+// those bytes. A file is a container when some file names it as parent via a
+// *containment* pid edge — an extracted archive member — or, for reports
+// predating `pid` or whose members were omitted, when its own type is a known
+// archive/compressed format. A "fetched" dependency or a "registry" sidecar also
+// carries a pid, but it names the file that *declared* it, not a container, so
+// those edges are excluded — otherwise a PKGBUILD that fetched a tarball would be
+// marked a container and lose its own findings. The signals are unioned and
+// neither is a false positive, so together they survive messy `!!`/`!` paths and
+// truncated file lists.
 func markContainers(files []cleaveFile) {
 	idToIdx := make(map[int]int, len(files))
 	for i := range files {
 		idToIdx[files[i].ID] = i
 	}
 	for i := range files {
-		if p := files[i].Parent; p != nil {
+		if p := files[i].Parent; p != nil && containmentRel(files[i].Rel) {
 			if j, ok := idToIdx[*p]; ok {
 				files[j].Container = true
 			}
@@ -431,6 +434,13 @@ func markContainers(files []cleaveFile) {
 			files[i].Container = true
 		}
 	}
+}
+
+// containmentRel reports whether a child's pid edge means its parent physically
+// packs it. Fetched and registry edges point at a declaring/described file, not a
+// packed container; every other edge (an archive member, an unpacked layer) does.
+func containmentRel(rel string) bool {
+	return rel != "fetched" && rel != "registry"
 }
 
 // isContainerType reports whether a file type's own bytes are packed/compressed

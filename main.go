@@ -6472,6 +6472,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 					Classification: file.Classification,
 					Probability:    file.Probability,
 					Formula:        file.Formula,
+					Rel:            file.Rel,
+					Parent:         file.Parent,
 					Findings:       ff,
 					Strings:        galaxyStrings(file),
 					Refs:           refs,

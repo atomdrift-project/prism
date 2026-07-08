@@ -706,6 +706,7 @@
         .tnode.collapsed > .trow .ttw { transform: rotate(-90deg); }
         .ttw.leaf { visibility: hidden; }
         .tname { color: var(--carbon); white-space: nowrap; border-bottom: 1px solid transparent; }
+        .tname.tdir { color: var(--slate); font-weight: 600; } /* directory node — no link */
         a.tname:hover { color: var(--isotope); border-bottom-color: var(--isotope); }
         .ttype { font-size: 11px; color: var(--iron); background: var(--mist); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'Inter', -apple-system, sans-serif; }
         .tgrow { flex: 1 1 auto; min-width: 8px; }
@@ -1987,12 +1988,9 @@
                     <div class="trow{{if .Children}} clickable{{end}}"{{if .Children}} tabindex="0" role="button" aria-expanded="{{if .Collapsed}}false{{else}}true{{end}}"{{end}}>
                         <span class="tdot {{if .Crit}}{{.Crit}}{{else}}none{{end}}" aria-hidden="true"></span>
                         <span class="ttw{{if not .Children}} leaf{{end}}" aria-hidden="true">{{if .Children}}&#9662;{{end}}</span>
-                        <a class="tname" href="/file/{{.SHA256}}" title="{{.Path}}">{{.Name}}</a>
-                        {{if .FileType}}<span class="ttype">{{.FileType}}</span>{{end}}
-                        {{if eq .Rel "fetched"}}<span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched{{if .Via}} &middot; <a href="{{.Via}}" target="_blank" rel="noopener noreferrer" title="{{.Via}}">{{.ViaHost}}</a>{{end}}</span>{{end}}
-                        {{if eq .Role "sidecar"}}<span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span>{{end}}
+                        {{if .IsDir}}<span class="tname tdir">{{.Name}}/</span>{{else}}<a class="tname" href="/file/{{.SHA256}}" title="{{.Path}}">{{.Name}}</a>{{if .FileType}}<span class="ttype">{{.FileType}}</span>{{end}}{{if eq .Rel "fetched"}}<span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched{{if .Via}} &middot; <a href="{{.Via}}" target="_blank" rel="noopener noreferrer" title="{{.Via}}">{{.ViaHost}}</a>{{end}}</span>{{end}}{{if eq .Role "sidecar"}}<span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span>{{end}}{{end}}
                         <span class="tgrow"></span>
-                        {{if .Children}}<span class="tmeta">{{.Descendants}} file{{if ne .Descendants 1}}s{{end}}{{if .SizeHuman}} &middot; {{.SizeHuman}}{{end}}</span>{{else if .SizeHuman}}<span class="tmeta">{{.SizeHuman}}</span>{{end}}
+                        {{if .IsDir}}<span class="tmeta">{{.Count}} file{{if ne .Descendants 1}}s{{end}}</span>{{else if .Children}}<span class="tmeta">{{.Count}} file{{if ne .Descendants 1}}s{{end}}{{if .SizeHuman}} &middot; {{.SizeHuman}}{{end}}</span>{{else if .SizeHuman}}<span class="tmeta">{{.SizeHuman}}</span>{{end}}
                     </div>
                     {{if .Children}}
                     <ul class="tkids">

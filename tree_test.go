@@ -46,9 +46,14 @@ func TestBuildFileTreeProvenance(t *testing.T) {
 		t.Fatalf("root descendants = %d, want 4", root.Descendants)
 	}
 
-	pkgbuild := findChild(root, "PKGBUILD")
+	// Members fold under the opencv4-llvm/ package directory.
+	pkgDir := findChild(root, "opencv4-llvm")
+	if pkgDir == nil || !pkgDir.IsDir {
+		t.Fatalf("members should nest under the opencv4-llvm/ dir; root children = %+v", root.Children)
+	}
+	pkgbuild := findChild(pkgDir, "PKGBUILD")
 	if pkgbuild == nil {
-		t.Fatal("PKGBUILD not a direct child of the archive")
+		t.Fatal("PKGBUILD not found under opencv4-llvm/")
 	}
 	// The fetched tarball hangs under the PKGBUILD that declared it, not the root.
 	if findChild(root, "4.13.0") != nil {
@@ -95,7 +100,7 @@ func TestTreeNodeRenders(t *testing.T) {
 		Name: "4.13.0", SHA256: "1d40ca01", FileType: "gz",
 		Rel: "fetched", Via: "https://github.com/opencv/opencv/archive/4.13.0.tar.gz",
 		ViaHost: "github.com", Crit: "suspicious", SizeHuman: "95 MB",
-		Descendants: 10198,
+		Descendants: 10198, Count: "10,198",
 		Children: []*treeNode{
 			{Name: "package.json", SHA256: "abc", FileType: "package.json", Role: "sidecar", Crit: "notable"},
 		},
@@ -110,7 +115,7 @@ func TestTreeNodeRenders(t *testing.T) {
 		`class="tchip fetch"`,
 		`href="https://github.com/opencv/opencv/archive/4.13.0.tar.gz"`,
 		"github.com",
-		"10198 files",
+		"10,198 files",
 		`class="tchip reg"`, // the sidecar child recursed into
 		`href="/file/1d40ca01"`,
 	} {
@@ -139,6 +144,50 @@ func TestNoPidDegradesGracefully(t *testing.T) {
 	for _, r := range roots {
 		if len(r.Children) != 0 {
 			t.Errorf("pid-less root %q unexpectedly has children", r.Name)
+		}
+	}
+}
+
+// buildFileTree folds a container's flat members into a directory tree, merges
+// single-child chains (src/a), and lifts each directory's severity to its worst
+// file so a folder holding a hostile file shows a hostile dot.
+func TestBuildFileTreeNestsDirectories(t *testing.T) {
+	files := []cleaveFile{
+		{ID: 0, Path: "pkg.zip", FileType: "zip"},
+		{ID: 1, Path: "pkg.zip!!src/a/util.py", FileType: "python", Parent: new(0)},
+		{
+			ID: 2, Path: "pkg.zip!!src/a/evil.py", FileType: "python", Parent: new(0),
+			Findings: []finding{{ID: "x", Crit: 5}},
+		}, // hostile
+		{ID: 3, Path: "pkg.zip!!README.md", FileType: "markdown", Parent: new(0)},
+	}
+	root := buildFileTree(files)[0]
+
+	if findChild(root, "README.md") == nil {
+		t.Fatal("README.md should stay a direct child of the archive")
+	}
+	srcA := findChild(root, "src/a")
+	if srcA == nil || !srcA.IsDir {
+		t.Fatalf("src/a should be one merged directory node; root children = %+v", root.Children)
+	}
+	if srcA.Crit != "hostile" {
+		t.Errorf("src/a severity = %q, want hostile (inherited from evil.py)", srcA.Crit)
+	}
+	if srcA.Descendants != 2 {
+		t.Errorf("src/a file count = %d, want 2", srcA.Descendants)
+	}
+	if findChild(srcA, "evil.py") == nil || findChild(srcA, "util.py") == nil {
+		t.Errorf("src/a should hold evil.py and util.py; got %+v", srcA.Children)
+	}
+}
+
+func TestCommafy(t *testing.T) {
+	for _, c := range []struct {
+		in   int
+		want string
+	}{{0, "0"}, {42, "42"}, {999, "999"}, {1000, "1,000"}, {10198, "10,198"}, {1234567, "1,234,567"}} {
+		if got := commafy(c.in); got != c.want {
+			t.Errorf("commafy(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

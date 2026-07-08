@@ -234,6 +234,25 @@ func TestTopDescByIDCapsBySeverity(t *testing.T) {
 	}
 }
 
+// markContainers must not flag a file a container just because it declared a
+// fetched dependency or has a registry sidecar — those pid edges point at the
+// declaring file, whose own findings must still window and render.
+func TestMarkContainersSkipsNonContainmentEdges(t *testing.T) {
+	files := []cleaveFile{
+		{ID: 0, FileType: "zip"},                                // real archive
+		{ID: 1, FileType: "shell", Parent: new(0)},              // PKGBUILD, a member of the zip
+		{ID: 2, FileType: "gz", Parent: new(1), Rel: "fetched"}, // fetched dep PKGBUILD declared
+		{ID: 3, FileType: "registry", Parent: new(0), Rel: "registry"},
+	}
+	markContainers(files)
+	if !files[0].Container {
+		t.Error("the zip archive should be a container (it holds a real member)")
+	}
+	if files[1].Container {
+		t.Error("PKGBUILD must not be a container: it only declared a fetched dependency")
+	}
+}
+
 // buildContextBlocksForFileView renders a file's windows the way the Content tab
 // does (every note lit, inline annotations on), for tests.
 func buildContextBlocksForFileView(t *testing.T, file *cleaveFile) []contextBlock {

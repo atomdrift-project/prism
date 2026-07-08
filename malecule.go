@@ -781,6 +781,8 @@ type FileFindings struct {
 	Risk           string
 	Classification string // litmus ML classification
 	Formula        string // Formula from cleave
+	Rel            string // pid edge type ("fetched"/"unpacked"/…) — draws a precise dropper edge to the declarer
+	Parent         *int   // cleave pid — the file that fetched/declared this one
 	Findings       []FindingForFormula
 	Strings        []string    // Extracted strings for dropper detection (fallback)
 	Refs           []galaxyRef // cleave-resolved references to other report files
@@ -1152,6 +1154,19 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	for from, tos := range refDep {
 		for _, to := range tos {
 			addLink(from, to, "dependency")
+		}
+	}
+	// A fetched or unpacked node's pid names the file that fetched/decoded it —
+	// the dropper→payload relationship, recorded precisely by scan's graft. Draw
+	// it as a dependency edge where both ends are shown, catching obfuscated or
+	// renamed drops the basename heuristic misses; addLink's dedup lets cleave's
+	// own resolved edge win the pair. Older payloads carry no pid and add nothing.
+	for i := range files {
+		if files[i].Parent == nil || (files[i].Rel != "fetched" && files[i].Rel != "unpacked") {
+			continue
+		}
+		if parentIdx, ok := idToIdx[*files[i].Parent]; ok {
+			addLink(parentIdx, i, "dependency")
 		}
 	}
 	for fromFileIdx, toFileIdxs := range drops {
