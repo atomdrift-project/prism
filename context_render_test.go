@@ -139,12 +139,14 @@ func TestRowAnnoSingleStrongest(t *testing.T) {
 	}
 }
 
-// TestLongLineClipsAroundMatch confirms a long minified line is clipped to a
-// window holding its match, with leading/trailing ellipsis, and the match stays
-// highlighted at the right place after the shift.
+// TestLongLineClipsAroundMatch confirms a pathologically long minified line
+// (beyond the maxSrcCols wrap cap) is still clipped to a window holding its
+// match, with leading/trailing ellipsis, and the match stays highlighted at the
+// right place after the shift. Lines under the cap now wrap instead (see
+// TestModerateLineWrapsNotClipped).
 func TestLongLineClipsAroundMatch(t *testing.T) {
-	prefix := strings.Repeat("a", 400)
-	suffix := strings.Repeat("b", 400)
+	prefix := strings.Repeat("a", 2000)
+	suffix := strings.Repeat("b", 2000)
 	line := prefix + "eval(x)" + suffix
 	matchOff := int64(len(prefix))
 	file := &cleaveFile{
@@ -177,6 +179,58 @@ func TestLongLineClipsAroundMatch(t *testing.T) {
 	}
 	if !litEval {
 		t.Error("the matched 'eval' should stay highlighted after the clip shift")
+	}
+}
+
+// TestModerateLineWrapsNotClipped locks the new contract: a line longer than the
+// old clip width but within maxSrcCols is shown in full (no lead/trail ellipsis)
+// and wraps in the column, so all of the code stays visible.
+func TestModerateLineWrapsNotClipped(t *testing.T) {
+	prefix := strings.Repeat("a", 400)
+	suffix := strings.Repeat("b", 400)
+	line := prefix + "eval(x)" + suffix // 807 chars: over the old 100 cap, under 2000
+	matchOff := int64(len(prefix))
+	file := &cleaveFile{
+		Path: "min.js", FileType: "javascript",
+		Findings: []finding{{ID: "t/x", Desc: "dynamic eval", Crit: 5, Spans: [][2]int64{{matchOff, 4}}}},
+		Ctx:      []contextWindow{{Offset: 1, Addr: ptrInt64(0), Data: []byte(line)}},
+	}
+	blocks := buildContextBlocksForFileView(t, file)
+	row := blocks[0].Rows[0]
+	if row.Lead || row.Trail {
+		t.Errorf("a line under the cap should not clip: lead=%v trail=%v", row.Lead, row.Trail)
+	}
+	var text string
+	for _, s := range row.Segs {
+		text += s.Text
+	}
+	if text != line {
+		t.Errorf("wrapped line should show in full (%d chars); got %d", len(line), len(text))
+	}
+}
+
+// TestTopDescByIDCapsBySeverity locks the gutter cap: only the strongest N
+// traits get a written description (severity-then-confidence), the rest are
+// dropped from the set (they still highlight), and a top-N trait with no
+// description stays in the set for its short-id fallback.
+func TestTopDescByIDCapsBySeverity(t *testing.T) {
+	findings := map[string]*finding{
+		"a": {Crit: 5, Conf: 0.9, Desc: "a"},
+		"b": {Crit: 4, Conf: 0.9, Desc: "b"},
+		"c": {Crit: 4, Conf: 0.5, Desc: "c"},
+		"d": {Crit: 3, Conf: 0.9, Desc: "d"},
+		"e": {Crit: 2, Conf: 0.9, Desc: ""},  // no desc — still counts, short-id fallback
+		"f": {Crit: 1, Conf: 0.9, Desc: "f"}, // 6th by severity — dropped past the cap
+	}
+	got := topDescByID(findings, 5)
+	if len(got) != 5 {
+		t.Fatalf("want 5 in the annotate set, got %d: %v", len(got), got)
+	}
+	if _, ok := got["f"]; ok {
+		t.Error("lowest-severity trait f should be dropped past the top-5 cap")
+	}
+	if _, ok := got["e"]; !ok {
+		t.Error("a no-Desc top-5 trait must stay in the set for its short-id fallback")
 	}
 }
 

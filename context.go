@@ -204,13 +204,10 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 	}
 	filename := extractBasename(file.Path)
 	findingsByID := nativeFindings(file)
-	// Description fallback: the finding's own desc.
-	descByID := make(map[string]string, len(findingsByID))
-	for id, f := range findingsByID {
-		if f.Desc != "" {
-			descByID[id] = f.Desc
-		}
-	}
+	// Written descriptions are capped to the file's strongest few traits so the
+	// context trait column stays scannable — every trait still highlights its
+	// span (that path is separate), only the top ones carry a note.
+	descByID := topDescByID(findingsByID, maxAnnotatedTraits)
 	var out []labeledWindow
 	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
 		notes := windowNotes(g, findingsByID)
@@ -222,6 +219,46 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 			continue
 		}
 		out = append(out, labeledWindow{Notes: notes, Block: block, Start: g[0].Offset, Crit: notes[0].Crit})
+	}
+	return out
+}
+
+// maxAnnotatedTraits caps how many of a file's traits carry a written
+// description in the context trait column. Every matched trait still highlights
+// its span; only the strongest few get a note, so a busy file's column stays
+// scannable instead of repeating a description down every line.
+const maxAnnotatedTraits = 5
+
+// topDescByID returns descriptions for the strongest n findings — by severity,
+// then confidence, then id for a stable order — and drops the rest. The dropped
+// traits still highlight; they just carry no written note.
+func topDescByID(findings map[string]*finding, n int) map[string]string {
+	type ranked struct {
+		id, desc string
+		crit     int
+		conf     float64
+	}
+	items := make([]ranked, 0, len(findings))
+	for id, f := range findings {
+		// No-Desc traits still count toward the top-N — rowAnnos falls back to
+		// the short trait id for their label, so they must be in the set.
+		items = append(items, ranked{id: id, desc: f.Desc, crit: f.Crit, conf: f.Conf})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].crit != items[j].crit {
+			return items[i].crit > items[j].crit
+		}
+		if items[i].conf != items[j].conf {
+			return items[i].conf > items[j].conf
+		}
+		return items[i].id < items[j].id
+	})
+	if len(items) > n {
+		items = items[:n]
+	}
+	out := make(map[string]string, len(items))
+	for _, it := range items {
+		out[it.id] = it.desc
 	}
 	return out
 }
@@ -458,6 +495,9 @@ func rowAnnos(findings map[string]*finding, base int64, n int, descByID map[stri
 		if annotated[id] {
 			continue
 		}
+		if _, ok := descByID[id]; !ok {
+			continue // outside the top-N annotate set — highlighted, but no note
+		}
 		for _, sp := range f.Spans {
 			off := sp[0] - base
 			if off < 0 || off >= int64(n) {
@@ -546,11 +586,12 @@ func renderSourceWindow(
 	return block
 }
 
-// maxSrcCols caps the displayed width of a source line; longer lines clip to a
-// window around the match. srcLeadCols is the minimum lead kept before it, so
-// the match isn't flush against the left ellipsis.
+// maxSrcCols caps how much of a source line is shown. The code column wraps, so
+// a long line is fully visible; only a pathologically long (minified) line
+// beyond this clips to a window around the match. srcLeadCols is the minimum
+// lead kept before the match so it isn't flush against the left ellipsis.
 const (
-	maxSrcCols  = 100
+	maxSrcCols  = 2000
 	srcLeadCols = 28
 )
 
