@@ -688,6 +688,45 @@
            composite doesn't crowd the tab indicator. */
         #tab-content { padding-top: 16px; }
 
+        /* ---- Structure tab: the pid-driven containment / provenance tree.
+           One representation of one fact — each node's parent — so the archive,
+           its fetched dependencies, and their members read as a single tree. --- */
+        #tab-structure { padding-top: 12px; }
+        .ttree { list-style: none; font-family: 'SF Mono', Consolas, monospace; font-size: 13px; }
+        .ttree .tnode { list-style: none; }
+        .trow { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; }
+        .trow.clickable { cursor: pointer; }
+        .trow.clickable:hover { background: var(--mist); }
+        .tdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+        .tdot.hostile { background: var(--hostile); }
+        .tdot.suspicious { background: var(--suspicious); }
+        .tdot.notable { background: var(--notable); }
+        .tdot.baseline, .tdot.component, .tdot.filtered, .tdot.none { background: var(--border); }
+        .ttw { width: 12px; flex: none; color: var(--slate); font-size: 10px; text-align: center; transition: transform 0.15s ease; }
+        .tnode.collapsed > .trow .ttw { transform: rotate(-90deg); }
+        .ttw.leaf { visibility: hidden; }
+        .tname { color: var(--carbon); white-space: nowrap; border-bottom: 1px solid transparent; }
+        a.tname:hover { color: var(--isotope); border-bottom-color: var(--isotope); }
+        .ttype { font-size: 11px; color: var(--iron); background: var(--mist); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'Inter', -apple-system, sans-serif; }
+        .tgrow { flex: 1 1 auto; min-width: 8px; }
+        .tmeta { font-size: 11.5px; color: var(--slate); white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .tchip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'Inter', -apple-system, sans-serif; border-radius: 5px; padding: 2px 7px; border: 1px solid transparent; white-space: nowrap; }
+        .tchip .g { font-size: 12px; line-height: 1; }
+        /* fetched = eco-cyan (network provenance); registry = eco-purple
+           (metadata). Deliberately not severity hues, so provenance never reads
+           as risk. */
+        .tchip.fetch { color: #155e75; background: rgba(6, 182, 212, 0.10); border-color: rgba(6, 182, 212, 0.30); }
+        .tchip.reg { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.28); }
+        .tchip.fetch a { color: inherit; border-bottom: 1px dotted currentColor; }
+        .tchip.fetch a:hover { color: var(--isotope); border-bottom-color: var(--isotope); }
+        .tkids { list-style: none; margin-left: 21px; border-left: 1px solid var(--border); padding-left: 2px; }
+        .tnode.collapsed > .tkids { display: none; }
+        .trow.tmore { color: var(--slate); font-family: 'Inter', -apple-system, sans-serif; font-size: 12px; padding-left: 30px; }
+        .tlegend { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px 10px 2px; margin-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--slate); font-family: 'Inter', -apple-system, sans-serif; }
+        .tlegend .item { display: inline-flex; align-items: center; gap: 6px; }
+        .trow.clickable:focus-visible { outline: 2px solid var(--isotope); outline-offset: 1px; }
+        @media (prefers-reduced-motion: reduce) { .ttw { transition: none; } }
+
         .findings-output {
             background: var(--carbon);
             color: #e5e7eb;
@@ -1737,6 +1776,7 @@
                 <button type="button" class="tab{{if not (or .FileViews .DeferredMembers)}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if or .FileViews .DeferredMembers}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if or .FileViews .DeferredMembers}}-1{{else}}0{{end}}">Traits</button>
                 {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
                 {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
+                {{if .HasTree}}<button type="button" class="tab" role="tab" id="tabbtn-structure" data-tab="structure" aria-selected="false" aria-controls="tab-structure" tabindex="-1">Structure</button>{{end}}
             </div>
 
             {{if .FileViews}}
@@ -1920,8 +1960,40 @@
                 <pre class="report-output">{{.ReportContent}}</pre>
             </div>
             {{end}}
-        </section>
 
+            {{if .HasTree}}
+            <div class="tab-content" id="tab-structure" role="tabpanel" aria-labelledby="tabbtn-structure" tabindex="0">
+                <ul class="ttree">
+                    {{range .Tree}}{{template "treeNode" .}}{{end}}
+                </ul>
+                <div class="tlegend">
+                    <span class="item"><span class="tdot none"></span> contained member</span>
+                    <span class="item"><span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched</span> pulled from a URL its parent declared</span>
+                    <span class="item"><span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span> package metadata, not an extracted file</span>
+                </div>
+            </div>
+            {{end}}
+        </section>
+{{define "treeNode"}}
+                <li class="tnode{{if .Collapsed}} collapsed{{end}}">
+                    <div class="trow{{if .Children}} clickable{{end}}"{{if .Children}} tabindex="0" role="button" aria-expanded="{{if .Collapsed}}false{{else}}true{{end}}"{{end}}>
+                        <span class="tdot {{if .Crit}}{{.Crit}}{{else}}none{{end}}" aria-hidden="true"></span>
+                        <span class="ttw{{if not .Children}} leaf{{end}}" aria-hidden="true">{{if .Children}}&#9662;{{end}}</span>
+                        <a class="tname" href="/file/{{.SHA256}}" title="{{.Path}}">{{.Name}}</a>
+                        {{if .FileType}}<span class="ttype">{{.FileType}}</span>{{end}}
+                        {{if eq .Rel "fetched"}}<span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched{{if .Via}} &middot; <a href="{{.Via}}" target="_blank" rel="noopener noreferrer" title="{{.Via}}">{{.ViaHost}}</a>{{end}}</span>{{end}}
+                        {{if eq .Role "sidecar"}}<span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span>{{end}}
+                        <span class="tgrow"></span>
+                        {{if .Children}}<span class="tmeta">{{.Descendants}} file{{if ne .Descendants 1}}s{{end}}{{if .SizeHuman}} &middot; {{.SizeHuman}}{{end}}</span>{{else if .SizeHuman}}<span class="tmeta">{{.SizeHuman}}</span>{{end}}
+                    </div>
+                    {{if .Children}}
+                    <ul class="tkids">
+                        {{range .Children}}{{template "treeNode" .}}{{end}}
+                        {{if gt .Hidden 0}}<li class="tnode"><div class="trow tmore">+ {{.Hidden}} more files</div></li>{{end}}
+                    </ul>
+                    {{end}}
+                </li>
+{{end}}
         <div class="feedback-prompt">
             Not seeing what you expected? <a href="https://codeberg.org/atomdrift/lab/issues" target="_blank" rel="noopener noreferrer">Let us know</a>
         </div>
@@ -1937,6 +2009,7 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/hero-nav.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/tree.js?v={{.BuildCommit}}"></script>
 </body>
 </html>
 {{define "ctxanno"}}{{range .}}<span class="anno {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">{{.Desc}}</span>{{end}}{{end}}

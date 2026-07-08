@@ -712,6 +712,11 @@ type resultData struct {
 	// non-empty the File tab renders and is the page's default tab; empty for
 	// legacy reports without current-format context, which keep Traits default.
 	FileViews []fileView
+	// Tree is the containment/provenance hierarchy built from the members'
+	// `pid` edges — the archive → member → fetched-dependency structure shown
+	// in the Structure tab. Its single root has children only for an archive;
+	// a lone file yields a one-node tree, and the tab stays hidden.
+	Tree []*treeNode
 	// TopTraits is the Content tab's headline: the few most significant traits
 	// (highest crit×confidence, suspicious+), each linking to its evidence
 	// section. Empty when nothing reaches the suspicious bar.
@@ -762,9 +767,12 @@ type resultData struct {
 	// terse "[L250] 80% confident hostile (lower levels are stricter)", but when
 	// the LLM interpretation moved the verdict off the raw ML class it instead
 	// reads "[L250] ML rated as hostile, LLM downgraded to suspicious".
-	VerdictTip    string
-	Probability   float64
-	IsArchive     bool
+	VerdictTip  string
+	Probability float64
+	IsArchive   bool
+	// HasTree gates the Structure tab: the containment tree has a root with at
+	// least one child (an archive), not a lone file whose tree is one node.
+	HasTree       bool
 	LimitedInfo   bool
 	RescanAllowed bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
 }
@@ -938,22 +946,30 @@ type cleaveFile struct {
 	SHA256         string                     `json:"sha"`
 	Classification string                     `json:"-"`
 	Formula        string                     `json:"mol,omitempty"`
-	Facts          cleaveFacts                `json:"fact,omitzero"`
-	Imports        []string                   `json:"is,omitempty"`
-	Exports        []symbolInfo               `json:"exports,omitempty"`
-	Strings        []json.RawMessage          `json:"ss,omitempty"`
-	Findings       []finding                  `json:"find,omitempty"`
-	Sections       []sectionInfo              `json:"sections,omitempty"`
-	Refs           []cleaveRef                `json:"refs,omitempty"`
-	Metrics        json.RawMessage            `json:"ms,omitempty"`
-	Ctx            []contextWindow            `json:"ctx,omitempty"`
-	Probability    float64                    `json:"-"`
-	Threshold      float64                    `json:"-"`
-	Size           int64                      `json:"size"`
-	Class          int                        `json:"-"`
-	ID             int                        `json:"id"`
-	Depth          int                        `json:"dp"`
-	Container      bool                       `json:"-"`
+	// Rel is how this file relates to its pid: "fetched" (pulled over the
+	// network from a reference in the parent), "registry", "unpacked", or empty
+	// for an ordinary archive member. Via is the resolved source URL, set only
+	// when Rel=="fetched". Role is "sidecar" for a metadata node (a registry or
+	// provenance record about its parent), empty for ordinary content.
+	Rel         string            `json:"rel,omitempty"`
+	Via         string            `json:"via,omitempty"`
+	Role        string            `json:"role,omitempty"`
+	Facts       cleaveFacts       `json:"fact,omitzero"`
+	Imports     []string          `json:"is,omitempty"`
+	Exports     []symbolInfo      `json:"exports,omitempty"`
+	Strings     []json.RawMessage `json:"ss,omitempty"`
+	Findings    []finding         `json:"find,omitempty"`
+	Sections    []sectionInfo     `json:"sections,omitempty"`
+	Refs        []cleaveRef       `json:"refs,omitempty"`
+	Metrics     json.RawMessage   `json:"ms,omitempty"`
+	Ctx         []contextWindow   `json:"ctx,omitempty"`
+	Probability float64           `json:"-"`
+	Threshold   float64           `json:"-"`
+	Size        int64             `json:"size"`
+	Class       int               `json:"-"`
+	ID          int               `json:"id"`
+	Depth       int               `json:"dp"`
+	Container   bool              `json:"-"`
 }
 
 // cleaveRef is one reference a file declares — what it points at and, when
@@ -1053,11 +1069,15 @@ func (r *cleaveReport) UnmarshalJSON(data []byte) error {
 func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		KV          map[string]json.RawMessage `json:"k,omitempty"`
+		Parent      *int                       `json:"pid"`
 		Path        string                     `json:"path"`
 		FileType    string                     `json:"type"`
 		SHA256      string                     `json:"sha"`
 		Formula     string                     `json:"mol,omitempty"`
 		OldFormula  string                     `json:"f,omitempty"`
+		Rel         string                     `json:"rel,omitempty"`
+		Via         string                     `json:"via,omitempty"`
+		Role        string                     `json:"role,omitempty"`
 		Facts       cleaveFacts                `json:"facts,omitzero"` // v8
 		OldFacts    cleaveFacts                `json:"fact,omitzero"`  // v7
 		V4Facts     cleaveFacts                `json:"ff,omitzero"`    // v4
@@ -1099,10 +1119,14 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 	}
 	*f = cleaveFile{
 		KV:       raw.KV,
+		Parent:   raw.Parent,
 		Path:     raw.Path,
 		FileType: raw.FileType,
 		SHA256:   raw.SHA256,
 		Formula:  raw.Formula,
+		Rel:      raw.Rel,
+		Via:      raw.Via,
+		Role:     raw.Role,
 		Facts:    facts,
 		Exports:  raw.Exports,
 		Findings: findings,
@@ -6377,6 +6401,14 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// archive whose children are all clean still has multiple files and
 	// should render the aggregated archive Traits tab.
 	data.IsArchive = len(report.Files) > 1
+
+	// Containment/provenance hierarchy from the members' pid edges — the
+	// archive → member → fetched-dependency structure. Built for every page
+	// (cheap: a lone file yields one node); the Structure tab renders only when
+	// the root has children. buildFileTree folds large and fetched subtrees shut
+	// so a 10k-member dependency never floods the initial render.
+	data.Tree = buildFileTree(report.Files)
+	data.HasTree = len(data.Tree) > 0 && len(data.Tree[0].Children) > 0
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
