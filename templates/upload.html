@@ -6,6 +6,13 @@
     {{template "favicon"}}
     <meta http-equiv="refresh" content="300">
     <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Fallout</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
+    <meta property="og:title" content="{{.Title}} — {{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
+    <meta property="og:description" content="The latest malware caught across open-source registries and marketplaces — analyzed in the open." />
+    <meta name="description" content="The latest malware caught across open-source registries and marketplaces — analyzed in the open." />
+    <meta name="twitter:card" content="summary" />
+    <link rel="alternate" type="application/atom+xml" title="Fallout — hostile catches" href="/feed.atom" />
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
         :root {
@@ -495,6 +502,44 @@
             line-clamp: 2;
             -webkit-box-orient: vertical;
         }
+        .why-chip {
+            flex-shrink: 0;
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 0.03em;
+            color: var(--graphite);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            white-space: nowrap;
+            cursor: default;
+        }
+        .why-chip::before {
+            content: "";
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 2px;
+            margin-right: 5px;
+        }
+        .why-chip.crit-hostile::before { background: #ef4444; }
+        .why-chip.crit-suspicious::before { background: #facc15; }
+        .row-why .why-chip + .why-chip { margin-left: 6px; }
+        .catch-evidence {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .ev-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--slate);
+            font-weight: 700;
+        }
         /* Hot Particle — the featured catch card above the frontpage feed. */
         .catch {
             margin-top: 16px;
@@ -790,6 +835,12 @@
                     </p>
                     {{with .Desc}}<p class="catch-desc">“{{.}}”</p>{{end}}
                     <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
+                    {{if .TopTraits}}
+                    <div class="catch-evidence">
+                        <span class="ev-label">Evidence</span>
+                        {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
+                    </div>
+                    {{end}}
                 </div>
                 <aside class="catch-side">
                     {{with .PkgSpec}}
@@ -814,6 +865,7 @@
                     autocomplete="off" spellcheck="false"
                     aria-label="Search by SHA, filename, malecule, or filter expression" />
                 <a class="search-help" href="/help/query" title="Query syntax">? syntax</a>
+                <a class="search-help" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
             </form>
             <div class="filters-row">
                 <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/{{end}}" class="filter-form" id="filter-form">
@@ -883,6 +935,10 @@
                         <div class="row-why">
                             {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
                             <span class="why">{{.Why}}</span>
+                        </div>
+                        {{else if .TopTraits}}
+                        <div class="row-why">
+                            {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
                         </div>
                         {{end}}
                     </div>

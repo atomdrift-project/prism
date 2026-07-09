@@ -682,8 +682,19 @@ type resultData struct {
 	// through VerdictTip rather than a separate badge.
 	LLMInterpretation string
 	LLMConfidence     int
-	FirstSeenAgo      string
-	FirstSeenAt       string
+	// Headline is the hero's identity line, sharing the feed rows' grammar
+	// (marketplace title → package → filename, plus attributed version) so
+	// the name the user clicked in the feed is the name on the page.
+	// RegistryDesc and Users are the marketplace listing description and
+	// formatted install count; both empty when no registry record exists.
+	// MetaDesc is the social-preview description (og:description): the LLM
+	// rationale, else the strongest trait's description, else empty.
+	Headline     string
+	RegistryDesc string
+	Users        string
+	MetaDesc     string
+	FirstSeenAgo string
+	FirstSeenAt  string
 	// SourceURL is the full canonical download URL forager recorded when
 	// the bytes first landed in hopper. Used as the link href; empty for
 	// uploads and legacy rows without provenance.
@@ -800,17 +811,25 @@ type storedResult struct {
 	Feed            string
 	Package         string
 	Version         string
+	// RegistryTitle/RegistryDesc (with RegistryDownloads below, by the other
+	// numerics) mirror hopper's provenance registry-record scalars
+	// (marketplace listing title, capped short description, install count);
+	// zero for samples without a registry sidecar and for results cached
+	// before the fields existed.
+	RegistryTitle string
+	RegistryDesc  string
 	// PURLBase is hopper's version-less canonical Package URL (e.g.
 	// "pkg:npm/lodash"); empty for uploads and ecosystems without a defined
 	// PURL type. The full versioned PURL shown in the hero is this plus
 	// "@"+Version.
-	PURLBase        string
-	Filename        string
-	LabelSource     string
-	TraitsVersion   string
-	CanonicalSHA256 string
-	Symbols         string
-	SizeBytes       int64
+	PURLBase          string
+	Filename          string
+	LabelSource       string
+	TraitsVersion     string
+	CanonicalSHA256   string
+	Symbols           string
+	SizeBytes         int64
+	RegistryDownloads int64
 }
 
 type feedRow struct {
@@ -843,9 +862,12 @@ type feedRow struct {
 	// Why is the one-sentence rationale for the row's verdict — the LLM
 	// interpretation when that pass ran (litmus `llm.interpretation`), empty
 	// otherwise. Conf is the blended confidence as a 0–100 percentage,
-	// rendered only alongside a non-empty Why.
-	Why  string
-	Conf int
+	// rendered only alongside a non-empty Why. TopTraits carries the row's
+	// headline trait chips, shown when no LLM rationale exists (and as the
+	// Hot Particle's evidence row).
+	Why       string
+	TopTraits []feedTrait
+	Conf      int
 	// Corroborated marks a sample that arrived via an external threat-intel
 	// feed (forager label='bad') — the per-row "✓" mark. The feed's name
 	// intentionally stays off the feed page; it remains visible on the
@@ -878,11 +900,20 @@ func (r feedRow) Title() string {
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r feedRow) Headline() string {
-	title := r.Title()
-	if r.Version == "" {
+	return identityHeadline(r.RegistryTitle, r.Package, r.Filename, r.Version)
+}
+
+// identityHeadline is the shared identity grammar for feed rows and the
+// detail hero: the most recognizable name (marketplace title → package name →
+// filename) with the attributed version appended. A filename fallback stays
+// bare — filenames usually embed their version already, and the version
+// column belongs to the package attribution.
+func identityHeadline(registryTitle, pkg, filename, version string) string {
+	title := firstNonEmpty(registryTitle, pkg, filename)
+	if version == "" || (registryTitle == "" && pkg == "") {
 		return title
 	}
-	return title + " " + r.Version
+	return title + " " + version
 }
 
 // SubID is the machine coordinate shown muted beside the headline, only when
@@ -1012,8 +1043,10 @@ type cachedFeedSample struct {
 	RegistryTitle string
 	Desc          string
 	// Why/Conf are the LLM rationale and blended confidence percentage;
-	// Corroborated marks label='bad' (threat-feed) provenance. See feedRow.
+	// TopTraits the display-ready headline trait chips; Corroborated marks
+	// label='bad' (threat-feed) provenance. See feedRow.
 	Why          string
+	TopTraits    []feedTrait
 	Conf         int
 	Corroborated bool
 	Downloads    int64
@@ -1856,6 +1889,7 @@ func newMux() *http.ServeMux {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
 	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("GET /feed.atom", handleAtomFeed)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
@@ -2204,7 +2238,7 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v7:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v8:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search
 }
@@ -2471,6 +2505,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			Downloads:      sample.RegistryDownloads,
 			Why:            why,
 			Conf:           conf,
+			TopTraits:      parseTopTraits(sample.TopTraits),
 			Corroborated:   sample.Label == "bad",
 			AnalyzedAt:     addedAt,
 			AnalyzedDate:   feedDate(addedAt, now),
@@ -2507,6 +2542,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			Downloads:      sample.Downloads,
 			Why:            sample.Why,
 			Conf:           sample.Conf,
+			TopTraits:      sample.TopTraits,
 			Corroborated:   sample.Corroborated,
 			AnalyzedAt:     sample.CreatedAt,
 			AnalyzedDate:   feedDate(sample.CreatedAt, now),
@@ -2713,6 +2749,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Downloads:      row.Downloads,
 			Why:            row.Why,
 			Conf:           row.Conf,
+			TopTraits:      row.TopTraits,
 			Corroborated:   row.Corroborated,
 			CreatedAt:      row.AnalyzedAt,
 		})
@@ -3072,6 +3109,49 @@ func llmWhy(raw []byte) (why string, conf int) {
 	return llm.Interpretation, int(llm.Conf*100 + 0.5)
 }
 
+// feedTrait is one of a row's headline traits, ready for the chip the feed
+// renders: the display id (last directory + leaf of the cleave trait path,
+// "exfil.dns-tunnel"), the full id for the tooltip, and the criticality class
+// for the colored dot.
+type feedTrait struct {
+	ID   string
+	Full string
+	Crit string
+}
+
+// parseTopTraits decodes hopper's top_traits column (JSON []hopper.TopTrait)
+// into display-ready chips. Empty or malformed input yields nil — the row
+// simply renders without a traits line.
+func parseTopTraits(raw string) []feedTrait {
+	if raw == "" {
+		return nil
+	}
+	var top []hopper.TopTrait
+	if err := json.Unmarshal([]byte(raw), &top); err != nil {
+		return nil
+	}
+	chips := make([]feedTrait, 0, len(top))
+	for _, t := range top {
+		if t.ID == "" {
+			continue
+		}
+		chips = append(chips, feedTrait{ID: traitChipID(t.ID), Full: t.ID, Crit: critIntToString(t.Crit)})
+	}
+	return chips
+}
+
+// traitChipID compacts a cleave trait path for a feed chip: the last
+// directory plus the trait's own name ("objectives/exfil/dns-tunnel" →
+// "exfil.dns-tunnel") — recognizable without the taxonomy root. (Distinct
+// from traitDisplayID, which keeps every segment for the Traits tab.)
+func traitChipID(id string) string {
+	parts := strings.Split(id, "/")
+	if len(parts) < 2 {
+		return id
+	}
+	return parts[len(parts)-2] + "." + parts[len(parts)-1]
+}
+
 func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
 	// hopper owns the column↔envelope mapping ({ml,llm,raw}); use it so the
 	// shape stays in lockstep with the splitter/joiner.
@@ -3099,29 +3179,32 @@ func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
 	}
 
 	return storedResult{
-		Filename:        firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
-		RawLitmus:       string(rawLitmus),
-		Classification:  classification,
-		Formula:         sample.Formula,
-		FileType:        sample.FileType,
-		CachedAt:        cachedAt,
-		CreatedAt:       sample.CreatedAt,
-		AnalyzedAt:      analyzedAt,
-		SourceURL:       sample.URL,
-		SourceDomain:    sample.Domain,
-		Ecosystem:       sample.Ecosystem,
-		SizeBytes:       sample.SizeBytes,
-		Source:          sample.Source,
-		Feed:            sample.Feed,
-		Package:         sample.Package,
-		Version:         sample.Version,
-		PURLBase:        sample.PURLBase,
-		Label:           sample.Label,
-		LabelSource:     sample.LabelSource,
-		TraitsVersion:   sample.TraitsVersion,
-		CanonicalSHA256: sample.CanonicalSHA256,
-		UpdatedAt:       sample.UpdatedAt,
-		FirstAnalyzedAt: firstAnalyzedAt,
+		Filename:          firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
+		RawLitmus:         string(rawLitmus),
+		Classification:    classification,
+		Formula:           sample.Formula,
+		FileType:          sample.FileType,
+		CachedAt:          cachedAt,
+		CreatedAt:         sample.CreatedAt,
+		AnalyzedAt:        analyzedAt,
+		SourceURL:         sample.URL,
+		SourceDomain:      sample.Domain,
+		Ecosystem:         sample.Ecosystem,
+		SizeBytes:         sample.SizeBytes,
+		Source:            sample.Source,
+		Feed:              sample.Feed,
+		Package:           sample.Package,
+		Version:           sample.Version,
+		RegistryTitle:     sample.RegistryTitle,
+		RegistryDesc:      sample.RegistryDescription,
+		RegistryDownloads: sample.RegistryDownloads,
+		PURLBase:          sample.PURLBase,
+		Label:             sample.Label,
+		LabelSource:       sample.LabelSource,
+		TraitsVersion:     sample.TraitsVersion,
+		CanonicalSHA256:   sample.CanonicalSHA256,
+		UpdatedAt:         sample.UpdatedAt,
+		FirstAnalyzedAt:   firstAnalyzedAt,
 	}
 }
 
@@ -6315,6 +6398,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.EcosystemURL = ecosystemURL(res.Ecosystem)
 	}
 	data.PURL = purlDisplay(res)
+	// The raw filename feeds the headline (data.Filename is pre-escaped and
+	// the template escapes again on output).
+	data.Headline = identityHeadline(res.RegistryTitle, res.Package, filename, res.Version)
+	data.RegistryDesc = truncDesc(res.RegistryDesc)
+	data.Users = formatCount(res.RegistryDownloads)
 	if !res.CreatedAt.IsZero() {
 		data.FirstSeenAt = res.CreatedAt.Format("2 Jan 2006 15:04 UTC")
 		data.FirstSeenAgo = timeAgo(time.Since(res.CreatedAt))
@@ -6347,6 +6435,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		} else if llm.Interpretation != "" {
 			data.LLMInterpretation = llm.Interpretation
 			data.LLMConfidence = int(llm.Conf*100 + 0.5)
+			data.MetaDesc = llm.Interpretation
 		}
 	}
 
@@ -6585,6 +6674,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.FilesOmitted = omitted.Files
 		data.ResultsOmitted = omitted.Results
 		data.FilesShownLimit = maxFilesShown
+	}
+	// Social-preview fallback: with no LLM rationale, the strongest trait's
+	// description is the next-best one-line answer to "why is this here".
+	if data.MetaDesc == "" && len(data.TopTraits) > 0 {
+		data.MetaDesc = data.TopTraits[0].Desc
 	}
 	if srcCh, hexCh := contentLocCh(data.FileViews); srcCh > 0 || hexCh > 0 {
 		//nolint:gosec // G203: both widths are ints computed from rendered context, never user input

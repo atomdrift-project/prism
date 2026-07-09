@@ -6,7 +6,13 @@
     {{template "favicon"}}
     <meta name="build" content="{{.BuildCommit}}" />
     <meta name="layout" content="{{.Layout}}" />
-    <title>{{.Filename}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <title>{{.Headline}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="{{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
+    <meta property="og:title" content="{{.Headline}} — {{.Verdict}}" />
+    {{if .MetaDesc}}<meta property="og:description" content="{{.MetaDesc}}" />
+    <meta name="description" content="{{.MetaDesc}}" />{{end}}
+    <meta name="twitter:card" content="summary" />
     <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
     </style>
@@ -337,6 +343,12 @@
            than floating text, matching the card idiom used elsewhere on the page.
            The "AI" chip carries the carbon/toxic brand accent. Any ML/LLM
            disagreement surfaces in the level badge's hover text, not here. */
+        .hero-listing {
+            margin: 8px 26px 0;
+            color: var(--slate);
+            font-size: 13px;
+            font-style: italic;
+        }
         .hero-llm {
             display: flex;
             align-items: center;
@@ -1670,7 +1682,7 @@
             <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
                 <div class="verdict-bar-left">
                     <span class="band" aria-hidden="true"></span>
-                    <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Filename}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                    <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Headline}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
                 </div>
                 <div class="verdict">
                     <span class="sr-only">Verdict: </span><span class="verdict-value">{{.Verdict}}</span>
@@ -1680,6 +1692,9 @@
                 </button>
             </div>
             <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="{{.VerdictTip}}">&nbsp;·&nbsp;{{.LevelConfidence}}%</span>{{end}}{{end}}</div>
+            {{if .RegistryDesc}}
+            <div class="hero-listing" title="marketplace listing description">“{{.RegistryDesc}}”</div>
+            {{end}}
             {{if .LLMInterpretation}}
             <div class="hero-llm">
                 <span class="hero-llm-tag" title="AI interpretation{{if .LLMConfidence}} · {{.LLMConfidence}}% confidence{{end}}">AI</span>
@@ -1740,6 +1755,12 @@
                     <div class="meta-row">
                         <span class="meta-label">Package</span>
                         <span class="meta-value purl-value" title="Package URL">{{.PURL}}</span>
+                    </div>
+                    {{end}}
+                    {{if .Users}}
+                    <div class="meta-row">
+                        <span class="meta-label">Installs</span>
+                        <span class="meta-value" title="marketplace install count at fetch time">{{.Users}}</span>
                     </div>
                     {{end}}
                     {{if .Ecosystem}}

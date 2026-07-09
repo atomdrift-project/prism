@@ -85,14 +85,18 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 				Conf:           97,
 				AnalyzedDate:   "11h ago",
 			},
-			// A bare sample (no package, no rationale) degrades to the
-			// filename + sha form with no sub-id or rationale line.
+			// A bare sample (no package, no LLM rationale) degrades to the
+			// filename + sha form; its rationale line is the trait chips.
 			{
 				SHA256:         testSHABare,
 				Filename:       testSHABare + ".elf",
 				Classification: "hostile",
 				Ecosystem:      "linux",
-				AnalyzedDate:   "13h ago",
+				TopTraits: []feedTrait{
+					{ID: "persist.systemd-unit", Full: "objectives/persist/systemd-unit", Crit: "hostile"},
+					{ID: "obf.xor-stage", Full: "micro-behaviors/obf/xor-stage", Crit: "suspicious"},
+				},
+				AnalyzedDate: "13h ago",
 			},
 		},
 	}
@@ -115,7 +119,13 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		"93% confidence",
 		"97%",
 		"View full analysis",
-		`value="any"`, // the explicit Any option
+		`value="any"`,         // the explicit Any option
+		`property="og:title"`, // social-preview tags
+		`href="/feed.atom"`,   // Atom autodiscovery + pill
+		// The LLM-less row's rationale line is its trait chips, dot-colored
+		// by criticality, with the full trait path on hover.
+		`<span class="why-chip crit-hostile" title="objectives/persist/systemd-unit">persist.systemd-unit</span>`,
+		`crit-suspicious`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered feed missing %q", want)
@@ -186,6 +196,9 @@ func TestFeedRowIdentity(t *testing.T) {
 		{"attributed", feedRow{Package: "lodash", Version: "4.17.21", Filename: "lodash-4.17.21.tgz"}, "lodash 4.17.21", "", "lodash@4.17.21"},
 		{"no version", feedRow{Package: "lodash", Filename: "lodash.tgz"}, "lodash", "", "lodash"},
 		{"unattributed", feedRow{Filename: "sample.elf"}, "sample.elf", "", ""},
+		// A version without package attribution stays off the headline —
+		// filenames usually embed their version already.
+		{"filename fallback", feedRow{Filename: "pkg-0.0.0.tar.gz", Version: "0.0.0"}, "pkg-0.0.0.tar.gz", "", ""},
 	}
 	for _, tc := range cases {
 		if got := tc.row.Headline(); got != tc.headline {
