@@ -28,9 +28,9 @@ const (
 	heroWindow     = 24 * time.Hour
 	heroWindowWide = 72 * time.Hour
 	// heroMinConf is the eligibility floor for the blended verdict
-	// confidence percentage: a borderline verdict, however interesting,
-	// never fronts the page.
-	heroMinConf = 85
+	// confidence percentage: the hero is the shop window, so only a
+	// near-certain verdict fronts the page.
+	heroMinConf = 99
 )
 
 // heroPinSHA, when set, features the named sample regardless of score — the

@@ -322,7 +322,7 @@ func heroTestRow(sha, eco, formula string, age time.Duration, now time.Time) fee
 		Ecosystem:      eco,
 		Formula:        formula,
 		Why:            "does bad things",
-		Conf:           90,
+		Conf:           heroMinConf,
 		AnalyzedAt:     now.Add(-age),
 	}
 }
@@ -382,7 +382,7 @@ func TestChooseHeroGatesAndScore(t *testing.T) {
 		heroTestRow("lo", "npm", "F1", 2*time.Hour, now),
 		heroTestRow("hi", "npm", "F1", 3*time.Hour, now),
 	}
-	pair[1].Conf = 99
+	pair[1].Conf = 100
 	if hero := chooseHero(pair, now, ""); hero == nil || hero.SHA256 != "hi" {
 		t.Errorf("confidence tie-break: got %+v, want hi", hero)
 	}
