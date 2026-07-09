@@ -398,6 +398,29 @@
             text-overflow: ellipsis;
             min-width: 0;
         }
+        .desc {
+            color: var(--slate);
+            font-size: 12.5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+            flex-shrink: 100;
+        }
+        .users {
+            font-size: 12px;
+            color: var(--iron);
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+        .users b { font-weight: 600; color: var(--graphite); }
+        .catch-desc {
+            margin: 7px 0 0;
+            color: var(--slate);
+            font-size: 13px;
+            font-style: italic;
+        }
         .when {
             margin-left: auto;
             font-size: 12px;
@@ -756,14 +779,16 @@
             </div>
             <div class="catch-body">
                 <div class="catch-main">
-                    <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Title}}</a></h2>
+                    <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a></h2>
                     <p class="catch-sub">
                         {{if .Ecosystem}}
                             {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                         {{end}}
                         {{if .FileType}}<span class="mono">{{.FileType}}</span>{{end}}
+                        {{with .Users}}<span><b>{{.}}</b> installs</span>{{end}}
                         <span>analyzed {{.AnalyzedDate}}</span>
                     </p>
+                    {{with .Desc}}<p class="catch-desc">“{{.}}”</p>{{end}}
                     <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
                 </div>
                 <aside class="catch-side">
@@ -774,7 +799,7 @@
                     {{if .Formula}}
                     <div class="kv"><span class="kv-label">malecule</span><a class="kv-v cell-link mono" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a></div>
                     {{end}}
-                    <div class="kv"><span class="kv-label">threat feeds</span><span class="kv-v">{{if .Corroborated}}<span class="feedmark" title="Also present in an external threat feed (?feeds=1)">✓ corroborated</span>{{else}}first seen here{{end}}</span></div>
+                    <div class="kv"><span class="kv-label">threat feeds</span><span class="kv-v">{{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated (?feeds=1)">✓</span>{{else}}first seen here{{end}}</span></div>
                     <a class="view-analysis" href="/file/{{.SHA256}}">View full analysis →</a>
                 </aside>
             </div>
@@ -821,10 +846,9 @@
                         </select>
                     </div>
                     <div class="field check">
-                        <label for="feeds-filter">Feeds</label>
+                        <label for="feeds-filter">Feeds ✓</label>
                         <label class="box" title="Only samples corroborated by an external threat feed (?feeds=1)">
                             <input type="checkbox" name="feeds" value="1" id="feeds-filter" {{if .FeedsOnly}}checked{{end}} />
-                            ✓ corroborated only
                         </label>
                     </div>
                 </form>
@@ -841,16 +865,18 @@
                     </a>
                     <div class="row-main">
                         <div class="row-id">
-                            <a class="file-link" href="/file/{{.SHA256}}">{{.Title}}</a>
-                            {{with .PkgSpec}}<span class="pkg" title="package name and version">{{.}}</span>{{end}}
+                            <a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a>
+                            {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
+                            {{with .Desc}}<span class="desc">{{.}}</span>{{end}}
                             {{if .Ecosystem}}
                                 {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                             {{end}}
+                            {{with .Users}}<span class="users" title="marketplace install count"><b>{{.}}</b> installs</span>{{end}}
                             <span class="when" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
                         </div>
                         <div class="row-hash">
                             <span class="file-sha" title="click to copy">{{.SHA256}}</span>
-                            {{if .Corroborated}}<span class="feedmark" title="Also present in an external threat feed (?feeds=1)">✓ corroborated</span>{{end}}
+                            {{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated (?feeds=1)">✓</span>{{end}}
                             {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
                         </div>
                         {{if .Why}}

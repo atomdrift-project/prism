@@ -53,6 +53,10 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 			Filename:       "ext.crx",
 			Package:        "kpeiokhfmoigdhgmiippgkbnilhmmoim",
 			Version:        "5.2.1",
+			RegistryTitle:  "Volume Max — Ultimate Sound Booster",
+			Desc:           "Boost your volume up to 600%.",
+			Users:          "412,033",
+			Downloads:      412033,
 			Classification: "hostile",
 			Ecosystem:      "chrome",
 			EcosystemURL:   "/chrome/",
@@ -82,7 +86,7 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 				AnalyzedDate:   "11h ago",
 			},
 			// A bare sample (no package, no rationale) degrades to the
-			// filename + sha form with no pkg spec or rationale line.
+			// filename + sha form with no sub-id or rationale line.
 			{
 				SHA256:         testSHABare,
 				Filename:       testSHABare + ".elf",
@@ -102,9 +106,12 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		"rare catch for chrome",
 		testSHAHero, // full hero sha in the side rail
 		testSHARow,  // full row sha on the ledger line
-		"kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1",
-		"nomad-pydantic@0.0.0",
-		"✓ corroborated",
+		"Volume Max — Ultimate Sound Booster 5.2.1", // hero headline: title + version
+		"kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1",    // hero rail keeps the copyable coordinate
+		"Boost your volume up to 600%.",             // registry description
+		"412,033",                                   // install count
+		"nomad-pydantic 0.0.0",                      // row headline: name + version, no duplicate pkg line
+		`class="feedmark"`,                          // the bare ✓ corroboration mark
 		"93% confidence",
 		"97%",
 		"View full analysis",
@@ -113,6 +120,9 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered feed missing %q", want)
 		}
+	}
+	if strings.Contains(got, "nomad-pydantic@0.0.0") {
+		t.Error("row identity must not repeat the package as name@version")
 	}
 	if strings.Contains(got, testSHABare+"@") {
 		t.Error("bare sample must not render a pkg spec")
@@ -158,24 +168,66 @@ func TestRenderFeedCriticalityDefault(t *testing.T) {
 	}
 }
 
-func TestFeedRowTitleAndPkgSpec(t *testing.T) {
+func TestFeedRowIdentity(t *testing.T) {
+	marketplace := feedRow{
+		Package: "kpeiokhfmoigdhgmiippgkbnilhmmoim", Version: "5.2.1",
+		RegistryTitle: "Volume Max", Filename: "ext.crx",
+	}
 	cases := []struct {
-		name    string
-		row     feedRow
-		title   string
-		pkgSpec string
+		name     string
+		row      feedRow
+		headline string
+		subID    string
+		pkgSpec  string
 	}{
-		{"attributed", feedRow{Package: "lodash", Version: "4.17.21", Filename: "lodash-4.17.21.tgz"}, "lodash", "lodash@4.17.21"},
-		{"no version", feedRow{Package: "lodash", Filename: "lodash.tgz"}, "lodash", "lodash"},
-		{"unattributed", feedRow{Filename: "sample.elf"}, "sample.elf", ""},
+		// A marketplace title displaces the package id, which moves to the
+		// muted sub-id so the identity line never repeats itself.
+		{"marketplace", marketplace, "Volume Max 5.2.1", "kpeiokhfmoigdhgmiippgkbnilhmmoim", "kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1"},
+		{"attributed", feedRow{Package: "lodash", Version: "4.17.21", Filename: "lodash-4.17.21.tgz"}, "lodash 4.17.21", "", "lodash@4.17.21"},
+		{"no version", feedRow{Package: "lodash", Filename: "lodash.tgz"}, "lodash", "", "lodash"},
+		{"unattributed", feedRow{Filename: "sample.elf"}, "sample.elf", "", ""},
 	}
 	for _, tc := range cases {
-		if got := tc.row.Title(); got != tc.title {
-			t.Errorf("%s: Title() = %q, want %q", tc.name, got, tc.title)
+		if got := tc.row.Headline(); got != tc.headline {
+			t.Errorf("%s: Headline() = %q, want %q", tc.name, got, tc.headline)
+		}
+		if got := tc.row.SubID(); got != tc.subID {
+			t.Errorf("%s: SubID() = %q, want %q", tc.name, got, tc.subID)
 		}
 		if got := tc.row.PkgSpec(); got != tc.pkgSpec {
 			t.Errorf("%s: PkgSpec() = %q, want %q", tc.name, got, tc.pkgSpec)
 		}
+	}
+}
+
+func TestFormatCount(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, ""},
+		{-3, ""},
+		{7, "7"},
+		{999, "999"},
+		{1000, "1,000"},
+		{412033, "412,033"},
+		{1234567890, "1,234,567,890"},
+	}
+	for _, tc := range cases {
+		if got := formatCount(tc.n); got != tc.want {
+			t.Errorf("formatCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestTruncDesc(t *testing.T) {
+	if got := truncDesc("  short  "); got != "short" {
+		t.Errorf("truncDesc trims, got %q", got)
+	}
+	long := strings.Repeat("é", 200)
+	got := truncDesc(long)
+	if runes := []rune(got); len(runes) != 140 || !strings.HasSuffix(got, "…") {
+		t.Errorf("truncDesc cap: %d runes, suffix %q", len(runes), got[len(got)-3:])
 	}
 }
 
@@ -275,6 +327,20 @@ func TestChooseHeroGatesAndScore(t *testing.T) {
 	pair[1].Conf = 99
 	if hero := chooseHero(pair, now, ""); hero == nil || hero.SHA256 != "hi" {
 		t.Errorf("confidence tie-break: got %+v, want hi", hero)
+	}
+
+	// Reach: a broad install base outscores an otherwise-identical catch.
+	pair = []feedRow{
+		heroTestRow("small", "npm", "F1", 2*time.Hour, now),
+		heroTestRow("broad", "npm", "F1", 3*time.Hour, now),
+	}
+	pair[1].Downloads = 412033
+	hero = chooseHero(pair, now, "")
+	if hero == nil || hero.SHA256 != "broad" {
+		t.Errorf("reach term: got %+v, want broad", hero)
+	}
+	if !strings.Contains(hero.Reasons, "412,033 installs exposed") {
+		t.Errorf("reach reason missing: %q", hero.Reasons)
 	}
 }
 

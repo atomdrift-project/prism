@@ -109,11 +109,13 @@ func heroEligible(row *feedRow, cutoff time.Time) bool {
 }
 
 // heroScore is one eligible row's "heat": ecosystem surprisal plus trait-
-// composition novelty (each -log2 of the row's share of the pool), plus a
-// point when no external feed has it.
+// composition novelty (each -log2 of the row's share of the pool), plus the
+// blast-radius term (log10 of the marketplace install count, when known),
+// plus a point when no external feed has it.
 func heroScore(row *feedRow, ecoCount, formulaCount map[string]int, total float64) float64 {
 	score := math.Log2(total / float64(ecoCount[row.Ecosystem]))
 	score += math.Log2(total / float64(formulaCount[row.Formula]))
+	score += math.Log10(1 + float64(row.Downloads))
 	if !row.Corroborated {
 		score++
 	}
@@ -151,6 +153,9 @@ func bestHero(rows []feedRow, ecoCount, formulaCount map[string]int, cutoff time
 // selection itself.
 func heroReasons(row *feedRow, ecoCount, formulaCount map[string]int, total int) string {
 	var parts []string
+	if row.Downloads >= 10_000 {
+		parts = append(parts, formatCount(row.Downloads)+" installs exposed")
+	}
 	if row.Ecosystem != "" && ecoCount[row.Ecosystem]*20 <= total {
 		parts = append(parts, "rare catch for "+row.Ecosystem)
 	}

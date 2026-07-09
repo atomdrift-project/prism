@@ -831,6 +831,15 @@ type feedRow struct {
 	// template reads them through Title and PkgSpec.
 	Package string
 	Version string
+	// RegistryTitle is the marketplace display title from the provenance
+	// sidecar's registry record (e.g. a Chrome extension's store listing
+	// name) and Desc its short description; both empty when the collector
+	// recorded none. Users is the pre-formatted install/download count
+	// ("412,033", empty when unknown); Downloads, the raw figure behind it,
+	// sits below with the other numerics.
+	RegistryTitle string
+	Desc          string
+	Users         string
 	// Why is the one-sentence rationale for the row's verdict — the LLM
 	// interpretation when that pass ran (litmus `llm.interpretation`), empty
 	// otherwise. Conf is the blended confidence as a 0–100 percentage,
@@ -838,10 +847,11 @@ type feedRow struct {
 	Why  string
 	Conf int
 	// Corroborated marks a sample that arrived via an external threat-intel
-	// feed (forager label='bad') — the per-row "✓ corroborated" mark. The
-	// feed's name intentionally stays off the feed page; it remains visible
-	// on the detail page's provenance tab.
+	// feed (forager label='bad') — the per-row "✓" mark. The feed's name
+	// intentionally stays off the feed page; it remains visible on the
+	// detail page's provenance tab.
 	Corroborated bool
+	Downloads    int64
 	HostileT     float64
 	SuspiciousT  float64
 	Probability  float64
@@ -851,20 +861,49 @@ type feedRow struct {
 	Class     int
 }
 
-// Title is the row's headline: the package name when hopper attributed one,
-// otherwise the filename. Value receiver on purpose: html/template calls it
-// on the non-addressable copies a {{range}} yields, which cannot reach a
-// pointer receiver's method set.
+// Title is the most recognizable name for the sample: the marketplace display
+// title when the collector recorded one, else the package name, else the
+// filename — the same preference order as cleave's identity headline. Value
+// receiver on purpose: html/template calls it on the non-addressable copies a
+// {{range}} yields, which cannot reach a pointer receiver's method set.
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r feedRow) Title() string {
-	return firstNonEmpty(r.Package, r.Filename)
+	return firstNonEmpty(r.RegistryTitle, r.Package, r.Filename)
 }
 
-// PkgSpec is the ecosystem-relative "name@version" coordinate shown beside the
-// title (the ecosystem badge carries the other half of the PURL). Empty when
-// the sample has no package attribution; the template omits it then. Value
-// receiver for the same html/template reason as Title.
+// Headline is the row's bold identity line: Title plus the version when one
+// is attributed ("Volume Max 5.2.1", "nomad-pydantic 0.0.0"). Value receiver
+// for the same html/template reason as Title.
+//
+//nolint:gocritic // see above — a pointer receiver breaks template rendering
+func (r feedRow) Headline() string {
+	title := r.Title()
+	if r.Version == "" {
+		return title
+	}
+	return title + " " + r.Version
+}
+
+// SubID is the machine coordinate shown muted beside the headline, only when
+// it says something the headline doesn't: the package id when a marketplace
+// title displaced it (a Chrome extension's store name vs its extension id).
+// Empty — and omitted — when the headline already is the package name, so the
+// identity line never repeats itself. Value receiver for the same
+// html/template reason as Title.
+//
+//nolint:gocritic // see above — a pointer receiver breaks template rendering
+func (r feedRow) SubID() string {
+	if r.Package == "" || r.Package == r.Title() {
+		return ""
+	}
+	return r.Package
+}
+
+// PkgSpec is the ecosystem-relative "name@version" coordinate — the copyable
+// reference shown in the Hot Particle side rail. Empty when the sample has no
+// package attribution. Value receiver for the same html/template reason as
+// Title.
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r feedRow) PkgSpec() string {
@@ -967,11 +1006,17 @@ type cachedFeedSample struct {
 	// derive from them at render time (feedRowsFromSnapshot).
 	Package string
 	Version string
+	// RegistryTitle/Desc/Downloads mirror the provenance registry record's
+	// marketplace title, capped short description, and install count (see
+	// feedRow; Downloads sits below with the other numerics).
+	RegistryTitle string
+	Desc          string
 	// Why/Conf are the LLM rationale and blended confidence percentage;
 	// Corroborated marks label='bad' (threat-feed) provenance. See feedRow.
 	Why          string
 	Conf         int
 	Corroborated bool
+	Downloads    int64
 	Probability  float64
 	SuspiciousT  float64
 	HostileT     float64
@@ -2159,7 +2204,7 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v6:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v7:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search
 }
@@ -2420,6 +2465,10 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
 			Version:        sample.Version,
+			RegistryTitle:  sample.RegistryTitle,
+			Desc:           truncDesc(sample.RegistryDescription),
+			Users:          formatCount(sample.RegistryDownloads),
+			Downloads:      sample.RegistryDownloads,
 			Why:            why,
 			Conf:           conf,
 			Corroborated:   sample.Label == "bad",
@@ -2452,6 +2501,10 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
 			Version:        sample.Version,
+			RegistryTitle:  sample.RegistryTitle,
+			Desc:           sample.Desc,
+			Users:          formatCount(sample.Downloads),
+			Downloads:      sample.Downloads,
 			Why:            sample.Why,
 			Conf:           sample.Conf,
 			Corroborated:   sample.Corroborated,
@@ -2655,6 +2708,9 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Ecosystem:      row.Ecosystem,
 			Package:        row.Package,
 			Version:        row.Version,
+			RegistryTitle:  row.RegistryTitle,
+			Desc:           row.Desc,
+			Downloads:      row.Downloads,
 			Why:            row.Why,
 			Conf:           row.Conf,
 			Corroborated:   row.Corroborated,
@@ -2662,6 +2718,37 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 		})
 	}
 	return samples
+}
+
+// truncDesc caps a registry short description to one feed-row line, cutting
+// on a rune boundary with an ellipsis. Applied before the snapshot is cached
+// so oversized listings never inflate the stored rows.
+func truncDesc(s string) string {
+	const maxRunes = 140
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
+}
+
+// formatCount renders a positive count with thousands separators for the
+// install-count chip ("412,033"); zero and negative values render as "" so
+// the template omits the chip when the marketplace figure is unknown.
+func formatCount(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	s := strconv.FormatInt(n, 10)
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }
 
 // feedDate formats t as a compact relative string for the feed table —
