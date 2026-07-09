@@ -3129,8 +3129,11 @@ type feedTrait struct {
 }
 
 // parseTopTraits decodes hopper's top_traits column (JSON []hopper.TopTrait)
-// into display-ready chips. Empty or malformed input yields nil — the row
-// simply renders without a traits line.
+// into display-ready chips, deduped by chip ID — named traits from the same
+// rule file share a truncated label, and one chip per label is enough. The
+// column is crit-sorted, so the survivor is the highest-criticality entry.
+// Empty or malformed input yields nil — the row simply renders without a
+// traits line.
 func parseTopTraits(raw string) []feedTrait {
 	if raw == "" {
 		return nil
@@ -3144,7 +3147,11 @@ func parseTopTraits(raw string) []feedTrait {
 		if t.ID == "" {
 			continue
 		}
-		chips = append(chips, feedTrait{ID: traitChipID(t.ID), Full: t.ID, Crit: critIntToString(t.Crit)})
+		id := traitChipID(t.ID)
+		if slices.ContainsFunc(chips, func(c feedTrait) bool { return c.ID == id }) {
+			continue
+		}
+		chips = append(chips, feedTrait{ID: id, Full: t.ID, Crit: critIntToString(t.Crit)})
 	}
 	return chips
 }

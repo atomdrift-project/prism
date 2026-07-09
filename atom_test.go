@@ -95,7 +95,7 @@ func TestParseTopTraits(t *testing.T) {
 	if got := parseTopTraits("{nope"); got != nil {
 		t.Errorf("malformed column: got %v, want nil", got)
 	}
-	got := parseTopTraits(`[{"id":"objectives/exfil/dns-tunnel","crit":5},{"id":"micro-behaviors/net/beacon","crit":4}]`)
+	got := parseTopTraits(`[{"id":"objectives/exfil/dns-tunnel","crit":5},{"id":"objectives/exfil/dns-tunnel::variant-b","crit":4},{"id":"micro-behaviors/net/beacon","crit":4}]`)
 	want := []feedTrait{
 		{ID: "exfil.dns-tunnel", Full: "objectives/exfil/dns-tunnel", Crit: "hostile"},
 		{ID: "net.beacon", Full: "micro-behaviors/net/beacon", Crit: "suspicious"},
