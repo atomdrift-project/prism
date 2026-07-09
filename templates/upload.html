@@ -286,6 +286,29 @@
             letter-spacing: 0.08em;
             font-weight: 700;
         }
+        .field.check .box {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            min-height: 34px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--white);
+            padding: 0 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--graphite);
+            text-transform: none;
+            letter-spacing: normal;
+            font-weight: 400;
+            user-select: none;
+        }
+        .field.check input {
+            accent-color: var(--toxic-dark);
+            width: 14px;
+            height: 14px;
+            margin: 0;
+        }
         select, input[type="search"] {
             min-height: 34px;
             border: 1px solid var(--border);
@@ -336,70 +359,247 @@
             margin-top: 16px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th {
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            background: var(--white);
-            color: var(--slate);
-            text-align: left;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            padding: 10px 12px;
-            border-bottom: 1px solid var(--border);
-        }
-        td {
-            padding: 10px 12px;
+        .row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 9px 14px 10px;
             border-bottom: 1px solid var(--mist);
+        }
+        .row:nth-child(even) { background: rgba(0, 0, 0, 0.012); }
+        .row:hover { background: var(--toxic-dim); }
+        .row:last-of-type { border-bottom: none; }
+        .row .litmus-stamp { margin-top: 2px; }
+        .row-main {
+            min-width: 0;
+            flex: 1;
+            display: grid;
+            gap: 3px;
+        }
+        .row-id {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            min-width: 0;
+        }
+        .row-id .file-link {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            vertical-align: middle;
+            flex-shrink: 0;
+            max-width: 62%;
         }
-        tbody tr:nth-child(even) td { background: rgba(0, 0, 0, 0.012); }
-        tbody tr:hover td { background: var(--toxic-dim); }
-        tbody tr:last-child td { border-bottom: none; }
-        .col-file {
-            width: 100%;
-            white-space: normal;
-            padding-top: 8px;
-            padding-bottom: 8px;
+        .pkg {
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--graphite);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
         }
-        .file-line {
+        .when {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--graphite);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        .row-hash {
             display: flex;
             align-items: center;
+            gap: 10px;
             min-width: 0;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
         }
         .file-sha {
-            display: block;
-            margin-top: 1px;
             font-family: var(--mono);
             font-size: 10.5px;
             color: var(--slate);
             letter-spacing: 0.1px;
             line-height: 1.3;
-            text-decoration: none;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            cursor: copy;
         }
         .file-sha:hover { color: var(--carbon); }
-        .when-cell {
+        .file-sha.copied { color: var(--toxic-dark); }
+        .feedmark {
+            flex-shrink: 0;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid rgba(208, 255, 0, 0.25);
+            border-radius: 3px;
+            padding: 0 6px;
+            white-space: nowrap;
+            cursor: default;
+        }
+        .row-hash .formula {
+            margin-left: auto;
+            max-width: 34ch;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .row-why {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+        }
+        .conf-chip {
+            flex-shrink: 0;
+            font-family: var(--mono);
+            font-size: 10.5px;
+            color: var(--graphite);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            cursor: default;
+        }
+        .why {
+            color: var(--iron);
+            font-size: 12.5px;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        /* Hot Particle — the featured catch card above the frontpage feed. */
+        .catch {
+            margin-top: 16px;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-top: 3px solid var(--toxic);
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .catch-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 18px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .catch-eyebrow {
             display: inline-flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+            font-family: "Oxanium", monospace;
+            font-weight: 700;
+            font-size: 12.5px;
+            letter-spacing: 0.09em;
+            cursor: default;
         }
-        .when-text {
+        .catch-eyebrow .fallout-symbol { width: 16px; height: 16px; }
+        .catch-date {
+            font-size: 12px;
+            color: var(--slate);
             font-variant-numeric: tabular-nums;
+        }
+        .verdict-stamp {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            border-radius: 4px;
+            padding: 3px 9px;
+        }
+        .verdict-stamp.hostile {
+            color: #991b1b;
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .verdict-stamp.suspicious {
+            color: #854d0e;
+            background: rgba(234, 179, 8, 0.1);
+            border: 1px solid rgba(234, 179, 8, 0.35);
+        }
+        .verdict-stamp.benign {
+            color: #166534;
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .catch-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 340px;
+            gap: 22px;
+            padding: 16px 18px 18px;
+        }
+        .catch-title {
+            margin: 0;
+            font-size: 21px;
+            font-weight: 650;
+            letter-spacing: -0.01em;
+        }
+        .catch-sub {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 7px 0 0;
+            color: var(--iron);
+            font-size: 13px;
+        }
+        .catch-why {
+            margin: 12px 0 0;
             color: var(--graphite);
+            font-size: 13.5px;
+            line-height: 1.55;
+            max-width: 66ch;
+        }
+        .catch-why .conf-chip { vertical-align: 1px; margin-right: 6px; }
+        .catch-side {
+            display: grid;
+            gap: 9px;
+            align-content: start;
+            border-left: 1px solid var(--mist);
+            padding-left: 22px;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: var(--graphite);
+        }
+        .kv { display: grid; gap: 2px; }
+        .kv-label {
+            font-family: "Inter", system-ui, sans-serif;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--slate);
+            font-weight: 700;
+        }
+        .kv-v { word-break: break-all; line-height: 1.4; }
+        .catch-side .file-sha {
+            white-space: normal;
+            word-break: break-all;
+            font-size: 11.5px;
+        }
+        .view-analysis {
+            margin-top: 6px;
+            justify-self: start;
+            display: inline-flex;
+            align-items: center;
+            min-height: 34px;
+            padding: 0 14px;
+            border: 1px solid var(--carbon);
+            background: var(--carbon);
+            color: var(--white);
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: "Inter", system-ui, sans-serif;
+            text-decoration: none;
         }
         .litmus-stamp {
             display: inline-flex;
@@ -445,14 +645,6 @@
         .eco-badge.eco-purple { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.25); }
         .eco-badge.eco-slate  { color: var(--graphite); background: var(--mist); border-color: var(--border); }
         .eco-badge:hover { filter: brightness(0.95); }
-        .col-eco {
-            white-space: nowrap;
-        }
-        .col-feed {
-            white-space: nowrap;
-            color: var(--iron);
-            font-size: 13px;
-        }
         .file-link {
             color: var(--carbon);
             text-decoration: underline;
@@ -499,6 +691,12 @@
             .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
             .filter-form { display: grid; grid-template-columns: 1fr; }
             select { width: 100%; }
+            .catch-body { grid-template-columns: 1fr; }
+            .catch-side { border-left: none; padding-left: 0; border-top: 1px solid var(--mist); padding-top: 14px; }
+            .row-id { flex-wrap: wrap; }
+            .row-id .file-link { max-width: 100%; }
+            .row-hash { flex-wrap: wrap; }
+            .row-hash .formula { margin-left: 0; }
         }
     </style>
 </head>
@@ -536,9 +734,52 @@
                     </svg>
                     <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
                 </h1>
-                <p class="lede">Recently scanned open-source supply-chain artifacts and public lab uploads.</p>
+                <p class="lede">{{if eq .SelectedCrit "hostile"}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
             </div>
         </section>
+
+        {{with .Hero}}
+        <section class="catch" aria-label="Hot Particle — featured catch">
+            <div class="catch-head">
+                <span class="catch-eyebrow" title="A hot particle is a discrete, intensely radioactive fallout fragment — the day's most interesting catch. Featured: {{.Reasons}}.">
+                    <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                        <circle class="field" cx="50" cy="50" r="44"></circle>
+                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
+                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
+                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
+                        <circle class="core" cx="50" cy="50" r="8"></circle>
+                    </svg>
+                    HOT PARTICLE
+                </span>
+                <span class="catch-date" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
+                <span class="verdict-stamp {{.Classification}}"><span class="band {{.Classification}}"></span>{{.Classification}}</span>
+            </div>
+            <div class="catch-body">
+                <div class="catch-main">
+                    <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Title}}</a></h2>
+                    <p class="catch-sub">
+                        {{if .Ecosystem}}
+                            {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
+                        {{end}}
+                        {{if .FileType}}<span class="mono">{{.FileType}}</span>{{end}}
+                        <span>analyzed {{.AnalyzedDate}}</span>
+                    </p>
+                    <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
+                </div>
+                <aside class="catch-side">
+                    {{with .PkgSpec}}
+                    <div class="kv"><span class="kv-label">package</span><span class="kv-v">{{.}}</span></div>
+                    {{end}}
+                    <div class="kv"><span class="kv-label">sha256</span><span class="kv-v file-sha" title="click to copy">{{.SHA256}}</span></div>
+                    {{if .Formula}}
+                    <div class="kv"><span class="kv-label">malecule</span><a class="kv-v cell-link mono" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a></div>
+                    {{end}}
+                    <div class="kv"><span class="kv-label">threat feeds</span><span class="kv-v">{{if .Corroborated}}<span class="feedmark" title="Also present in an external threat feed (?feeds=1)">✓ corroborated</span>{{else}}first seen here{{end}}</span></div>
+                    <a class="view-analysis" href="/file/{{.SHA256}}">View full analysis →</a>
+                </aside>
+            </div>
+        </section>
+        {{end}}
 
         <section class="filters" aria-label="Feed filters">
             <form method="GET" action="/" class="search-form" id="search-form" role="search">
@@ -554,7 +795,7 @@
                     <div class="field">
                         <label for="criticality">Crit</label>
                         <select name="criticality" id="criticality">
-                            <option value="" {{if not .SelectedCrit}}selected{{end}}>Any</option>
+                            <option value="any" {{if not .SelectedCrit}}selected{{end}}>Any</option>
                             <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
                             <option value="&gt;=1" {{if eq .SelectedCrit ">=1"}}selected{{end}}>Suspicious + Hostile</option>
                             <option value="suspicious" {{if eq .SelectedCrit "suspicious"}}selected{{end}}>Suspicious</option>
@@ -579,62 +820,51 @@
                             {{end}}
                         </select>
                     </div>
+                    <div class="field check">
+                        <label for="feeds-filter">Feeds</label>
+                        <label class="box" title="Only samples corroborated by an external threat feed (?feeds=1)">
+                            <input type="checkbox" name="feeds" value="1" id="feeds-filter" {{if .FeedsOnly}}checked{{end}} />
+                            ✓ corroborated only
+                        </label>
+                    </div>
                 </form>
             </div>
         </section>
 
         <section class="table-wrap" aria-label="Recently scanned records">
             {{if .HasHopper}}
-            <table>
-                <thead>
-                    <tr>
-                        <th class="col-when">Crit</th>
-                        <th class="col-file">File</th>
-                        <th class="col-eco">Ecosystem</th>
-                        {{if .FeedsOnly}}<th class="col-feed">Feed</th>{{end}}
-                        <th class="col-formula">Malecule</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Rows}}
-                    <tr>
-                        <td title="{{.AnalyzedAt}}">
-                            <span class="when-cell">
-                                <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
-                                    <span class="band {{.Classification}}"></span>
-                                </a>
-                                <span class="when-text">{{.AnalyzedDate}}</span>
-                            </span>
-                        </td>
-                        <td class="col-file">
-                            <div class="file-line">
-                                <a class="file-link" href="/file/{{.SHA256}}">{{.Filename}}</a>
-                            </div>
-                            <span class="file-sha" title="{{.SHA256}}">{{.SHA256}}</span>
-                        </td>
-                        <td class="col-eco">
+            <div class="ledger" role="list">
+                {{range .Rows}}
+                <article class="row" role="listitem">
+                    <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
+                        <span class="band {{.Classification}}"></span>
+                    </a>
+                    <div class="row-main">
+                        <div class="row-id">
+                            <a class="file-link" href="/file/{{.SHA256}}">{{.Title}}</a>
+                            {{with .PkgSpec}}<span class="pkg" title="package name and version">{{.}}</span>{{end}}
                             {{if .Ecosystem}}
                                 {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                             {{end}}
-                        </td>
-                        {{if $.FeedsOnly}}
-                        <td class="col-feed">
-                            {{if .Feed}}<a class="cell-link mono" href="?feeds=1">{{.Feed}}</a>{{else}}<span class="mono">-</span>{{end}}
-                        </td>
+                            <span class="when" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
+                        </div>
+                        <div class="row-hash">
+                            <span class="file-sha" title="click to copy">{{.SHA256}}</span>
+                            {{if .Corroborated}}<span class="feedmark" title="Also present in an external threat feed (?feeds=1)">✓ corroborated</span>{{end}}
+                            {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
+                        </div>
+                        {{if .Why}}
+                        <div class="row-why">
+                            {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
+                            <span class="why">{{.Why}}</span>
+                        </div>
                         {{end}}
-                        <td>
-                            {{if .Formula}}
-                            <a class="cell-link mono" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>
-                            {{else}}
-                            <span class="mono">-</span>
-                            {{end}}
-                        </td>
-                    </tr>
-                    {{else}}
-                    <tr><td colspan="{{if .FeedsOnly}}5{{else}}4{{end}}" class="empty">No matching records.</td></tr>
-                    {{end}}
-                </tbody>
-            </table>
+                    </div>
+                </article>
+                {{else}}
+                <div class="empty">No matching records.</div>
+                {{end}}
+            </div>
             {{if .Pages}}
             <nav class="pager" aria-label="Feed pages">
                 {{if .PrevURL}}<a class="pager-link" rel="prev" href="{{.PrevURL}}">Prev</a>{{else}}<span class="pager-link disabled">Prev</span>{{end}}

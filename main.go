@@ -826,17 +826,55 @@ type feedRow struct {
 	SHA256         string
 	Ecosystem      string
 	Filename       string
-	// Feed is the hopper.Sample.Feed column — the threat-intel or
-	// registry source name (e.g. "malshare", "npmjs.org"). Surfaced
-	// only on the /?feeds=1 view; left empty in JSON otherwise.
-	Feed        string
-	HostileT    float64
-	SuspiciousT float64
-	Probability float64
+	// Package/Version are hopper's registry attribution (e.g. "lodash",
+	// "4.17.21"); both empty for uploads and unattributed samples. The
+	// template reads them through Title and PkgSpec.
+	Package string
+	Version string
+	// Why is the one-sentence rationale for the row's verdict — the LLM
+	// interpretation when that pass ran (litmus `llm.interpretation`), empty
+	// otherwise. Conf is the blended confidence as a 0–100 percentage,
+	// rendered only alongside a non-empty Why.
+	Why  string
+	Conf int
+	// Corroborated marks a sample that arrived via an external threat-intel
+	// feed (forager label='bad') — the per-row "✓ corroborated" mark. The
+	// feed's name intentionally stays off the feed page; it remains visible
+	// on the detail page's provenance tab.
+	Corroborated bool
+	HostileT     float64
+	SuspiciousT  float64
+	Probability  float64
 	// Threshold/Class populated from v=5 envelopes; Threshold > 0 selects
 	// the exact-band rendering path in templates.
 	Threshold float64
 	Class     int
+}
+
+// Title is the row's headline: the package name when hopper attributed one,
+// otherwise the filename. Value receiver on purpose: html/template calls it
+// on the non-addressable copies a {{range}} yields, which cannot reach a
+// pointer receiver's method set.
+//
+//nolint:gocritic // see above — a pointer receiver breaks template rendering
+func (r feedRow) Title() string {
+	return firstNonEmpty(r.Package, r.Filename)
+}
+
+// PkgSpec is the ecosystem-relative "name@version" coordinate shown beside the
+// title (the ecosystem badge carries the other half of the PURL). Empty when
+// the sample has no package attribution; the template omits it then. Value
+// receiver for the same html/template reason as Title.
+//
+//nolint:gocritic // see above — a pointer receiver breaks template rendering
+func (r feedRow) PkgSpec() string {
+	if r.Package == "" {
+		return ""
+	}
+	if r.Version == "" {
+		return r.Package
+	}
+	return r.Package + "@" + r.Version
 }
 
 type feedPageData struct {
@@ -852,8 +890,12 @@ type feedPageData struct {
 	CSRFToken       string
 	SelectedEco     string
 	// PrevURL/NextURL are empty when there is no adjacent page.
-	PrevURL    string
-	NextURL    string
+	PrevURL string
+	NextURL string
+	// Hero is the Hot Particle — the featured catch card above the
+	// frontpage feed. Nil (section omitted) on filtered views, deep pages,
+	// and days with no eligible catch.
+	Hero       *feedHero
 	Domains    []string
 	Ecosystems []string
 	Rows       []feedRow
@@ -866,10 +908,9 @@ type feedPageData struct {
 	// UploadEnabled mirrors the package-level toggle so the template can
 	// pick the real upload form vs. the disabled placeholder.
 	UploadEnabled bool
-	// FeedsOnly enables the hidden "malware feeds" view: only label='bad'
-	// samples (threat-intel + curated open-source malware sources) are
-	// listed, and the table grows a "Feed" column showing which source
-	// each row came from. Activated by ?feeds=1 — no dropdown surface.
+	// FeedsOnly restricts the feed to label='bad' samples (threat-intel +
+	// curated open-source malware sources) — the rows that carry the
+	// "✓ corroborated" mark. Toggled by the filter bar's checkbox (?feeds=1).
 	FeedsOnly bool
 }
 
@@ -921,13 +962,21 @@ type cachedFeedSample struct {
 	Formula        string
 	FileType       string
 	Source         string
-	Feed           string
 	Ecosystem      string
-	Probability    float64
-	SuspiciousT    float64
-	HostileT       float64
-	Threshold      float64 // v=5 only; zero for v=4 inputs
-	Class          int     // v=5 only; mirrored from envelope for rendering
+	// Package/Version are hopper's registry attribution; Title and PkgSpec
+	// derive from them at render time (feedRowsFromSnapshot).
+	Package string
+	Version string
+	// Why/Conf are the LLM rationale and blended confidence percentage;
+	// Corroborated marks label='bad' (threat-feed) provenance. See feedRow.
+	Why          string
+	Conf         int
+	Corroborated bool
+	Probability  float64
+	SuspiciousT  float64
+	HostileT     float64
+	Threshold    float64 // v=5 only; zero for v=4 inputs
+	Class        int     // v=5 only; mirrored from envelope for rendering
 }
 
 // cleaveReport is constructed from JSONL output (multiple lines).
@@ -2110,7 +2159,7 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v5:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v6:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search
 }
@@ -2355,6 +2404,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 
 		addedAt := sample.CreatedAt
 		suspiciousT, hostileT := sampleThresholds(sample)
+		why, conf := llmWhy(sample.LLMResult)
 		rows = append(rows, feedRow{
 			SHA256:         sample.SHA256,
 			SHA256Short:    shortSHA(sample.SHA256),
@@ -2366,9 +2416,13 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			Formula:        res.Formula,
 			FileType:       firstNonEmpty(res.FileType, sample.FileType),
 			Source:         sample.Source,
-			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
+			Package:        sample.Package,
+			Version:        sample.Version,
+			Why:            why,
+			Conf:           conf,
+			Corroborated:   sample.Label == "bad",
 			AnalyzedAt:     addedAt,
 			AnalyzedDate:   feedDate(addedAt, now),
 			TimeAgo:        timeAgo(now.Sub(addedAt)),
@@ -2394,9 +2448,13 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			Formula:        sample.Formula,
 			FileType:       sample.FileType,
 			Source:         sample.Source,
-			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
+			Package:        sample.Package,
+			Version:        sample.Version,
+			Why:            sample.Why,
+			Conf:           sample.Conf,
+			Corroborated:   sample.Corroborated,
 			AnalyzedAt:     sample.CreatedAt,
 			AnalyzedDate:   feedDate(sample.CreatedAt, now),
 			TimeAgo:        timeAgo(now.Sub(sample.CreatedAt)),
@@ -2413,21 +2471,24 @@ var feedStaticPrecacheEcosystems = []string{
 	"javascript", "python", "ruby", "rust", "go", "java", "php",
 }
 
-// feedPrecacheVariants enumerates the baseline feed views the static tier sweeps:
-// the unfiltered frontpage, the criticality views, the feeds-only view, and the
-// per-ecosystem default for each static ecosystem. The hot tier adds whatever
-// pivots real traffic favors; everything else is cached on demand.
+// feedPrecacheVariants enumerates the baseline feed views the static tier
+// sweeps: the criticality views (hostile first — it is the frontpage default
+// and the Hot Particle's candidate pool), the unfiltered "any" view, the
+// feeds-only views, and each static ecosystem's default (hostile) view. The
+// hot tier adds whatever pivots real traffic favors; everything else is
+// cached on demand.
 var feedPrecacheVariants = func() []feedQueryArgs {
 	v := []feedQueryArgs{
-		{},
 		{criticality: "hostile"},
+		{},
 		{criticality: "suspicious"},
 		{criticality: ">=1"},
 		{criticality: "benign"},
+		{feedsOnly: true, criticality: "hostile"},
 		{feedsOnly: true},
 	}
 	for _, eco := range feedStaticPrecacheEcosystems {
-		v = append(v, feedQueryArgs{ecosystem: eco})
+		v = append(v, feedQueryArgs{ecosystem: eco, criticality: "hostile"})
 	}
 	return v
 }()
@@ -2591,8 +2652,12 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Formula:        row.Formula,
 			FileType:       row.FileType,
 			Source:         row.Source,
-			Feed:           row.Feed,
 			Ecosystem:      row.Ecosystem,
+			Package:        row.Package,
+			Version:        row.Version,
+			Why:            row.Why,
+			Conf:           row.Conf,
+			Corroborated:   row.Corroborated,
 			CreatedAt:      row.AnalyzedAt,
 		})
 	}
@@ -2902,6 +2967,22 @@ func sampleThresholds(sample *hopper.Sample) (suspiciousT, hostileT float64) {
 		}
 	}
 	return defaultSuspiciousT, defaultHostileT
+}
+
+// llmWhy extracts the one-sentence verdict rationale and the blended
+// confidence (as a 0–100 percentage) from a sample's llm_result column — the
+// bare `llm` envelope object. Both zero when no interpretation pass ran, when
+// the pass failed (carries only `error`), or when the JSON doesn't parse; the
+// feed row then renders without a rationale line, exactly as before.
+func llmWhy(raw []byte) (why string, conf int) {
+	if len(raw) == 0 {
+		return "", 0
+	}
+	var llm llmInterpretation
+	if err := json.Unmarshal(raw, &llm); err != nil || llm.Interpretation == "" {
+		return "", 0
+	}
+	return llm.Interpretation, int(llm.Conf*100 + 0.5)
 }
 
 func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
@@ -3464,6 +3545,17 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The feed's default view is the malware feed: with no explicit
+	// ?criticality= key the page shows hostile verdicts only. The unfiltered
+	// view stays reachable — the dropdown's Any option submits
+	// criticality=any, which normalizes to "". The search box mirrors only
+	// explicit choices (critToken), so the default view keeps an empty box
+	// and round-trips back to itself.
+	crit, critToken := "hostile", ""
+	if r.URL.Query().Has("criticality") {
+		crit = normalizeCriticality(r.URL.Query().Get("criticality"))
+		critToken = firstNonEmpty(crit, "any")
+	}
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
 		UploadEnabled:   uploadEnabled,
@@ -3474,14 +3566,14 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
 		SelectedDomain:  normalizeDomain(r.URL.Query().Get("domain")),
-		SelectedCrit:    normalizeCriticality(r.URL.Query().Get("criticality")),
+		SelectedCrit:    crit,
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		SelectedQ:       normalizeSearch(r.URL.Query().Get("q")),
 		Title:           "Fallout",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
-		data.SelectedCrit, data.SelectedEco, data.SelectedDomain,
+		critToken, data.SelectedEco, data.SelectedDomain,
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
@@ -3516,6 +3608,21 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		data.Rows = feedRowsFromSnapshot(snapshot)
 		data.Domains = snapshot.Domains
 		data.Ecosystems = snapshot.Ecosystems
+		// The Hot Particle fronts only the plain frontpage views (any
+		// criticality, first page): filtered, searched, and ecosystem
+		// views keep the reader's query as the star. When the hero also
+		// appears in the current row set it moves up into the card rather
+		// than rendering twice.
+		if data.SelectedEco == "" && data.SelectedDomain == "" &&
+			data.SelectedFormula == "" && data.SelectedQ == "" &&
+			!data.FeedsOnly && r.URL.Query().Get("page") == "" {
+			if hero := loadFeedHero(r.Context(), data.SelectedCrit, data.Rows, logger); hero != nil {
+				data.Hero = hero
+				data.Rows = slices.DeleteFunc(data.Rows, func(row feedRow) bool {
+					return row.SHA256 == hero.SHA256
+				})
+			}
+		}
 		paginateFeed(&data, r)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {

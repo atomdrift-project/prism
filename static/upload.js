@@ -79,7 +79,9 @@ const SHA_RE = /^[a-f0-9]{64}$/i;
 // Heuristic for a chemical formula like "C6H12O6" or "NaCl" — starts with
 // a capital, then alternating element symbols and digit runs, no spaces.
 const FORMULA_RE = /^([A-Z][a-z]?\d*)+$/;
-const CRIT_NAMES = new Set(["hostile", "suspicious", "benign"]);
+// "any" is an explicit token: the server defaults a missing ?criticality=
+// to hostile, so the unfiltered view needs criticality=any in the URL.
+const CRIT_NAMES = new Set(["hostile", "suspicious", "benign", "any"]);
 
 function critFromNumeric(raw) {
   // Pass comparison expressions through verbatim — the server's
@@ -225,6 +227,41 @@ if (domainFilter) {
     updateFilter("domain", domainFilter.value);
   });
 }
+
+// The feeds checkbox rides the URL directly rather than the search-box
+// language: it is a boolean view toggle (?feeds=1), not a query term.
+const feedsFilter = document.getElementById("feeds-filter");
+if (feedsFilter) {
+  feedsFilter.addEventListener("change", () => {
+    const url = new URL(window.location);
+    if (feedsFilter.checked) {
+      url.searchParams.set("feeds", "1");
+    } else {
+      url.searchParams.delete("feeds");
+    }
+    url.searchParams.delete("page");
+    window.location = url;
+  });
+}
+
+// Full SHA-256s click-copy — the fastest path from feed row to ticket or
+// terminal. The copied state is a brief color flip; clipboard failures
+// (permissions, http) degrade to the text simply staying selectable.
+document.addEventListener("click", (ev) => {
+  const sha = ev.target.closest(".file-sha");
+  if (!sha || !navigator.clipboard) return;
+  const text = (sha.textContent || "").trim();
+  if (!/^[a-f0-9]{64}$/i.test(text)) return;
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      sha.classList.add("copied");
+      setTimeout(() => sha.classList.remove("copied"), 1200);
+    })
+    .catch(() => {
+      /* clipboard unavailable — the text stays selectable */
+    });
+});
 
 // Suppress the legacy filter form's native submission — all navigation
 // now flows through the search box parser so the dropdown change handler
