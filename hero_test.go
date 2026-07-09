@@ -77,8 +77,8 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		SelectedCrit: "hostile",
 		Hero:         hero,
 		Rows: []feedRow{
-			// An LLM rationale and trait chips render together — the chips
-			// are evidence, not a fallback.
+			// An LLM rationale is the row's whole rationale line — it
+			// suppresses the trait chips rather than stacking with them.
 			{
 				SHA256:         testSHARow,
 				Filename:       "nomad_pydantic-0.0.0.tar.gz",
@@ -94,15 +94,19 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 				AnalyzedDate: "11h ago",
 			},
 			// A bare sample (no package, no LLM rationale) degrades to the
-			// filename + sha form; its rationale line is the trait chips.
+			// filename + sha form; its rationale line is the top-2 trait
+			// chips beside the ml confidence — the same shape as an
+			// interpreted row.
 			{
 				SHA256:         testSHABare,
 				Filename:       testSHABare + ".elf",
 				Classification: "hostile",
 				Ecosystem:      "linux",
+				Conf:           92,
 				TopTraits: []feedTrait{
 					{ID: "persist.systemd-unit", Full: "objectives/persist/systemd-unit", Crit: "hostile"},
 					{ID: "obf.xor-stage", Full: "micro-behaviors/obf/xor-stage", Crit: "suspicious"},
+					{ID: "net.doh-lookup", Full: "micro-behaviors/net/doh-lookup", Crit: "suspicious"},
 				},
 				AnalyzedDate: "13h ago",
 			},
@@ -128,10 +132,10 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		`class="feedmark"`,              // the bare ✓ corroboration mark
 		"93% confidence",
 		"97%",
-		// hero evidence chip renders alongside the LLM interpretation
+		"92%", // the LLM-less row's ml confidence, same chip as interpreted rows
+		// hero evidence chip renders alongside the LLM interpretation — the
+		// Hot Particle keeps its evidence row
 		`>net.beacon-hardcoded-c2</span>`,
-		// ...and so does the LLM-bearing row's chip
-		`>exec.install-hook</span>`,
 		"installs exposed", // reach sits in the coordinate stack under the formula
 		"View full analysis",
 		`value="any"`,         // the explicit Any option
@@ -145,6 +149,14 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered feed missing %q", want)
 		}
+	}
+	// One rationale line per ledger row: an interpreted row keeps chips off,
+	// and an uninterpreted row caps its chips at the top two.
+	if strings.Contains(got, ">exec.install-hook</span>") {
+		t.Error("interpreted ledger row must not render trait chips beside its rationale")
+	}
+	if strings.Contains(got, ">net.doh-lookup</span>") {
+		t.Error("uninterpreted ledger row must cap its rationale at the top two traits")
 	}
 	if strings.Contains(got, "nomad-pydantic@0.0.0") {
 		t.Error("row identity must not repeat the package as name@version")
@@ -227,6 +239,22 @@ func TestFeedRowIdentity(t *testing.T) {
 		if got := tc.row.SubID(); got != tc.subID {
 			t.Errorf("%s: SubID() = %q, want %q", tc.name, got, tc.subID)
 		}
+	}
+}
+
+func TestFeedRowFallbackTraits(t *testing.T) {
+	traits := []feedTrait{{ID: "a.b"}, {ID: "c.d"}, {ID: "e.f"}}
+	if got := (feedRow{Why: "does bad things", TopTraits: traits}).FallbackTraits(); got != nil {
+		t.Errorf("interpreted row must suppress trait chips, got %v", got)
+	}
+	if got := (feedRow{TopTraits: traits}).FallbackTraits(); len(got) != 2 || got[0].ID != "a.b" || got[1].ID != "c.d" {
+		t.Errorf("bare row must keep the top two traits, got %v", got)
+	}
+	if got := (feedRow{TopTraits: traits[:1]}).FallbackTraits(); len(got) != 1 {
+		t.Errorf("single-trait row keeps its one chip, got %v", got)
+	}
+	if got := (feedRow{}).FallbackTraits(); len(got) != 0 {
+		t.Errorf("traitless row renders no chips, got %v", got)
 	}
 }
 

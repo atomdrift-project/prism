@@ -963,10 +963,10 @@
                             {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
                             <span class="why">{{.Why}}</span>
                         </div>
-                        {{end}}
-                        {{if .TopTraits}}
+                        {{else if .FallbackTraits}}
                         <div class="row-why">
-                            {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
+                            {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
+                            {{range .FallbackTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
                         </div>
                         {{end}}
                     </div>

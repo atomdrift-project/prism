@@ -861,10 +861,12 @@ type feedRow struct {
 	Users         string
 	// Why is the one-sentence rationale for the row's verdict — the LLM
 	// interpretation when that pass ran (litmus `llm.interpretation`), empty
-	// otherwise. Conf is the blended confidence as a 0–100 percentage,
-	// rendered only alongside a non-empty Why. TopTraits carries the row's
-	// headline trait chips, shown when no LLM rationale exists (and as the
-	// Hot Particle's evidence row).
+	// otherwise. Conf is the verdict confidence as a 0–100 percentage: the
+	// blended LLM confidence when a rationale exists, otherwise the ml-pass
+	// confidence (zero for benign verdicts, which hides the chip). TopTraits
+	// carries the row's headline trait chips; the ledger shows the top two
+	// only when no LLM rationale exists (FallbackTraits), while the Hot
+	// Particle shows them all as its evidence row.
 	Why       string
 	TopTraits []feedTrait
 	Conf      int
@@ -929,6 +931,19 @@ func (r feedRow) SubID() string {
 		return ""
 	}
 	return r.Package
+}
+
+// FallbackTraits is the ledger row's rationale line when no LLM
+// interpretation ran: the top two headline traits. Nil when a Why line
+// exists — the interpretation replaces the chips rather than stacking with
+// them. Value receiver for the same html/template reason as Title.
+//
+//nolint:gocritic // see above — a pointer receiver breaks template rendering
+func (r feedRow) FallbackTraits() []feedTrait {
+	if r.Why != "" {
+		return nil
+	}
+	return r.TopTraits[:min(2, len(r.TopTraits))]
 }
 
 type feedPageData struct {
@@ -1026,9 +1041,10 @@ type cachedFeedSample struct {
 	// feedRow; Downloads sits below with the other numerics).
 	RegistryTitle string
 	Desc          string
-	// Why/Conf are the LLM rationale and blended confidence percentage;
-	// TopTraits the display-ready headline trait chips; Corroborated marks
-	// label='bad' (threat-feed) provenance. See feedRow.
+	// Why/Conf are the LLM rationale and verdict confidence percentage
+	// (blended when a rationale exists, ml-pass otherwise); TopTraits the
+	// display-ready headline trait chips; Corroborated marks label='bad'
+	// (threat-feed) provenance. See feedRow.
 	Why          string
 	TopTraits    []feedTrait
 	Conf         int
@@ -2466,8 +2482,14 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		}
 
 		addedAt := sample.CreatedAt
-		suspiciousT, hostileT := sampleThresholds(sample)
+		suspiciousT, hostileT, mlConf := sampleMLVerdict(sample)
 		why, conf := llmWhy(sample.LLMResult)
+		// Keep interpreted and uninterpreted rows consistent: a row without
+		// an LLM rationale still shows a verdict-confidence chip, sourced
+		// from the ml pass instead of the blend.
+		if why == "" {
+			conf = mlConf
+		}
 		rows = append(rows, feedRow{
 			SHA256:         sample.SHA256,
 			SHA256Short:    shortSHA(sample.SHA256),
@@ -3060,21 +3082,24 @@ func normalizeCriticality(criticality string) string {
 	return ""
 }
 
-func sampleThresholds(sample *hopper.Sample) (suspiciousT, hostileT float64) {
-	const (
-		defaultSuspiciousT = 0.65
-		defaultHostileT    = 0.887
-	)
-	if sample != nil && len(sample.LitmusResult) > 0 {
-		var mlResp litmusMlResponse
-		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
-			suspiciousT, hostileT := mlResp.suspiciousT(), mlResp.hostileT()
-			if suspiciousT > 0 && hostileT > 0 {
-				return suspiciousT, hostileT
-			}
-		}
+// sampleMLVerdict extracts the feed's render inputs from a sample's ml
+// envelope: the suspicious/hostile band edges (standard defaults when the
+// envelope is absent or predates per-envelope thresholds) and the ml verdict
+// confidence percentage — the same "NN% confident" figure the detail page's
+// litmus badge shows; zero for benign verdicts and unparseable envelopes.
+func sampleMLVerdict(sample *hopper.Sample) (suspiciousT, hostileT float64, conf int) {
+	suspiciousT, hostileT = 0.65, 0.887
+	if sample == nil || len(sample.LitmusResult) == 0 {
+		return suspiciousT, hostileT, 0
 	}
-	return defaultSuspiciousT, defaultHostileT
+	var mlResp litmusMlResponse
+	if json.Unmarshal(sample.LitmusResult, &mlResp) != nil {
+		return suspiciousT, hostileT, 0
+	}
+	if s, h := mlResp.suspiciousT(), mlResp.hostileT(); s > 0 && h > 0 {
+		suspiciousT, hostileT = s, h
+	}
+	return suspiciousT, hostileT, mlResp.Confidence
 }
 
 // llmWhy extracts the one-sentence verdict rationale and the blended
