@@ -116,6 +116,8 @@ func TestTraitChipID(t *testing.T) {
 		{"micro-behaviors/net/beacon/hardcoded-c2", "beacon.hardcoded-c2"},
 		{"exfil/dns", "exfil.dns"},
 		{"standalone", "standalone"},
+		{"objectives/cred/brute-force/iot-creds::mirai-credential-busybox-stager", "brute-force.iot-creds"},
+		{"standalone::named", "standalone"},
 	}
 	for _, tc := range cases {
 		if got := traitChipID(tc.in); got != tc.want {

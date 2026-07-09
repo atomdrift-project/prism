@@ -3149,11 +3149,14 @@ func parseTopTraits(raw string) []feedTrait {
 	return chips
 }
 
-// traitChipID compacts a cleave trait path for a feed chip: the last
-// directory plus the trait's own name ("objectives/exfil/dns-tunnel" →
-// "exfil.dns-tunnel") — recognizable without the taxonomy root. (Distinct
-// from traitDisplayID, which keeps every segment for the Traits tab.)
+// traitChipID compacts a cleave trait path for a feed chip: the last two
+// path segments ("objectives/exfil/dns-tunnel" → "exfil.dns-tunnel") —
+// recognizable without the taxonomy root. A "::name" suffix (a named trait
+// inside a multi-trait rule file) is dropped; the full ID stays in the chip's
+// tooltip. (Distinct from traitDisplayID, which keeps every segment for the
+// Traits tab.)
 func traitChipID(id string) string {
+	id, _, _ = strings.Cut(id, "::")
 	parts := strings.Split(id, "/")
 	if len(parts) < 2 {
 		return id
