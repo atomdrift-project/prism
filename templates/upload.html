@@ -947,11 +947,11 @@
                             <a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a>
                             {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
                             {{with .Desc}}<span class="desc">{{.}}</span>{{end}}
+                            {{with .Users}}<span class="users" title="marketplace install count"><b>{{.}}</b> installs</span>{{end}}
+                            <span class="when" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
                             {{if .Ecosystem}}
                                 {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                             {{end}}
-                            {{with .Users}}<span class="users" title="marketplace install count"><b>{{.}}</b> installs</span>{{end}}
-                            <span class="when" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
                         </div>
                         <div class="row-hash">
                             <span class="file-sha" title="click to copy">{{.SHA256}}</span>
