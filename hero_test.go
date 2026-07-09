@@ -64,8 +64,11 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 			FileType:       "crx",
 			Why:            "posts every visited URL to a hardcoded endpoint",
 			Conf:           93,
-			Corroborated:   true,
-			AnalyzedDate:   "10h ago",
+			TopTraits: []feedTrait{
+				{ID: "net.beacon-hardcoded-c2", Full: "objectives/net/beacon-hardcoded-c2", Crit: "hostile"},
+			},
+			Corroborated: true,
+			AnalyzedDate: "10h ago",
 		},
 		Reasons: "rare catch for chrome",
 	}
@@ -74,6 +77,8 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		SelectedCrit: "hostile",
 		Hero:         hero,
 		Rows: []feedRow{
+			// An LLM rationale and trait chips render together — the chips
+			// are evidence, not a fallback.
 			{
 				SHA256:         testSHARow,
 				Filename:       "nomad_pydantic-0.0.0.tar.gz",
@@ -83,7 +88,10 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 				Ecosystem:      "python",
 				Why:            "downloads a second stage from a CDN",
 				Conf:           97,
-				AnalyzedDate:   "11h ago",
+				TopTraits: []feedTrait{
+					{ID: "exec.install-hook", Full: "objectives/exec/install-hook", Crit: "hostile"},
+				},
+				AnalyzedDate: "11h ago",
 			},
 			// A bare sample (no package, no LLM rationale) degrades to the
 			// filename + sha form; its rationale line is the trait chips.
@@ -120,6 +128,11 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 		`class="feedmark"`,              // the bare ✓ corroboration mark
 		"93% confidence",
 		"97%",
+		// hero evidence chip renders alongside the LLM interpretation
+		`>net.beacon-hardcoded-c2</span>`,
+		// ...and so does the LLM-bearing row's chip
+		`>exec.install-hook</span>`,
+		"installs exposed", // reach sits in the coordinate stack under the formula
 		"View full analysis",
 		`value="any"`,         // the explicit Any option
 		`property="og:title"`, // social-preview tags

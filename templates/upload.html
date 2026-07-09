@@ -572,18 +572,28 @@
             color: var(--slate);
             font-variant-numeric: tabular-nums;
         }
-        .verdict-stamp {
+        .head-badges {
             margin-left: auto;
             display: inline-flex;
             align-items: center;
-            gap: 7px;
+            gap: 8px;
+        }
+        /* The verdict stamp shares the eco-badge's exact metrics (mono 10.5px,
+           1px 6px padding, radius 3, lowercase) so the head-bar badges read as
+           one family; only the palette and the crit square differ. */
+        .verdict-stamp {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             font-family: var(--mono);
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            border-radius: 4px;
-            padding: 3px 9px;
+            font-size: 10.5px;
+            letter-spacing: 0.3px;
+            border-radius: 3px;
+            padding: 1px 6px;
+        }
+        .verdict-stamp .band {
+            width: 7px;
+            height: 7px;
         }
         .verdict-stamp.hostile {
             color: #991b1b;
@@ -602,8 +612,15 @@
         }
         .catch-body {
             display: grid;
-            gap: 7px;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px 26px;
             padding: 12px 18px 14px;
+        }
+        .catch-main {
+            display: grid;
+            gap: 7px;
+            align-content: start;
+            min-width: 0;
         }
         .catch-title {
             margin: 0;
@@ -628,16 +645,55 @@
             max-width: 76ch;
         }
         .catch-why .conf-chip { vertical-align: 1px; margin-right: 6px; }
-        .catch-more {
-            margin-left: auto;
-            font-size: 12.5px;
-            font-weight: 600;
-            color: var(--toxic-dark);
-            text-decoration: underline;
-            text-underline-offset: 3px;
+        /* The right-hand coordinate stack: sha at title height, malecule
+           beneath it, reach beneath that — identity left, coordinates right,
+           the same scan order as a ledger row. */
+        .catch-coords {
+            display: grid;
+            gap: 4px;
+            align-content: start;
+            justify-items: end;
+            text-align: right;
+            padding-top: 5px;
+        }
+        .coord-sha {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .catch-reach {
+            font-size: 12px;
+            color: var(--iron);
             white-space: nowrap;
         }
-        .catch-more:hover { color: var(--carbon); }
+        .catch-reach b {
+            color: var(--graphite);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+        .catch-foot {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 2px;
+        }
+        .view-analysis {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            min-height: 34px;
+            padding: 0 14px;
+            border: 1px solid var(--carbon);
+            background: var(--carbon);
+            color: var(--white);
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            text-decoration: none;
+            white-space: nowrap;
+        }
         .litmus-stamp {
             display: inline-flex;
             align-items: center;
@@ -732,6 +788,8 @@
             .row-id .file-link { max-width: 100%; }
             .row-hash { flex-wrap: wrap; }
             .row-hash .formula { margin-left: 0; }
+            .catch-body { grid-template-columns: 1fr; }
+            .catch-coords { justify-items: start; text-align: left; padding-top: 0; }
         }
     </style>
 </head>
@@ -787,32 +845,40 @@
                     HOT PARTICLE
                 </span>
                 <span class="catch-date" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
-                <span class="verdict-stamp {{.Classification}}"><span class="band {{.Classification}}"></span>{{.Classification}}</span>
-            </div>
-            <div class="catch-body">
-                <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a></h2>
-                <p class="catch-sub">
-                    {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
+                <span class="head-badges">
                     {{if .Ecosystem}}
                         {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                     {{end}}
-                    {{if .FileType}}<span class="mono">{{.FileType}}</span>{{end}}
-                    {{with .Users}}<span><b>{{.}}</b> installs</span>{{end}}
-                    <span>analyzed {{.AnalyzedDate}}</span>
-                </p>
-                <div class="row-hash">
-                    <span class="file-sha" title="click to copy">{{.SHA256}}</span>
-                    {{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated (?feeds=1)">✓</span>{{end}}
-                    {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
+                    <span class="verdict-stamp {{.Classification}}"><span class="band {{.Classification}}"></span>{{.Classification}}</span>
+                </span>
+            </div>
+            <div class="catch-body">
+                <div class="catch-main">
+                    <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a></h2>
+                    {{if or .SubID .Desc}}
+                    <p class="catch-sub">
+                        {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
+                        {{with .Desc}}<span class="catch-desc">“{{.}}”</span>{{end}}
+                    </p>
+                    {{end}}
+                    {{if .Why}}
+                    <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
+                    {{end}}
                 </div>
-                {{with .Desc}}<p class="catch-desc">“{{.}}”</p>{{end}}
-                <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
-                <div class="catch-evidence">
+                <div class="catch-coords">
+                    <span class="coord-sha">
+                        <span class="file-sha" title="click to copy">{{.SHA256}}</span>
+                        {{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated (?feeds=1)">✓</span>{{end}}
+                    </span>
+                    {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
+                    {{with .Users}}<span class="catch-reach"><b>{{.}}</b> installs exposed</span>{{end}}
+                </div>
+                <div class="catch-foot">
                     {{if .TopTraits}}
                     <span class="ev-label">Evidence</span>
                     {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
                     {{end}}
-                    <a class="catch-more" href="/file/{{.SHA256}}">View full analysis →</a>
+                    <a class="view-analysis" href="/file/{{.SHA256}}">View full analysis →</a>
                 </div>
             </div>
         </section>
@@ -897,7 +963,8 @@
                             {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
                             <span class="why">{{.Why}}</span>
                         </div>
-                        {{else if .TopTraits}}
+                        {{end}}
+                        {{if .TopTraits}}
                         <div class="row-why">
                             {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
                         </div>
