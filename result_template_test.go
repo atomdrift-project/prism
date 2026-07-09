@@ -77,6 +77,19 @@ func TestResultTemplateParses(t *testing.T) {
 			name: "deferred_archive", data: deferredArchiveData(),
 			want: []string{`id="tabbtn-content"`, "data-defer-members=", "Loading file contents", "Loading traits"},
 		},
+		// "Also detected by" chips: open databases and blogs are named (a
+		// linked source renders an anchor, one without a URL a plain chip);
+		// vendor sources show only as the anonymous count chip.
+		{
+			name: "detected_by", data: detectedByData(),
+			want: []string{
+				"Also detected by", "feed-chip",
+				// html/template renders the count chip's "+" as "&#43;", so
+				// match past it.
+				`href="https://osv.dev/x"`, "osv", "bleepingcomputer", "2 more",
+			},
+			dontWant: []string{"socket", "aikido"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -155,6 +168,19 @@ func fileViewData() resultData {
 			}}}},
 		}},
 	}}
+	return d
+}
+
+// detectedByData is a benign single-file page that also carries corroboration
+// chips: a linked open database, a blog with no URL, and two unnamed vendor
+// sources already rolled up into the count chip.
+func detectedByData() resultData {
+	d := singleFileData()
+	d.DetectedBy = []Citation{
+		{Source: "bleepingcomputer", Note: "malware"},
+		{Source: "osv", URL: "https://osv.dev/x", Note: "MAL-2026-1234"},
+	}
+	d.MoreSources = "+2 more"
 	return d
 }
 

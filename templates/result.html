@@ -522,6 +522,27 @@
             min-width: 0;
             word-break: break-all;
         }
+        /* "Also detected by" chips: one per nameable external source (open
+           databases, blogs) that cited this sample, plus an anonymous count
+           chip for the rest. Wrap right-aligned alongside the meta value. */
+        .detectedby-value {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: flex-end;
+        }
+        .feed-chip {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            background: var(--mist);
+            color: var(--graphite);
+            font-size: 11px;
+            font-family: 'SF Mono', Consolas, monospace;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        a.feed-chip:hover { background: var(--toxic); color: #fff; }
         /* Small inline rescan button — shown whenever the last analysis
            is older than rescanCooldown. Subtle by default so it doesn't
            compete with the analysis timestamp; toxic accent on hover
@@ -1776,6 +1797,14 @@
                         <span class="meta-label">Source</span>
                         <span class="meta-value source-value">
                             {{if .SourceURL}}<a class="source-link" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer" aria-label="Open source URL {{.SourceURL}} in a new tab">{{.SourceLabel}}<span aria-hidden="true"> ↗</span></a>{{else}}<span title="domain only — no exact URL recorded">{{.SourceLabel}}</span>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if or .DetectedBy .MoreSources}}
+                    <div class="meta-row">
+                        <span class="meta-label" title="Other threat feeds, scanners, blogs, or advisories that have also cited this sample">Also detected by</span>
+                        <span class="meta-value detectedby-value">
+                            {{range .DetectedBy}}{{if .URL}}<a class="feed-chip" href="{{.URL}}" target="_blank" rel="noopener noreferrer" title="{{.Note}}" aria-label="Open {{.Source}} report in a new tab">{{.Source}}<span aria-hidden="true"> ↗</span></a>{{else}}<span class="feed-chip" title="{{.Note}}">{{.Source}}</span>{{end}}{{end}}{{if .MoreSources}}<span class="feed-chip" title="Sources we don't name individually">{{.MoreSources}}</span>{{end}}
                         </span>
                     </div>
                     {{end}}

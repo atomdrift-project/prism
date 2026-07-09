@@ -715,7 +715,17 @@ type resultData struct {
 	// (e.g. "pkg:npm/lodash@4.17.21") — hopper's version-less PURLBase with
 	// the version appended. Empty for uploads and ecosystems without a PURL
 	// type; the template hides the meta row when empty.
-	PURL         string
+	PURL string
+	// DetectedBy lists the external sources that have also cited this sample
+	// (hopper's sightings ledger, keyed by sha256 + purl_base), filtered to
+	// the sources we name publicly: open databases (osv, opensourcemalware) and blogs
+	// (cyclotron:*). Commercial vendors and scanners are not name-dropped;
+	// they are rolled up into MoreSources, a pre-formatted count chip ("+2
+	// more", "3 sources"; empty when zero). Both empty hides the "also
+	// detected by" row. Populated at render time from a live SightingsFor
+	// read, so a newly-arrived citation shows without a rescan.
+	DetectedBy   []Citation
+	MoreSources  string
 	Layout       string
 	BuildCommit  string
 	FileFindings []FileFindingsDisplay
@@ -870,10 +880,10 @@ type feedRow struct {
 	Why       string
 	TopTraits []feedTrait
 	Conf      int
-	// Corroborated marks a sample that arrived via an external threat-intel
-	// feed (forager label='bad') — the per-row "✓" mark. The feed's name
-	// intentionally stays off the feed page; it remains visible on the
-	// detail page's provenance tab.
+	// Corroborated marks a sample an external threat feed, scanner, blog, or
+	// advisory has cited (hopper's sightings ledger, via samples.corroborated) —
+	// the per-row "✓" mark. The citing sources stay off the feed page; the
+	// detail page names only open databases and blogs (DetectedBy).
 	Corroborated bool
 	Downloads    int64
 	HostileT     float64
@@ -1043,8 +1053,8 @@ type cachedFeedSample struct {
 	Desc          string
 	// Why/Conf are the LLM rationale and verdict confidence percentage
 	// (blended when a rationale exists, ml-pass otherwise); TopTraits the
-	// display-ready headline trait chips; Corroborated marks label='bad'
-	// (threat-feed) provenance. See feedRow.
+	// display-ready headline trait chips; Corroborated is hopper's
+	// samples.corroborated flag (sightings ledger). See feedRow.
 	Why          string
 	TopTraits    []feedTrait
 	Conf         int
@@ -2434,11 +2444,13 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		q.RequireLitmus = true
 	}
 	if args.feedsOnly {
-		// Forager tags every sample it pulls from a threat-intel feed
-		// as `label='bad'` (see forager/db.go canonicalLabel). Filtering
-		// on label here gives us the union of all such feeds without
-		// having to enumerate the feed names by hand.
-		q.Label = "bad"
+		// Corroborated is hopper's denormalized flag: at least one external
+		// threat feed, scanner, blog, or advisory cited this sample's sha256 or
+		// purl_base (the sightings ledger). It supersedes the old label='bad'
+		// proxy — a strictly richer signal (ClamAV, Socket, Aikido, blogs, not
+		// just forager's own feeds) and still a single-column predicate that
+		// composes with hopper's tuned feed indexes.
+		q.Corroborated = true
 	}
 
 	samples, err := db.FeedSamples(ctx, &q)
@@ -2512,7 +2524,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			Why:            why,
 			Conf:           conf,
 			TopTraits:      parseTopTraits(sample.TopTraits),
-			Corroborated:   sample.Label == "bad",
+			Corroborated:   sample.Corroborated,
 			AnalyzedAt:     addedAt,
 			AnalyzedDate:   feedDate(addedAt, now),
 			TimeAgo:        timeAgo(now.Sub(addedAt)),
@@ -3279,6 +3291,81 @@ func purlDisplay(res *storedResult) string {
 	return res.PURLBase + "@" + res.Version
 }
 
+// Citation is one external source that has cited this sample, shown as a chip
+// in the detail page's "also detected by" row. Source is the public display
+// name ("osv", "bleepingcomputer"); URL links to the advisory/report when the
+// source gave one; Note is the source's own tag.
+type Citation struct {
+	Source string
+	URL    string
+	Note   string
+}
+
+// citationDisplayName maps a sightings-ledger source to the name we show
+// publicly, or "" for sources we only count. Open databases (osv,
+// opensourcemalware) and blogs (cyclotron:<blog>, shown as the bare blog
+// name) are named; commercial vendors and scanners (socket, aikido, clamav,
+// ...) are not name-dropped.
+func citationDisplayName(source string) string {
+	if blog, ok := strings.CutPrefix(source, "cyclotron:"); ok {
+		return blog
+	}
+	switch source {
+	case "osv", "osm", "opensourcemalware":
+		return source
+	}
+	return ""
+}
+
+// detectedBy reads hopper's sightings ledger for this sample and returns one
+// chip per distinct nameable source that cited it (by sha256 or version-less
+// purl_base), plus a count chip covering the sources we leave unnamed.
+// Best-effort: a nil DB or a query error yields no chips (the row hides) rather
+// than failing the page. One small indexed read per detail render, so a citation
+// that arrived since the last analysis shows without waiting for a rescan.
+func detectedBy(ctx context.Context, sha, purlBase string) (named []Citation, more string) {
+	db := hopperDB.Load()
+	if db == nil {
+		return nil, ""
+	}
+	subjects := []string{sha}
+	if purlBase != "" {
+		subjects = append(subjects, purlBase)
+	}
+	m, err := db.SightingsFor(ctx, subjects)
+	if err != nil {
+		logger.Warn("sightings lookup failed", "sha256", sha, "error", err)
+		return nil, ""
+	}
+	seen := make(map[string]bool)
+	unnamed := 0
+	for _, subj := range subjects {
+		for _, s := range m[subj] {
+			if seen[s.Source] {
+				continue
+			}
+			seen[s.Source] = true
+			name := citationDisplayName(s.Source)
+			if name == "" {
+				unnamed++
+				continue
+			}
+			named = append(named, Citation{Source: name, URL: s.URL, Note: s.Note})
+		}
+	}
+	sort.Slice(named, func(i, j int) bool { return named[i].Source < named[j].Source })
+	switch {
+	case unnamed == 0:
+	case len(named) > 0:
+		more = fmt.Sprintf("+%d more", unnamed)
+	case unnamed == 1:
+		more = "1 source"
+	default:
+		more = fmt.Sprintf("%d sources", unnamed)
+	}
+	return named, more
+}
+
 // provenanceGroups assembles the Provenance tab's record from the stored
 // sample. Every fact originates in hopper's database (res), so this never
 // depends on the litmus envelope parse: uploads, which carry no provenance,
@@ -3979,6 +4066,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	)
 	prepStart := time.Now()
 	data := prepareResultData(res.Filename, sha, &res)
+	data.DetectedBy, data.MoreSources = detectedBy(ctx, sha, res.PURLBase)
 	prepDur := time.Since(prepStart)
 	data.Nonce = nonceFor(r)
 	data.StyleNonce = styleNonceFor(r)
