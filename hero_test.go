@@ -108,14 +108,16 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 	for _, want := range []string{
 		"HOT PARTICLE",
 		"rare catch for chrome",
-		testSHAHero, // full hero sha in the side rail
+		testSHAHero, // full hero sha, inline on the hash line
 		testSHARow,  // full row sha on the ledger line
 		"Volume Max — Ultimate Sound Booster 5.2.1", // hero headline: title + version
-		"kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1",    // hero rail keeps the copyable coordinate
-		"Boost your volume up to 600%.",             // registry description
-		"412,033",                                   // install count
-		"nomad-pydantic 0.0.0",                      // row headline: name + version, no duplicate pkg line
-		`class="feedmark"`,                          // the bare ✓ corroboration mark
+		// the extension id appears once, as the muted sub-id — never as a
+		// repeated name@version coordinate
+		`>kpeiokhfmoigdhgmiippgkbnilhmmoim</span>`,
+		"Boost your volume up to 600%.", // registry description
+		"412,033",                       // install count
+		"nomad-pydantic 0.0.0",          // row headline: name + version, no duplicate pkg line
+		`class="feedmark"`,              // the bare ✓ corroboration mark
 		"93% confidence",
 		"97%",
 		"View full analysis",
@@ -133,6 +135,12 @@ func TestUploadTemplateRendersHeroAndLedger(t *testing.T) {
 	}
 	if strings.Contains(got, "nomad-pydantic@0.0.0") {
 		t.Error("row identity must not repeat the package as name@version")
+	}
+	if strings.Contains(got, "kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1") {
+		t.Error("compact hero must not render the name@version coordinate")
+	}
+	if strings.Contains(got, ">threat feeds<") {
+		t.Error("compact hero must not render the threat-feeds rail row")
 	}
 	if strings.Contains(got, testSHABare+"@") {
 		t.Error("bare sample must not render a pkg spec")
@@ -188,17 +196,16 @@ func TestFeedRowIdentity(t *testing.T) {
 		row      feedRow
 		headline string
 		subID    string
-		pkgSpec  string
 	}{
 		// A marketplace title displaces the package id, which moves to the
 		// muted sub-id so the identity line never repeats itself.
-		{"marketplace", marketplace, "Volume Max 5.2.1", "kpeiokhfmoigdhgmiippgkbnilhmmoim", "kpeiokhfmoigdhgmiippgkbnilhmmoim@5.2.1"},
-		{"attributed", feedRow{Package: "lodash", Version: "4.17.21", Filename: "lodash-4.17.21.tgz"}, "lodash 4.17.21", "", "lodash@4.17.21"},
-		{"no version", feedRow{Package: "lodash", Filename: "lodash.tgz"}, "lodash", "", "lodash"},
-		{"unattributed", feedRow{Filename: "sample.elf"}, "sample.elf", "", ""},
+		{"marketplace", marketplace, "Volume Max 5.2.1", "kpeiokhfmoigdhgmiippgkbnilhmmoim"},
+		{"attributed", feedRow{Package: "lodash", Version: "4.17.21", Filename: "lodash-4.17.21.tgz"}, "lodash 4.17.21", ""},
+		{"no version", feedRow{Package: "lodash", Filename: "lodash.tgz"}, "lodash", ""},
+		{"unattributed", feedRow{Filename: "sample.elf"}, "sample.elf", ""},
 		// A version without package attribution stays off the headline —
 		// filenames usually embed their version already.
-		{"filename fallback", feedRow{Filename: "pkg-0.0.0.tar.gz", Version: "0.0.0"}, "pkg-0.0.0.tar.gz", "", ""},
+		{"filename fallback", feedRow{Filename: "pkg-0.0.0.tar.gz", Version: "0.0.0"}, "pkg-0.0.0.tar.gz", ""},
 	}
 	for _, tc := range cases {
 		if got := tc.row.Headline(); got != tc.headline {
@@ -206,9 +213,6 @@ func TestFeedRowIdentity(t *testing.T) {
 		}
 		if got := tc.row.SubID(); got != tc.subID {
 			t.Errorf("%s: SubID() = %q, want %q", tc.name, got, tc.subID)
-		}
-		if got := tc.row.PkgSpec(); got != tc.pkgSpec {
-			t.Errorf("%s: PkgSpec() = %q, want %q", tc.name, got, tc.pkgSpec)
 		}
 	}
 }

@@ -847,7 +847,7 @@ type feedRow struct {
 	Filename       string
 	// Package/Version are hopper's registry attribution (e.g. "lodash",
 	// "4.17.21"); both empty for uploads and unattributed samples. The
-	// template reads them through Title and PkgSpec.
+	// template reads them through Headline and SubID.
 	Package string
 	Version string
 	// RegistryTitle is the marketplace display title from the provenance
@@ -929,22 +929,6 @@ func (r feedRow) SubID() string {
 		return ""
 	}
 	return r.Package
-}
-
-// PkgSpec is the ecosystem-relative "name@version" coordinate — the copyable
-// reference shown in the Hot Particle side rail. Empty when the sample has no
-// package attribution. Value receiver for the same html/template reason as
-// Title.
-//
-//nolint:gocritic // see above — a pointer receiver breaks template rendering
-func (r feedRow) PkgSpec() string {
-	if r.Package == "" {
-		return ""
-	}
-	if r.Version == "" {
-		return r.Package
-	}
-	return r.Package + "@" + r.Version
 }
 
 type feedPageData struct {
@@ -1033,7 +1017,7 @@ type cachedFeedSample struct {
 	FileType       string
 	Source         string
 	Ecosystem      string
-	// Package/Version are hopper's registry attribution; Title and PkgSpec
+	// Package/Version are hopper's registry attribution; Headline and SubID
 	// derive from them at render time (feedRowsFromSnapshot).
 	Package string
 	Version string
