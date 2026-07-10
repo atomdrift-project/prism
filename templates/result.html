@@ -1519,6 +1519,20 @@
         .parents-badge.hostile { color: var(--hostile); }
         .parents-badge.suspicious { color: #92400e; }
         .parents-badge.benign { color: #4d7c0f; }
+        /* Edge-type chip in the "Referenced by" panel ("fetched"/"registry"):
+           how this content is related to the referrer, since it isn't inside it */
+        .parents-rel {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--slate);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 0 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
         .parents-meta {
             display: flex;
             align-items: center;
@@ -1819,22 +1833,33 @@
         </div>
         {{end}}
 
-        {{if .Parents}}
-        <section class="parents-panel" aria-labelledby="parents-title">
-            <h2 class="parents-title" id="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</h2>
-            <ul class="parents-list">
-                {{range .Parents}}
+        {{define "parentItem"}}
                 <li class="parents-item">
-                    <a class="parents-link" href="/file/{{.SHA256}}#file={{$.SHA256}}" title="open archive view">
+                    <a class="parents-link" href="/file/{{.SHA256}}#file={{.ChildSHA}}" title="open archive view">
                         {{if .Classification}}<span class="parents-badge {{.Classification}}">{{.Classification}}</span>{{end}}
                         <span class="parents-name">{{.Filename}}</span>
+                        {{if and .Rel (ne .Rel "unpacked")}}<span class="parents-rel" title="this sample references the file; it was retrieved from a locator the sample declares — not contained in it">{{.Rel}}</span>{{end}}
                     </a>
                     <span class="parents-meta">
                         <span class="parents-sha" title="{{.SHA256}}">{{.SHA256Short}}</span>
                         {{if .AnalyzedAgo}}<span class="parents-when" title="{{.AnalyzedAt}}">analyzed {{.AnalyzedAgo}}</span>{{end}}
                     </span>
                 </li>
-                {{end}}
+        {{end}}
+        {{if .Parents}}
+        <section class="parents-panel" aria-labelledby="parents-title">
+            <h2 class="parents-title" id="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</h2>
+            <ul class="parents-list">
+                {{range .Parents}}{{template "parentItem" .}}{{end}}
+            </ul>
+        </section>
+        {{end}}
+
+        {{if .Referrers}}
+        <section class="parents-panel" aria-labelledby="referrers-title">
+            <h2 class="parents-title" id="referrers-title">Referenced by {{len .Referrers}} sample{{if ne (len .Referrers) 1}}s{{end}}</h2>
+            <ul class="parents-list">
+                {{range .Referrers}}{{template "parentItem" .}}{{end}}
             </ul>
         </section>
         {{end}}

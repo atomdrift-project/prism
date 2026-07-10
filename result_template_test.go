@@ -77,6 +77,19 @@ func TestResultTemplateParses(t *testing.T) {
 			name: "deferred_archive", data: deferredArchiveData(),
 			want: []string{`id="tabbtn-content"`, "data-defer-members=", "Loading file contents", "Loading traits"},
 		},
+		// Backlink panels: a contained member renders under "Found in", a
+		// fetched payload under "Referenced by" with its edge-type chip —
+		// prism must never claim containment for content the parent merely
+		// references (it was retrieved from a URL the parent declares).
+		{
+			name: "parents_vs_referrers", data: parentsAndReferrersData(),
+			want: []string{
+				"Found in 1 archive", "inner.zip",
+				"Referenced by 1 sample", "dropper.elf",
+				`class="parents-rel"`, ">fetched</span>",
+				`#file=` + strings.Repeat("a", 64),
+			},
+		},
 		// "Also detected by" chips: open databases and blogs are named (a
 		// linked source renders an anchor, one without a URL a plain chip);
 		// vendor sources show only as the anonymous count chip.
@@ -112,6 +125,27 @@ func TestResultTemplateParses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// parentsAndReferrersData is a standalone child page with one containing
+// archive and one merely-referencing sample, exercising both backlink panels.
+func parentsAndReferrersData() resultData {
+	d := singleFileData()
+	child := d.SHA256
+	d.Parents = []ParentArchive{{
+		SHA256:      strings.Repeat("b", 64),
+		SHA256Short: "bbbbbbbbbbbb",
+		Filename:    "inner.zip",
+		ChildSHA:    child,
+	}}
+	d.Referrers = []ParentArchive{{
+		SHA256:      strings.Repeat("c", 64),
+		SHA256Short: "cccccccccccc",
+		Filename:    "dropper.elf",
+		ChildSHA:    child,
+		Rel:         "fetched",
+	}}
+	return d
 }
 
 // deferredArchiveData is a compacted-archive page before its members load: an

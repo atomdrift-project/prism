@@ -590,13 +590,30 @@ type FileFindingsDisplay struct {
 // powers the "found in" backlinks shown on standalone child pages so users
 // can navigate up to the archive context they came from.
 type ParentArchive struct {
-	SHA256         string
-	SHA256Short    string
-	Filename       string
-	Path           string // path of this child within the parent (from sample_locations)
+	SHA256      string
+	SHA256Short string
+	Filename    string
+	// ChildSHA is the child this backlink was looked up for, so the row's
+	// link can deep-link the archive view at that member (#file=<child>).
+	ChildSHA string
+	Path     string // path of this child within the parent (from sample_locations)
+	// Rel is the edge type from sample_locations: "" for a contained member,
+	// "fetched" for content the parent references and litmus retrieved (never
+	// actually inside it), "unpacked" for a transform product, "registry" for
+	// a provenance sidecar. Decides which backlinks panel the row renders in.
+	Rel            string
 	Classification string // "hostile" / "suspicious" / "benign" / ""
 	AnalyzedAt     string // human-readable UTC date
 	AnalyzedAgo    string // relative time
+}
+
+// containsChild reports whether this parent physically contains the child
+// (an extracted or unpacked member) as opposed to merely referencing it (a
+// fetched payload or registry lookup). Splits the backlinks into the
+// "Found in N archives" and "Referenced by N samples" panels — the former is
+// a containment claim and must never be made for fetched content.
+func (p ParentArchive) containsChild() bool {
+	return p.Rel == "" || p.Rel == "unpacked"
 }
 
 // cachedReport wraps hopper.Report in a struct with a Found flag so the
@@ -758,10 +775,15 @@ type resultData struct {
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
 	Provenance []ProvenanceGroup
-	// Parents lists archives that contain this file. Populated only on
-	// standalone child pages (non-archive views) so the user can navigate
-	// up to the archive context the file came from.
+	// Parents lists archives that contain this file (extracted or unpacked
+	// members). Populated only on standalone child pages (non-archive views)
+	// so the user can navigate up to the archive context the file came from.
 	Parents []ParentArchive
+	// Referrers lists samples that merely reference this file — its bytes
+	// were fetched from a URL/package the sample declares, or looked up as
+	// its registry record — and never contained it. Rendered as a separate
+	// "Referenced by" panel so prism never claims containment it can't show.
+	Referrers []ParentArchive
 	// ArchiveCategories is the aggregated trait categories across every
 	// file in an archive (deduped by trait ID). The archive Traits tab
 	// shows this summary; expanding a trait reveals its per-file
@@ -4089,10 +4111,18 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 		}
 		reportDur = time.Since(reportStart)
 		// Parent archives: only meaningful on a standalone child view, not
-		// when the user is already looking at the archive itself.
+		// when the user is already looking at the archive itself. Contained
+		// members and mere references render as separate panels.
 		if !data.IsArchive {
 			parentsStart := time.Now()
-			data.Parents = lookupParentArchives(ctx, sha, reqLogger)
+			backlinks := lookupParentArchives(ctx, sha, reqLogger)
+			for i := range backlinks {
+				if backlinks[i].containsChild() {
+					data.Parents = append(data.Parents, backlinks[i])
+				} else {
+					data.Referrers = append(data.Referrers, backlinks[i])
+				}
+			}
 			parentsDur = time.Since(parentsStart)
 		}
 	}
@@ -4405,7 +4435,9 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 			SHA256:      ref.SHA256,
 			SHA256Short: shortSHA(ref.SHA256),
 			Filename:    firstNonEmpty(ref.Filename, filepath.Base(ref.SamplePath)),
+			ChildSHA:    childSHA,
 			Path:        ref.Path,
+			Rel:         ref.Rel,
 		}
 		if len(ref.LitmusResult) > 0 {
 			var ml litmusMlResponse
