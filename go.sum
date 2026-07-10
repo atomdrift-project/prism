@@ -1,5 +1,7 @@
 codeberg.org/atomdrift/hopper v0.0.0-20260709084350-939c000e1330 h1:SsN5GwYVPyA8ZoeaRNftV4q01cNnXjNXXK7k21zcVe4=
 codeberg.org/atomdrift/hopper v0.0.0-20260709084350-939c000e1330/go.mod h1:ZDaQnYMgaI7ue4eCsJQYb7gqZabNcMpnmXHB5XMYmdY=
+codeberg.org/atomdrift/hopper v0.0.0-20260710064145-4d787625b1aa h1:XP6TwhAoZiVfiUnsPIQ1uBLXaXUtcSRpLJhgoAksO70=
+codeberg.org/atomdrift/hopper v0.0.0-20260710064145-4d787625b1aa/go.mod h1:ZDaQnYMgaI7ue4eCsJQYb7gqZabNcMpnmXHB5XMYmdY=
 codeberg.org/atomdrift/obs v0.0.0-20260703082727-3c749c4cdf21 h1:92VpnsEBRTKT8FAsdAJTN9cIarm7OkiMLaOhiKlL/bc=
 codeberg.org/atomdrift/obs v0.0.0-20260703082727-3c749c4cdf21/go.mod h1:N3CvSuq9LM9bAt7dwB6s6sQxnEJZdliK5+2eRCcwHCA=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=

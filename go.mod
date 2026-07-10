@@ -3,7 +3,7 @@ module codeberg.org/atomdrift/prism
 go 1.26
 
 require (
-	codeberg.org/atomdrift/hopper v0.0.0-20260709084350-939c000e1330
+	codeberg.org/atomdrift/hopper v0.0.0-20260710064145-4d787625b1aa
 	codeberg.org/atomdrift/obs v0.0.0-20260703082727-3c749c4cdf21
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/codeGROOVE-dev/fido v1.11.0
