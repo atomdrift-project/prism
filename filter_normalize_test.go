@@ -77,6 +77,73 @@ func TestNormalizeDomain(t *testing.T) {
 	}
 }
 
+// TestNormalizePURL covers the ?purl= canonicalization: the pkg: scheme is
+// optional (prepended), the scheme and type are case-folded, ecosystems that
+// require it lowercase the name, legacy types are remapped — so every spelling
+// of one coordinate resolves to the base (indexed purl_base) and version the
+// hopper filter matches. A string that isn't a real PURL drops to all-empty so
+// a dead filter can't fragment the cache.
+func TestNormalizePURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		in          string
+		wantCanon   string
+		wantBase    string
+		wantVersion string
+	}{
+		{"full purl", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
+		{"scheme optional", "npm/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
+		{"scheme and type case-folded", "PKG:NPM/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
+		{"versionless keeps every release", "pkg:npm/lodash", "pkg:npm/lodash", "pkg:npm/lodash", ""},
+		{"pypi name lowercased", "pkg:pypi/Django@4.2", "pkg:pypi/django@4.2", "pkg:pypi/django", "4.2"},
+		{"golang namespaced path", "pkg:golang/github.com/gorilla/mux@1.8.0", "pkg:golang/github.com/gorilla/mux@1.8.0", "pkg:golang/github.com/gorilla/mux", "1.8.0"},
+		{"legacy vscode type remapped", "pkg:vscode/ms-python/python@2024.1", "pkg:vscode-extension/ms-python/python@2024.1", "pkg:vscode-extension/ms-python/python", "2024.1"},
+		{"whitespace trimmed", "  pkg:npm/lodash@4.17.21  ", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
+		{"not a purl drops to empty", "lodash-4.17.21.tgz", "", "", ""},
+		{"scheme only drops to empty", "pkg:", "", "", ""},
+		{"empty", "", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canon, base, version := normalizePURL(tt.in)
+			if canon != tt.wantCanon || base != tt.wantBase || version != tt.wantVersion {
+				t.Errorf("normalizePURL(%q) = (%q, %q, %q), want (%q, %q, %q)",
+					tt.in, canon, base, version, tt.wantCanon, tt.wantBase, tt.wantVersion)
+			}
+		})
+	}
+}
+
+// TestPURLFromSearchQuery covers the no-JS / pasted-link sniffing that mirrors
+// upload.js: an explicit purl: token (scheme optional) or a bare pkg: coordinate
+// is a PURL; a filename or a multi-token box is not.
+func TestPURLFromSearchQuery(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+		ok   bool
+	}{
+		{"explicit token with scheme", "purl:pkg:npm/lodash", "pkg:npm/lodash", true},
+		{"explicit token without scheme", "purl:npm/lodash@1.2.3", "npm/lodash@1.2.3", true},
+		{"bare pkg scheme", "pkg:npm/lodash@1.2.3", "pkg:npm/lodash@1.2.3", true},
+		{"case-insensitive scheme", "PKG:npm/lodash", "PKG:npm/lodash", true},
+		{"filename is not a bare purl", "lodash-4.17.21.tgz", "", false},
+		{"sha-looking is not a purl", "e3b0c44298fc1c14", "", false},
+		{"multi-token is not a bare purl", "pkg:npm/lodash extra", "", false},
+		{"empty token value", "purl:", "", false},
+		{"empty", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := purlFromSearchQuery(tt.in)
+			if got != tt.want || ok != tt.ok {
+				t.Errorf("purlFromSearchQuery(%q) = (%q, %v), want (%q, %v)", tt.in, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 // TestFormulaFromQueryUnifiesAliases locks in that ?m= and ?formula= produce
 // the same subscripted value, so the same formula via either alias (or either
 // casing of the digits) collapses to one stored value and one cache key.
@@ -107,12 +174,15 @@ func TestFormulaFromQueryUnifiesAliases(t *testing.T) {
 // the keys match.
 func TestFeedCacheKeyCrossChannelConsistency(t *testing.T) {
 	argsFor := func(eco string, q url.Values) feedQueryArgs {
+		_, purlBase, purlVersion := normalizePURL(q.Get("purl"))
 		return feedQueryArgs{
 			ecosystem:   strings.ToLower(strings.Trim(eco, "/")),
 			domain:      normalizeDomain(q.Get("domain")),
 			criticality: normalizeCriticality(q.Get("criticality")),
 			formula:     formulaFromQuery(q),
 			search:      normalizeSearch(q.Get("q")),
+			purlBase:    purlBase,
+			purlVersion: purlVersion,
 		}
 	}
 
@@ -122,14 +192,17 @@ func TestFeedCacheKeyCrossChannelConsistency(t *testing.T) {
 		"criticality": {"hostile"},
 		"m":           {"CHO2"},
 		"q":           {"left-pad"},
+		"purl":        {"pkg:npm/lodash@4.17.21"},
 	})
 	// Channel B: same intent, hand-typed URL with messy casing, spacing,
-	// the ?formula= alias, and uppercase ecosystem path.
+	// the ?formula= alias, uppercase ecosystem path, and a purl pasted
+	// without the pkg: scheme (which normalizePURL prepends).
 	b := argsFor("NPM", url.Values{
 		"domain":      {"GitHub.com"},
 		"criticality": {"  Hostile "},
 		"formula":     {"CHO2"},
 		"q":           {"  Left-Pad  "},
+		"purl":        {"npm/lodash@4.17.21"},
 	})
 
 	if a != b {

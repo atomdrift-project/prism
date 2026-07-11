@@ -827,7 +827,7 @@
                     </svg>
                     <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
                 </h1>
-                <p class="lede">{{if eq .SelectedCrit "hostile"}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
+                <p class="lede">{{if or (eq .SelectedCrit "hostile") (eq .SelectedCrit ">=1")}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
             </div>
         </section>
 
@@ -888,9 +888,9 @@
             <form method="GET" action="/" class="search-form" id="search-form" role="search">
                 <input type="search" name="q" id="search-input"
                     value="{{.SearchQuery}}"
-                    placeholder="sha256, filename, C₆H₁₂O₆, or crit:hostile ecosystem:npm"
+                    placeholder="sha256, filename, purl, C₆H₁₂O₆, or crit:hostile ecosystem:npm"
                     autocomplete="off" spellcheck="false"
-                    aria-label="Search by SHA, filename, malecule, or filter expression" />
+                    aria-label="Search by SHA, filename, package, purl, malecule, or filter expression" />
                 <a class="search-help" href="/help/query" title="Query syntax">? syntax</a>
                 <a class="search-help" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
             </form>

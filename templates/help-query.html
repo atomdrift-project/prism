@@ -199,8 +199,8 @@
                     <tr>
                         <td class="token"><code class="tok">crit:hostile</code> · <code class="tok">crit:suspicious</code> · <code class="tok">crit:benign</code> · <code class="tok">crit:any</code></td>
                         <td class="desc">
-                            Filter by litmus criticality band. The feed defaults to <code>crit:hostile</code>; use <code>crit:any</code> for the unfiltered view.
-                            <span class="alias">Also accepts numeric comparators: <code>crit:&gt;2</code>, <code>crit:&gt;=2</code>, <code>crit:=3</code> (1 = benign, 2 = suspicious, 3 = hostile).</span>
+                            Filter by litmus criticality band. The feed defaults to <code>crit:&gt;=1</code> (suspicious + hostile); use <code>crit:any</code> for the unfiltered view.
+                            <span class="alias">Also accepts numeric comparators over the class number (0 = benign, 1 = suspicious, 2 = hostile): <code>crit:&gt;=1</code>, <code>crit:=2</code>, <code>crit:&lt;1</code>.</span>
                         </td>
                     </tr>
                     <tr>
@@ -219,6 +219,13 @@
                         <td class="desc">
                             Find samples sharing the same cleave malecule, e.g. <code>m:C6H12O6</code>.
                             <span class="alias">Aliases: <code>malecule:</code>, <code>molecule:</code>, <code>formula:</code>. A bare formula-looking token (mixed capital letters and digits, no spaces) is treated as <code>m:</code>.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">purl:&lt;coord&gt;</code></td>
+                        <td class="desc">
+                            Filter to one package identity by Package URL, e.g. <code>purl:pkg:npm/lodash</code> (every version) or <code>purl:pkg:npm/lodash@4.17.21</code> (one release).
+                            <span class="alias">The <code>pkg:</code> scheme is optional — <code>purl:npm/lodash</code> works and is normalized. A bare <code>pkg:…</code> paste is detected without the prefix.</span>
                         </td>
                     </tr>
                     <tr>
@@ -246,6 +253,10 @@
                 <div class="example">
                     <code>crit:&gt;2 domain:github.com</code>
                     <span class="what">Hostile samples from github.com</span>
+                </div>
+                <div class="example">
+                    <code>purl:pkg:npm/lodash@4.17.21</code>
+                    <span class="what">One exact package release</span>
                 </div>
                 <div class="example">
                     <code>requests-</code>

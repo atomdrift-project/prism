@@ -187,7 +187,8 @@ func TestUploadTemplateEmptyFeed(t *testing.T) {
 }
 
 // TestRenderFeedCriticalityDefault covers the new default: a bare frontpage
-// URL is the hostile view, and criticality=any is the explicit opt-out.
+// URL is the suspicious+hostile view (>=1), and criticality=any is the
+// explicit opt-out.
 func TestRenderFeedCriticalityDefault(t *testing.T) {
 	if uploadTemplate == nil {
 		uploadTemplate = uploadTemplateForTest(t)
@@ -196,7 +197,7 @@ func TestRenderFeedCriticalityDefault(t *testing.T) {
 		url  string
 		want string
 	}{
-		{"/", `value="hostile" selected`},
+		{"/", `value="&gt;=1" selected`}, // default: suspicious + hostile
 		{"/?criticality=any", `value="any" selected`},
 		{"/?criticality=benign", `value="benign" selected`},
 		{"/?criticality=bogus", `value="any" selected`}, // junk degrades to the unfiltered view
@@ -208,6 +209,35 @@ func TestRenderFeedCriticalityDefault(t *testing.T) {
 		if !strings.Contains(w.Body.String(), tc.want) {
 			t.Errorf("GET %s: missing %q in rendered dropdown", tc.url, tc.want)
 		}
+	}
+}
+
+// TestRenderFeedPURLRoundTrip covers the purl: filter surviving a round-trip
+// through renderFeed into the search box: ?purl= is canonicalized and echoed,
+// the pkg: scheme is added when missing, and a no-JS ?q= carrying a bare purl is
+// promoted to the same filter (so it is not also run as a filename search).
+func TestRenderFeedPURLRoundTrip(t *testing.T) {
+	if uploadTemplate == nil {
+		uploadTemplate = uploadTemplateForTest(t)
+	}
+	cases := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"explicit purl param", "/?purl=pkg:npm/lodash@4.17.21", `value="purl:pkg:npm/lodash@4.17.21"`},
+		{"scheme prepended", "/?purl=npm/lodash", `value="purl:pkg:npm/lodash"`},
+		{"no-js bare purl in q is promoted", "/?q=pkg:npm/lodash", `value="purl:pkg:npm/lodash"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tc.url, http.NoBody)
+			w := httptest.NewRecorder()
+			renderFeed(w, r, "")
+			if body := w.Body.String(); !strings.Contains(body, tc.want) {
+				t.Errorf("GET %s: missing %q in rendered search box", tc.url, tc.want)
+			}
+		})
 	}
 }
 

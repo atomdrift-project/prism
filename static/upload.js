@@ -70,7 +70,9 @@ function setAnalyzingStatus(fileName) {
 //   ecosystem:<v>  → path /<v>/ (alias eco:)
 //   domain:<v>     → ?domain=<v>
 //   m:<formula>    → ?m=<formula>       (alias malecule:, formula:)
+//   purl:<coord>   → ?purl=<coord>      (package identity; pkg: added by server)
 //   <64-hex>       → sha256:<hex> (paste a hash without prefix)
+//   <pkg:type/…>   → ?purl=<coord> (paste a PURL without the purl: prefix)
 //   <bare token>   → ?q=<term> (filename substring or exact SHA-256)
 //
 // Mirror of composeSearchQuery() in main.go — keep the prefixes in sync.
@@ -104,7 +106,7 @@ function normalizeCrit(value) {
 }
 
 function parseQuery(text) {
-  const out = { crit: "", ecosystem: "", domain: "", m: "", q: "", sha: "" };
+  const out = { crit: "", ecosystem: "", domain: "", m: "", q: "", sha: "", purl: "" };
   if (!text) return out;
   const tokens = text.trim().split(/\s+/);
   const free = [];
@@ -138,6 +140,16 @@ function parseQuery(text) {
         case "formula":
           out.m = val;
           continue;
+        case "purl":
+          // The value keeps any pkg: scheme (sliced after the first colon
+          // only); the server prepends it when absent and canonicalizes.
+          out.purl = val;
+          continue;
+        case "pkg":
+          // A bare PURL pasted without the purl: prefix: the pkg: scheme is
+          // itself the token key, so keep the whole token as the coordinate.
+          out.purl = tok;
+          continue;
         case "q":
         case "filename":
         case "file":
@@ -167,6 +179,7 @@ function composeQueryString(parsed) {
   const parts = [];
   if (parsed.sha) return `sha256:${parsed.sha}`;
   if (parsed.crit) parts.push(`crit:${parsed.crit}`);
+  if (parsed.purl) parts.push(`purl:${parsed.purl}`);
   if (parsed.ecosystem) parts.push(`ecosystem:${parsed.ecosystem}`);
   if (parsed.domain) parts.push(`domain:${parsed.domain}`);
   if (parsed.m) parts.push(`m:${parsed.m}`);
@@ -178,6 +191,7 @@ function buildURL(parsed) {
   const eco = parsed.ecosystem ? `/${encodeURIComponent(parsed.ecosystem)}/` : "/";
   const url = new URL(window.location.origin + eco);
   if (parsed.crit) url.searchParams.set("criticality", parsed.crit);
+  if (parsed.purl) url.searchParams.set("purl", parsed.purl);
   if (parsed.domain) url.searchParams.set("domain", parsed.domain);
   if (parsed.m) url.searchParams.set("m", parsed.m);
   if (parsed.q) url.searchParams.set("q", parsed.q);

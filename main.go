@@ -41,6 +41,7 @@ import (
 	"unicode/utf8"
 
 	"codeberg.org/atomdrift/hopper"
+	"codeberg.org/atomdrift/hopper/pkgparse"
 	"codeberg.org/atomdrift/obs"
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
@@ -987,9 +988,12 @@ type feedPageData struct {
 	SelectedFormula string
 	SelectedCrit    string
 	SelectedQ       string
-	SearchQuery     string
-	CSRFToken       string
-	SelectedEco     string
+	// SelectedPURL is the canonical full PURL (pkg:type/name@version) behind an
+	// active purl: filter, echoed back into the search box; empty when unset.
+	SelectedPURL string
+	SearchQuery  string
+	CSRFToken    string
+	SelectedEco  string
 	// PrevURL/NextURL are empty when there is no adjacent page.
 	PrevURL string
 	NextURL string
@@ -2250,11 +2254,21 @@ type feedQueryArgs struct {
 	criticality string
 	formula     string
 	// search is the free-text filter behind ?q=: case-insensitive filename
-	// substring OR exact sha256, applied as a hopper SQL predicate (not an
-	// in-memory pass) so it spans the whole index rather than the cached page.
-	// (A full sha pasted into the box is caught earlier and redirected to the
-	// file page; this equality is the no-JS / belt-and-suspenders path.)
+	// substring OR exact sha256 OR exact package name, applied as a hopper SQL
+	// predicate (not an in-memory pass) so it spans the whole index rather than
+	// the cached page. The exact package-name disjunct means a bare name typed
+	// into the box (e.g. "xz-utils") resolves to the package even when the
+	// filename embeds no such substring. (A full sha pasted into the box is
+	// caught earlier and redirected to the file page; this equality is the
+	// no-JS / belt-and-suspenders path.)
 	search string
+	// purlBase / purlVersion filter the feed to one package identity: an exact
+	// match on the indexed purl_base column (version-less canonical PURL),
+	// optionally pinned to one release. Both are pre-canonicalized by
+	// normalizePURL so the same coordinate via ?purl=, the search box, or a
+	// pasted URL resolves to one cache key and one indexed query.
+	purlBase    string
+	purlVersion string
 	// feedsOnly toggles the "malware feeds" view: only label='bad'
 	// samples (curated threat-intel / open-source malware sources) are
 	// returned, and the table picks up a Feed column.
@@ -2270,9 +2284,9 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v8:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v9:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
-		":q=" + a.search
+		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion
 }
 
 // loadFeedSnapshot fetches a feed page, caching every query for feedCacheTTL.
@@ -2340,6 +2354,12 @@ func feedDiagParams(a feedQueryArgs) string {
 	}
 	if a.formula != "" {
 		parts = append(parts, "formula="+diagSafe(a.formula))
+	}
+	if a.purlBase != "" {
+		parts = append(parts, "purl="+diagSafe(a.purlBase))
+		if a.purlVersion != "" {
+			parts = append(parts, "purlver="+diagSafe(a.purlVersion))
+		}
 	}
 	if a.feedsOnly {
 		parts = append(parts, "feeds=1")
@@ -2450,6 +2470,8 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		OrderBy:       "created_at",
 		Formula:       args.formula,
 		Search:        args.search,
+		PURLBase:      args.purlBase,
+		PURLVersion:   args.purlVersion,
 		TopLevelOnly:  true,
 		Limit:         feedLimit,
 		CriticalLevel: CriticalLevel,
@@ -2761,8 +2783,8 @@ func (p *feedPopularity) top(n int) []feedQueryArgs {
 		entries = entries[:n]
 	}
 	out := make([]feedQueryArgs, len(entries))
-	for i, e := range entries {
-		out[i] = e.args
+	for i := range entries {
+		out[i] = entries[i].args
 	}
 	return out
 }
@@ -3563,10 +3585,13 @@ func ecosystemColor(eco string) string {
 // individual URL filters so the box reflects the page's current state on
 // load (and after non-JS form submissions). Mirror of parseQuery() in
 // upload.js — keep the key order and prefixes in sync.
-func composeSearchQuery(crit, eco, domain, formula, q string) string {
+func composeSearchQuery(crit, purl, eco, domain, formula, q string) string {
 	var parts []string
 	if crit != "" {
 		parts = append(parts, "crit:"+crit)
+	}
+	if purl != "" {
+		parts = append(parts, "purl:"+purl)
 	}
 	if eco != "" {
 		parts = append(parts, "ecosystem:"+eco)
@@ -3596,6 +3621,79 @@ func shaFromSearchQuery(q string) (string, bool) {
 		return q, true
 	}
 	return "", false
+}
+
+// purlFromSearchQuery extracts a package coordinate from a search-box value that
+// is purely a PURL — either the explicit `purl:<coord>` token or a bare
+// `pkg:<type>/...` string. It is the no-JS / pasted-link mirror of upload.js's
+// tokenizer: with JS the coordinate already arrives as the discrete ?purl=
+// param. Bare detection is anchored on the pkg: scheme so a filename never gets
+// mistaken for a PURL, and a value carrying whitespace is more than one token
+// (not a bare PURL), so it is left to the free-text path. The returned string is
+// not yet canonical — normalizePURL does that.
+func purlFromSearchQuery(q string) (string, bool) {
+	q = strings.TrimSpace(q)
+	if q == "" || strings.ContainsAny(q, " \t\r\n") {
+		return "", false
+	}
+	// Explicit token: `purl:<coord>`, with or without the pkg: scheme (which
+	// normalizePURL prepends). Case-insensitive key, matching upload.js.
+	if len(q) >= 5 && strings.EqualFold(q[:5], "purl:") {
+		if rest := strings.TrimSpace(q[5:]); rest != "" {
+			return rest, true
+		}
+		return "", false
+	}
+	// Bare PURL: the pkg: scheme is the unambiguous marker.
+	if len(q) >= 4 && strings.EqualFold(q[:4], "pkg:") {
+		return q, true
+	}
+	return "", false
+}
+
+// normalizePURL canonicalizes a user-entered package coordinate into the exact
+// values the hopper feed filter matches: the version-less canonical PURL (the
+// indexed samples.purl_base) and, when the coordinate carries one, the release
+// version (samples.version). A missing `pkg:` scheme is prepended so both
+// "npm/lodash@1.2.3" (from the purl: token) and "pkg:npm/lodash@1.2.3" (a bare
+// paste) fold to one identity, and pkgparse.CanonicalizePURL applies the same
+// type/case folding forager used when it wrote purl_base — so old and new
+// spellings compare equal. canonical is the full round-trip form for the search
+// box; a coordinate that isn't a real PURL yields all-empty (no filter), the
+// same drop-to-nothing normalizeDomain uses so a dead filter can't fragment the
+// cache.
+func normalizePURL(raw string) (canonical, base, version string) {
+	s := sanitizeFilter(raw)
+	if s == "" {
+		return "", "", ""
+	}
+	if len(s) < 4 || !strings.EqualFold(s[:4], "pkg:") {
+		s = "pkg:" + s
+	}
+	canonical = pkgparse.CanonicalizePURL(s)
+	base = pkgparse.VersionlessPURL(canonical)
+	// A well-formed PURL is pkg:<type>/<...>/<name>; reject anything that
+	// canonicalization couldn't shape into that (it returns degenerate input
+	// unchanged) rather than filtering on a value that can never match.
+	rest, ok := strings.CutPrefix(base, "pkg:")
+	if !ok {
+		return "", "", ""
+	}
+	typ, path, ok := strings.Cut(rest, "/")
+	if !ok || typ == "" {
+		return "", "", ""
+	}
+	if name, _, _ := strings.Cut(path, "?"); name == "" {
+		return "", "", ""
+	}
+	// The version is the @-tail before any qualifiers (mirrors VersionlessPURL's
+	// split); npm-scoped '@' in names is percent-encoded in canonical form, so a
+	// literal '@' here is always the version separator.
+	body, _, _ := strings.Cut(canonical, "?")
+	if i := strings.LastIndexByte(body, '@'); i > 0 {
+		version = body[i+1:]
+	}
+	return canonical, base, version
 }
 
 // maxFilterLen bounds the free-text feed filters (search, domain, formula).
@@ -3634,12 +3732,15 @@ func sanitizeFilter(s string) string {
 // collapse internal whitespace runs to a single space.
 //
 // Terms shorter than three characters are dropped to "". The hopper Search
-// predicate is `filename ILIKE '%term%'`, served by pg_trgm's GIN index whose
-// operator class only indexes trigrams — a one- or two-character substring
-// can't use it and forces a full scan of the feed working set, while every
-// distinct short term is also its own cache-miss key. A 1–2 char term is too
-// coarse to filter usefully, so it falls back to the unfiltered feed. A pasted
-// SHA is handled earlier by shaFromSearchQuery, so no exact lookup is lost.
+// predicate's filename disjunct is `filename ILIKE '%term%'`, served by
+// pg_trgm's GIN index whose operator class only indexes trigrams — a one- or
+// two-character substring can't use it and forces a full scan of the feed
+// working set, while every distinct short term is also its own cache-miss key.
+// A 1–2 char term is too coarse to filter usefully, so it falls back to the
+// unfiltered feed. (The exact package-name and sha256 disjuncts are indexed
+// equalities that could serve a short term, but no real package name or hash is
+// that short.) A pasted SHA is handled earlier by shaFromSearchQuery, so no
+// exact lookup is lost.
 func normalizeSearch(s string) string {
 	q := strings.ToLower(strings.Join(strings.Fields(sanitizeFilter(s)), " "))
 	if utf8.RuneCountInString(q) < 3 {
@@ -3844,16 +3945,27 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The feed's default view is the malware feed: with no explicit
-	// ?criticality= key the page shows hostile verdicts only. The unfiltered
-	// view stays reachable — the dropdown's Any option submits
-	// criticality=any, which normalizes to "". The search box mirrors only
-	// explicit choices (critToken), so the default view keeps an empty box
-	// and round-trips back to itself.
-	crit, critToken := "hostile", ""
+	// ?criticality= key the page shows suspicious and hostile verdicts
+	// (class >= 1). The unfiltered view stays reachable — the dropdown's Any
+	// option submits criticality=any, which normalizes to "". The search box
+	// mirrors only explicit choices (critToken), so the default view keeps an
+	// empty box and round-trips back to itself.
+	crit, critToken := ">=1", ""
 	if r.URL.Query().Has("criticality") {
 		crit = normalizeCriticality(r.URL.Query().Get("criticality"))
 		critToken = firstNonEmpty(crit, "any")
 	}
+	// PURL filter: JS sends the coordinate as ?purl=; a no-JS client or pasted
+	// link carries it in the free-text box, so fall back to sniffing ?q= for a
+	// bare pkg: / purl: token. A coordinate consumed from ?q= must not also run
+	// as a filename search, so its raw value is dropped before normalizeSearch.
+	rawPURL, searchRaw := r.URL.Query().Get("purl"), r.URL.Query().Get("q")
+	if rawPURL == "" {
+		if p, ok := purlFromSearchQuery(searchRaw); ok {
+			rawPURL, searchRaw = p, ""
+		}
+	}
+	purlCanonical, purlBase, purlVersion := normalizePURL(rawPURL)
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
 		UploadEnabled:   uploadEnabled,
@@ -3866,12 +3978,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		SelectedDomain:  normalizeDomain(r.URL.Query().Get("domain")),
 		SelectedCrit:    crit,
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
-		SelectedQ:       normalizeSearch(r.URL.Query().Get("q")),
+		SelectedQ:       normalizeSearch(searchRaw),
+		SelectedPURL:    purlCanonical,
 		Title:           "Fallout",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
-		critToken, data.SelectedEco, data.SelectedDomain,
+		critToken, data.SelectedPURL, data.SelectedEco, data.SelectedDomain,
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
@@ -3888,6 +4001,8 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 				criticality: data.SelectedCrit,
 				formula:     data.SelectedFormula,
 				search:      data.SelectedQ,
+				purlBase:    purlBase,
+				purlVersion: purlVersion,
 				feedsOnly:   data.FeedsOnly,
 			},
 			logger,
@@ -3913,6 +4028,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		// than rendering twice.
 		if data.SelectedEco == "" && data.SelectedDomain == "" &&
 			data.SelectedFormula == "" && data.SelectedQ == "" &&
+			data.SelectedPURL == "" &&
 			!data.FeedsOnly && r.URL.Query().Get("page") == "" {
 			if hero := loadFeedHero(r.Context(), data.SelectedCrit, data.Rows, logger); hero != nil {
 				data.Hero = hero
