@@ -761,6 +761,16 @@
             color: var(--muted);
             text-align: center;
         }
+        .feed-degraded {
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border: 1px solid var(--warn, #b8860b);
+            border-radius: 6px;
+            background: color-mix(in srgb, var(--warn, #b8860b) 12%, transparent);
+            color: var(--muted);
+            font-size: 0.9em;
+            text-align: center;
+        }
         footer {
             display: flex;
             justify-content: center;
@@ -936,6 +946,9 @@
 
         <section class="table-wrap" aria-label="Recently scanned records">
             {{if .HasHopper}}
+            {{if .FeedDegraded}}
+            <div class="feed-degraded" role="status">The live feed is temporarily unavailable{{if .Rows}}; showing the most recent cached results{{end}}.</div>
+            {{end}}
             <div class="ledger" role="list">
                 {{range .Rows}}
                 <article class="row" role="listitem">
@@ -972,7 +985,7 @@
                     </div>
                 </article>
                 {{else}}
-                <div class="empty">No matching records.</div>
+                {{if .FeedDegraded}}<div class="empty">Recent records will return once the feed reconnects.</div>{{else}}<div class="empty">No matching records.</div>{{end}}
                 {{end}}
             </div>
             {{if .Pages}}

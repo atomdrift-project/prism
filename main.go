@@ -81,19 +81,26 @@ func shortBuildCommit() string {
 }
 
 var (
-	uploadTemplate     *template.Template
-	resultTemplate     *template.Template
-	errorTemplate      *template.Template
-	formatsTemplate    *template.Template
-	poweredByTemplate  *template.Template
-	helpQueryTemplate  *template.Template
-	pendingTemplate    *template.Template
-	hopperAPIAddr      string       // Address of hopper API server (e.g., "hopper-api:8081")
-	hopperClient       *http.Client // HTTP client for hopper API server
-	litmusAddr         string       // Address of the dedicated litmus analysis server; empty disables it
-	litmusClient       *http.Client // HTTP client for the litmus analysis server
-	cache              *fido.TieredCache[string, storedResult]
-	feedCache          *fido.TieredCache[string, cachedFeedSnapshot]
+	uploadTemplate    *template.Template
+	resultTemplate    *template.Template
+	errorTemplate     *template.Template
+	formatsTemplate   *template.Template
+	poweredByTemplate *template.Template
+	helpQueryTemplate *template.Template
+	pendingTemplate   *template.Template
+	hopperAPIAddr     string       // Address of hopper API server (e.g., "hopper-api:8081")
+	hopperClient      *http.Client // HTTP client for hopper API server
+	litmusAddr        string       // Address of the dedicated litmus analysis server; empty disables it
+	litmusClient      *http.Client // HTTP client for the litmus analysis server
+	cache             *fido.TieredCache[string, storedResult]
+	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
+	// feedStaleCache holds the last-known-good snapshot per feed key with a long
+	// TTL (feedStaleTTL), separate from feedCache's 30-min working entries. It is
+	// the graceful-degradation fallback: when a live feed query fails (hopper-db
+	// timeout, circuit breaker open, replica blip) loadFeedSnapshot serves the
+	// stale snapshot from here instead of returning a 500. Memory-only and
+	// bounded by the same s3fifo tier as feedCache.
+	feedStaleCache     *fido.TieredCache[string, cachedFeedSnapshot]
 	feedDropdownCache  *fido.TieredCache[string, feedDropdowns]
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
@@ -132,6 +139,12 @@ const (
 	// expire. The high-traffic default and criticality views are kept fresher
 	// than this by refreshFeedCacheLoop.
 	feedCacheTTL = 30 * time.Minute
+	// feedStaleTTL is how long a last-known-good snapshot stays servable as the
+	// degraded-mode fallback (feedStaleCache). It is much longer than
+	// feedCacheTTL on purpose: the working entry expires after 30 minutes, but
+	// the fallback must outlive a multi-hour hopper outage so the index page can
+	// keep serving slightly-stale rows the whole time instead of a 500.
+	feedStaleTTL = 24 * time.Hour
 	// feedDropdownTTL bounds how long the cached ecosystem/domain filter
 	// options are reused before a rebuild re-queries them. They are identical
 	// for every feed filter and change slowly (a new ecosystem or domain shows
@@ -1010,6 +1023,11 @@ type feedPageData struct {
 	Page      int
 	Refresh   bool
 	HasHopper bool
+	// FeedDegraded is set when hopper is connected but the feed query failed
+	// (timeout, circuit breaker open, replica blip). The page still renders —
+	// the feed section just shows a "temporarily unavailable" notice instead
+	// of a 500. HasHopper stays true so the filter bar keeps working.
+	FeedDegraded bool
 	// UploadEnabled mirrors the package-level toggle so the template can
 	// pick the real upload form vs. the disabled placeholder.
 	UploadEnabled bool
@@ -1706,6 +1724,10 @@ func main() {
 		// archive pages instant.
 		membersCache = openLocalFSCache[cachedMembers]("prism-members", cacheDir, "members cache")
 	}
+	// feedStaleCache is always memory-only (like feedCache) — even under
+	// --no-cache, the in-memory tier is what backs the degraded-mode fallback,
+	// and it holds only last-known-good feed snapshots that are cheap to rebuild.
+	feedStaleCache = openNullCache[cachedFeedSnapshot]("feed stale cache")
 
 	// Parse templates. isPublic is available in all templates so base.html
 	// can switch branding and banners without per-handler plumbing.
@@ -1834,6 +1856,11 @@ func main() {
 		if feedCache != nil {
 			if err := feedCache.Close(); err != nil {
 				logger.Error("failed to close fido feed cache", "error", err)
+			}
+		}
+		if feedStaleCache != nil {
+			if err := feedStaleCache.Close(); err != nil {
+				logger.Error("failed to close fido feed stale cache", "error", err)
 			}
 		}
 		if reportCache != nil {
@@ -2332,6 +2359,22 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 		}
 	}
 	if err != nil {
+		// Live query failed (hopper-db timeout, circuit breaker open, replica
+		// blip). Fall back to the last-known-good snapshot so the feed degrades
+		// to slightly-stale rows instead of a 500. diag.Source="stale" tells the
+		// caller to flag the view as degraded in the UI.
+		if feedStaleCache != nil {
+			if stale, found, gerr := feedStaleCache.Get(ctx, feedCacheKey(a)); gerr == nil && found {
+				diag.Source = "stale"
+				diag.Duration = time.Since(start).Round(time.Microsecond).String()
+				diag.Age = time.Since(stale.GeneratedAt).Round(time.Second).String()
+				diag.Rows = len(stale.Rows)
+				diag.Bytes = stale.Bytes
+				reqLogger.Warn("serving stale feed snapshot after live query failure",
+					"error", err, "age", diag.Age, "rows", diag.Rows)
+				return stale, diag, nil
+			}
+		}
 		return cachedFeedSnapshot{}, diag, err
 	}
 	diag.Duration = time.Since(start).Round(time.Microsecond).String()
@@ -2397,6 +2440,15 @@ func buildFeedSnapshot(ctx context.Context, a feedQueryArgs) (cachedFeedSnapshot
 	}
 	if encoded, err := json.Marshal(snap); err == nil {
 		snap.Bytes = len(encoded)
+	}
+	// Remember every fresh snapshot as last-known-good so loadFeedSnapshot can
+	// fall back to it when a later live query fails. Written under a detached
+	// context — recording the fallback must not be cancelled with the request
+	// that happened to trigger the build.
+	if feedStaleCache != nil {
+		if err := feedStaleCache.SetTTL(context.WithoutCancel(ctx), feedCacheKey(a), snap, feedStaleTTL); err != nil {
+			logger.Debug("feed stale-cache store failed", "key", feedCacheKey(a), "error", err)
+		}
 	}
 	return snap, nil
 }
@@ -4009,35 +4061,40 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			isHardRefresh(r),
 		)
 		if err != nil {
+			// The live query failed and no last-known-good snapshot was
+			// available to fall back on. This must not take down the whole
+			// index page — the upload form, filters, and footer still work
+			// without rows. Degrade gracefully: flag the feed section and fall
+			// through to render the page instead of serving a 500.
 			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
-			renderError(w, r, http.StatusInternalServerError, errorData{
-				Icon:    "⚠",
-				Title:   "Feed unavailable",
-				Message: "The recent analysis feed could not be loaded.",
-			})
-			return
-		}
-		diags = append(diags, diag)
-		data.Rows = feedRowsFromSnapshot(snapshot)
-		data.Domains = snapshot.Domains
-		data.Ecosystems = snapshot.Ecosystems
-		// The Hot Particle fronts only the plain frontpage views (any
-		// criticality, first page): filtered, searched, and ecosystem
-		// views keep the reader's query as the star. When the hero also
-		// appears in the current row set it moves up into the card rather
-		// than rendering twice.
-		if data.SelectedEco == "" && data.SelectedDomain == "" &&
-			data.SelectedFormula == "" && data.SelectedQ == "" &&
-			data.SelectedPURL == "" &&
-			!data.FeedsOnly && r.URL.Query().Get("page") == "" {
-			if hero := loadFeedHero(r.Context(), data.SelectedCrit, data.Rows, logger); hero != nil {
-				data.Hero = hero
-				data.Rows = slices.DeleteFunc(data.Rows, func(row feedRow) bool {
-					return row.SHA256 == hero.SHA256
-				})
+			data.FeedDegraded = true
+		} else {
+			diags = append(diags, diag)
+			// loadFeedSnapshot serves a stale last-known-good snapshot when the
+			// live query fails; diag.Source=="stale" marks that so the template
+			// can flag the rows as slightly out of date.
+			data.FeedDegraded = diag.Source == "stale"
+			data.Rows = feedRowsFromSnapshot(snapshot)
+			data.Domains = snapshot.Domains
+			data.Ecosystems = snapshot.Ecosystems
+			// The Hot Particle fronts only the plain frontpage views (any
+			// criticality, first page): filtered, searched, and ecosystem
+			// views keep the reader's query as the star. When the hero also
+			// appears in the current row set it moves up into the card rather
+			// than rendering twice.
+			if data.SelectedEco == "" && data.SelectedDomain == "" &&
+				data.SelectedFormula == "" && data.SelectedQ == "" &&
+				data.SelectedPURL == "" &&
+				!data.FeedsOnly && r.URL.Query().Get("page") == "" {
+				if hero := loadFeedHero(r.Context(), data.SelectedCrit, data.Rows, logger); hero != nil {
+					data.Hero = hero
+					data.Rows = slices.DeleteFunc(data.Rows, func(row feedRow) bool {
+						return row.SHA256 == hero.SHA256
+					})
+				}
 			}
+			paginateFeed(&data, r)
 		}
-		paginateFeed(&data, r)
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
