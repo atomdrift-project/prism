@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
@@ -127,11 +128,11 @@ func isBinaryType(fileType string) bool {
 	return false
 }
 
-// groupCtxWindows splits a file's `ctx` into render groups: contiguous source
-// lines (matching line numbers) merge into one group; binary file types and
-// minified text slices (no Addr) each stand alone. Entries with no decoded
-// bytes (legacy windows) are skipped. Each returned slice is a sub-slice of
-// file.Ctx in file order.
+// groupCtxWindows splits a file's `ctx` into render groups. Only v7 single-line
+// source entries merge, into a contiguous run by line number; binary units and
+// v8 byte-addressed text chunks (which already span their own lines) each stand
+// alone. Entries with no decoded bytes (legacy windows) are skipped. Each
+// returned slice is a sub-slice of file.Ctx in file order.
 func groupCtxWindows(ctx []contextWindow, fileType string) [][]contextWindow {
 	var groups [][]contextWindow
 	for i := 0; i < len(ctx); {
@@ -139,14 +140,14 @@ func groupCtxWindows(ctx []contextWindow, fileType string) [][]contextWindow {
 			i++
 			continue
 		}
-		if isBinaryType(fileType) || ctx[i].Addr == nil {
+		if isBinaryType(fileType) || !ctx[i].isSourceLine() {
 			groups = append(groups, ctx[i:i+1])
 			i++
 			continue
 		}
 		j := i + 1
-		for j < len(ctx) && ctx[j].Data != nil && !isBinaryType(fileType) &&
-			ctx[j].Addr != nil && ctx[j].Offset == ctx[j-1].Offset+1 {
+		for j < len(ctx) && ctx[j].Data != nil && ctx[j].isSourceLine() &&
+			ctx[j].Offset == ctx[j-1].Offset+1 {
 			j++
 		}
 		groups = append(groups, ctx[i:j])
@@ -168,7 +169,7 @@ func buildContextBlocks(file *cleaveFile, filterID string) []contextBlock {
 	findingsByID := nativeFindings(file)
 	var blocks []contextBlock
 	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
-		if block, ok := renderWindow(g, filterID, filename, file.FileType, findingsByID, nil); ok {
+		if block, ok := renderWindow(g, filterID, filename, file.FileType, file.Size, findingsByID, nil); ok {
 			blocks = append(blocks, block)
 		}
 	}
@@ -214,7 +215,7 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 		if len(notes) == 0 {
 			continue
 		}
-		block, ok := renderWindow(g, "", filename, file.FileType, findingsByID, descByID)
+		block, ok := renderWindow(g, "", filename, file.FileType, file.Size, findingsByID, descByID)
 		if !ok {
 			continue
 		}
@@ -273,10 +274,7 @@ func windowNotes(group []contextWindow, findings map[string]*finding) []ctxNoteR
 	for id, f := range findings {
 		for w := range group {
 			win := &group[w]
-			base := win.Offset
-			if win.Addr != nil {
-				base = *win.Addr
-			}
+			base := win.byteBase()
 			n := len(win.Data)
 			for _, sp := range f.Spans {
 				off, length := sp[0], sp[1]
@@ -476,7 +474,7 @@ func hasRichContext(file *cleaveFile) bool {
 // descByID, when non-nil, enables trailing trait annotations (the File view);
 // the Traits-tab expansion passes nil since its card already names the trait.
 func renderWindow(
-	windows []contextWindow, filterID, filename, fileType string,
+	windows []contextWindow, filterID, filename, fileType string, fileSize int64,
 	findingsByID map[string]*finding, descByID map[string]string,
 ) (contextBlock, bool) {
 	if filterID != "" && !windowsMatchTrait(windows, filterID, findingsByID) {
@@ -486,7 +484,7 @@ func renderWindow(
 	if isBinaryType(fileType) {
 		return renderHexWindow(&windows[0], filterID, findingsByID, descByID, annotated), true
 	}
-	return renderSourceWindow(windows, filterID, filename, findingsByID, descByID, annotated), true
+	return renderSourceWindow(windows, filterID, filename, fileSize, findingsByID, descByID, annotated), true
 }
 
 // rowAnnos returns the single trailing annotation for a row — cleave's rule: one
@@ -544,10 +542,7 @@ func windowsMatchTrait(windows []contextWindow, filterID string, findings map[st
 	}
 	for w := range windows {
 		win := &windows[w]
-		base := win.Offset
-		if win.Addr != nil {
-			base = *win.Addr
-		}
+		base := win.byteBase()
 		n := len(win.Data)
 		for _, sp := range f.Spans {
 			off, length := sp[0], sp[1]
@@ -566,7 +561,7 @@ func windowsMatchTrait(windows []contextWindow, filterID string, findings map[st
 // code syntax-highlighted, and its matched span(s) lit by severity. Lit notes
 // are restricted to filterID when set; filename selects the chroma lexer.
 func renderSourceWindow(
-	windows []contextWindow, filterID, filename string,
+	windows []contextWindow, filterID, filename string, fileSize int64,
 	findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool,
 ) contextBlock {
 	block := contextBlock{}
@@ -575,10 +570,13 @@ func renderSourceWindow(
 			break
 		}
 		win := &windows[w]
-		base := win.Offset
-		if win.Addr != nil {
-			base = *win.Addr
+		if win.isTextChunk() {
+			appendTextChunkRows(
+				&block, win, filterID, filename, fileSize, findingsByID, descByID, annotated,
+			)
+			continue
 		}
+		base := win.byteBase()
 		spans, crit := spansForRow(findingsByID, base, len(win.Data), filterID)
 		// Clip a long line to a window around its match so the highlighted span
 		// (and the trailing annotation) stay in view; short lines pass through.
@@ -594,6 +592,58 @@ func renderSourceWindow(
 		})
 	}
 	return block
+}
+
+// appendTextChunkRows renders a unified textual byte window as one row per
+// physical source line. The chunk's starting line and column come from Cleave;
+// embedded newlines advance the line number locally, so Prism never needs the
+// omitted source bytes to reconstruct positions.
+func appendTextChunkRows(
+	block *contextBlock, win *contextWindow, filterID, filename string, fileSize int64,
+	findingsByID map[string]*finding, descByID map[string]string, annotated map[string]bool,
+) {
+	base := win.byteBase()
+	rows := bytes.Split(win.Data, []byte{'\n'})
+	rowBase := base
+	// A v8 text chunk carries its own starting line; `ln` here is a byte offset,
+	// not a line number. Embedded newlines advance the line locally below.
+	line := win.Offset
+	if win.Line != nil {
+		line = *win.Line
+	}
+	startCol := int64(1)
+	if win.Col != nil {
+		startCol = *win.Col
+	}
+	for i, data := range rows {
+		if len(block.Rows) >= maxContextRows {
+			return
+		}
+		if i == len(rows)-1 && len(data) == 0 {
+			break
+		}
+		spans, crit := spansForRow(findingsByID, rowBase, len(data), filterID)
+		clip := clipSourceLine(
+			string(data),
+			primaryMatchCol(findingsByID, rowBase, len(data), filterID),
+		)
+		spans = shiftSpans(spans, clip.Off, len(clip.Text))
+		loc := strconv.FormatInt(line, 10)
+		if i == 0 && startCol > 1 {
+			loc += ":" + strconv.FormatInt(startCol, 10)
+		}
+		last := i == len(rows)-1
+		block.Rows = append(block.Rows, contextRow{
+			Loc:   loc,
+			Crit:  crit,
+			Segs:  highlightedSegs(clip.Text, spans, filename),
+			Annos: rowAnnos(findingsByID, rowBase, len(data), descByID, annotated),
+			Lead:  clip.Lead || (i == 0 && startCol > 1),
+			Trail: clip.Trail || (last && base+int64(len(win.Data)) < fileSize),
+		})
+		rowBase += int64(len(data)) + 1
+		line++
+	}
 }
 
 // maxSrcCols caps how much of a source line is shown. The code column wraps, so

@@ -48,6 +48,63 @@ func TestSourceContextHighlights(t *testing.T) {
 	}
 }
 
+// TestV8TextChunkNumbersRowsFromLine confirms a v8 byte-addressed text chunk
+// (ln is a byte offset; line/col carry the source position) splits on newlines,
+// numbers each row from `line`, and lights the span relative to the byte offset.
+func TestV8TextChunkNumbersRowsFromLine(t *testing.T) {
+	// A chunk starting at byte 100 on source line 5, spanning two physical lines;
+	// the match "exec" sits at byte 111 (start of the second line).
+	file := &cleaveFile{
+		Findings: []finding{{ID: "t/x", Crit: 5, Spans: [][2]int64{{111, 4}}}},
+		Ctx: []contextWindow{{
+			Offset: 100,
+			Line:   ptrInt64(5),
+			Col:    ptrInt64(1),
+			Data:   []byte("ctx before\nexec(data)"),
+		}},
+	}
+	blocks := buildContextBlocks(file, "t/x")
+	if len(blocks) != 1 || len(blocks[0].Rows) != 2 {
+		t.Fatalf("want one block with two rows, got %+v", blocks)
+	}
+	rows := blocks[0].Rows
+	if rows[0].Loc != "5" {
+		t.Errorf("context row loc = %q, want 5", rows[0].Loc)
+	}
+	if rows[1].Loc != "6" || rows[1].Crit != "hostile" {
+		t.Errorf("hit row loc/crit = %q/%q, want 6/hostile", rows[1].Loc, rows[1].Crit)
+	}
+	if len(rows[1].Segs) < 1 || rows[1].Segs[0].Text != "exec" || rows[1].Segs[0].Crit != "hostile" {
+		t.Errorf("hit row segs = %+v, want exec lit hostile", rows[1].Segs)
+	}
+}
+
+// TestV8LongLineSliceShowsLineCol confirms a v8 chunk slicing an ultra-long
+// single line renders one pseudo-line labelled line:col with a leading ellipsis.
+func TestV8LongLineSliceShowsLineCol(t *testing.T) {
+	// A 16-byte slice starting at byte 600 — column 601 of line 1.
+	file := &cleaveFile{
+		Findings: []finding{{ID: "t/x", Crit: 4, Spans: [][2]int64{{606, 4}}}},
+		Ctx: []contextWindow{{
+			Offset: 600,
+			Line:   ptrInt64(1),
+			Col:    ptrInt64(601),
+			Data:   []byte("while(!![]){...}"),
+		}},
+	}
+	blocks := buildContextBlocks(file, "t/x")
+	if len(blocks) != 1 || len(blocks[0].Rows) != 1 {
+		t.Fatalf("want one block/row, got %+v", blocks)
+	}
+	row := blocks[0].Rows[0]
+	if row.Loc != "1:601" {
+		t.Errorf("loc = %q, want 1:601", row.Loc)
+	}
+	if !row.Lead {
+		t.Error("a mid-line slice must mark a leading ellipsis")
+	}
+}
+
 // TestSourceContextSyntaxHighlight confirms source context carries chroma
 // syntax classes while still lighting the matched span.
 func TestSourceContextSyntaxHighlight(t *testing.T) {

@@ -1443,17 +1443,27 @@ type sectionInfo struct {
 	Entropy float64 `json:"entropy,omitempty"`
 }
 
-// contextWindow is one entry in a file's `ctx` array.
+// contextWindow is one entry in a file's `ctx` array. The format is
+// self-describing per-chunk, so prism reads both the current and the legacy
+// shape — a store holds a mix of the two for as long as it takes to rescan.
 //
-// v8 (current): one entry per source line or binary unit. `ln` is the 1-based
-// line number (source) or byte offset (binary/minified). `addr` is the byte
-// offset of a source line's first byte; absent for byte-addressed units.
-// `b` carries the raw bytes Z85-encoded. Render mode (hex vs text) is derived
-// from the file's `type` field. Data is non-nil when the entry is current format.
+// v8 (current): `ln` is always the byte offset of the chunk's first stored byte
+// — for both text and binary, never a line number. A textual chunk additionally
+// carries `line`/`col`, the 1-based source line and column of that byte, and may
+// span several physical lines; binary units carry neither.
 //
-// Legacy (v7 and earlier): pre-rendered text in `t` with `n` notes. Offset in `l`.
+// v7 (legacy): one entry per source line — `ln` is the 1-based line number and
+// `addr` the byte offset of the line's first byte; binary units have neither and
+// `ln` is a byte offset. No `line`/`col`.
+//
+// The presence of `line` unambiguously marks a v8 textual chunk; `addr` without
+// `line` marks a v7 source line; neither marks a binary unit. `b` holds the raw
+// bytes Z85-encoded. Legacy (v6 and earlier): pre-rendered text in `t`, offset
+// in `l`.
 type contextWindow struct {
-	Addr   *int64 `json:"-"`
+	Line   *int64 `json:"-"` // v8: source line of the first byte
+	Col    *int64 `json:"-"` // v8: source column of the first byte
+	Addr   *int64 `json:"-"` // v7: byte offset of a source line (ln is the line number)
 	Text   string `json:"t"`
 	Data   []byte `json:"-"`
 	Offset int64  `json:"ln"`
@@ -1461,6 +1471,8 @@ type contextWindow struct {
 
 func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	var raw struct {
+		Line    *int64 `json:"line"`
+		Col     *int64 `json:"col"`
 		Addr    *int64 `json:"addr"`
 		OldAddr *int64 `json:"a"`
 		Text    string `json:"t"`
@@ -1475,6 +1487,8 @@ func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	if w.Offset == 0 {
 		w.Offset = raw.OldOff
 	}
+	w.Line = raw.Line
+	w.Col = raw.Col
 	w.Addr = raw.Addr
 	if w.Addr == nil {
 		w.Addr = raw.OldAddr
@@ -1489,6 +1503,24 @@ func (w *contextWindow) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// byteBase returns the absolute byte offset of the chunk's first stored byte,
+// resolving the v7/v8 difference: a v8 chunk (or a binary unit) keeps its offset
+// in `ln`, while a v7 source line keeps the line number in `ln` and the byte
+// offset in `addr`.
+func (w *contextWindow) byteBase() int64 {
+	if w.Line == nil && w.Addr != nil {
+		return *w.Addr
+	}
+	return w.Offset
+}
+
+// isTextChunk reports a v8 byte-addressed textual chunk (carrying line/col),
+// which the renderer splits into physical rows.
+func (w *contextWindow) isTextChunk() bool { return w.Line != nil }
+
+// isSourceLine reports a v7 single-line source entry (`ln` is a line number).
+func (w *contextWindow) isSourceLine() bool { return w.Line == nil && w.Addr != nil }
 
 type finding struct {
 	ID string `json:"id"`
@@ -7598,10 +7630,7 @@ func evidenceFromCtx(windows []contextWindow, off int64, isHex bool) (string, bo
 		if win.Data == nil {
 			continue
 		}
-		base := win.Offset
-		if win.Addr != nil {
-			base = *win.Addr
-		}
+		base := win.byteBase()
 		if off < base || off >= base+int64(len(win.Data)) {
 			continue
 		}
