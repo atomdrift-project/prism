@@ -1304,12 +1304,13 @@
         /* The win-section already supplies the left inset, so the line-number
            column hugs it — no doubled-up gutter before the code. Source loc
            columns size to the widest loc on the page (--ctx-loc-src-ch) so every
-           window in a file lines up. The hex offset uses a fixed width instead, so
-           the bytes/ascii grid starts at the same place across different files
-           too; an unusually large offset simply widens that one file's column.
-           Values stay right-aligned against the divider. */
+           window in a file lines up, but never narrower than 5 digits so the
+           gutter stays a consistent width across files. The hex offset uses a
+           fixed width instead, so the bytes/ascii grid starts at the same place
+           across different files too; an unusually large offset simply widens
+           that one file's column. Values stay right-aligned against the divider. */
         .win-section .ctx-loc { padding-left: 0 !important; }
-        .win-section .ctx-src .ctx-loc { width: calc(var(--ctx-loc-src-ch, 3) * 1ch); }
+        .win-section .ctx-src .ctx-loc { width: max(5ch, calc(var(--ctx-loc-src-ch, 3) * 1ch)); }
         .win-section .ctx-hex .ctx-loc { width: 9ch; }
         /* Freeze only the line-number gutter so it never scrolls away if the
            code column ever overflows (it wraps, so that's rare). Trait
