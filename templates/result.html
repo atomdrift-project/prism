@@ -1193,13 +1193,21 @@
         .ctx-cell { color: inherit; }
         /* The match highlight: a tinted background per severity, carried by the
            shared --hostile/--suspicious/--notable palette. mark resets the UA
-           yellow so only our tint shows. */
+           yellow so only our tint shows.
+           Disabled for now — the per-severity tint is neutralised so a matched
+           span reads as plain (still syntax-coloured) text, with no background.
+           To restore, put the rgba backgrounds / colours back on the rules below:
+             .ctx-hit.hostile    { background: rgba(239, 68, 68, 0.20); color: #7f1d1d; }
+             .ctx-hit.suspicious { background: rgba(234, 179, 8, 0.22); color: #713f12; }
+             .ctx-hit.notable    { background: rgba(59, 130, 246, 0.18); color: #1e3a8a; }
+             .ctx-hit.baseline,
+             .ctx-hit.component  { background: rgba(0, 0, 0, 0.08); } */
         mark.ctx-hit { background: none; color: inherit; }
-        .ctx-hit.hostile { background: rgba(239, 68, 68, 0.20); color: #7f1d1d; border-radius: 2px; }
-        .ctx-hit.suspicious { background: rgba(234, 179, 8, 0.22); color: #713f12; border-radius: 2px; }
-        .ctx-hit.notable { background: rgba(59, 130, 246, 0.18); color: #1e3a8a; border-radius: 2px; }
+        .ctx-hit.hostile,
+        .ctx-hit.suspicious,
+        .ctx-hit.notable,
         .ctx-hit.baseline,
-        .ctx-hit.component { background: rgba(0, 0, 0, 0.08); border-radius: 2px; }
+        .ctx-hit.component { background: none; color: inherit; }
 
         /* File tab — one card per file, ordered by criticality, each listing its
            top findings with their context. The default view for current reports. */
@@ -1325,16 +1333,21 @@
             font-family: 'Inter', -apple-system, sans-serif;
         }
         .ctx-traits:empty { border-left-color: transparent; }
-        /* Descriptions get a wide lane and truncate with an ellipsis instead of
-           wrapping — the full text is in each anno's title on hover. The max-width
-           is set on the anno, not the cell (a table cell's own max-width is
-           ignored in auto layout, but a child block's is honoured), capping the
-           column near 30em so it can't crowd the code. */
+        /* Descriptions ride a fixed-width lane so every window's gutter is the
+           same width. A definite width (not max-width) is the load-bearing bit:
+           with max-width the column sized to its own longest note, so the gutter
+           width varied window-to-window. The width is set on the anno, not the
+           cell (a table cell's own width is only a hint in auto layout, but a
+           child block's definite width is honoured and fixes the column). Data
+           caps descriptions at 48 chars; the lane fits a typical 48-char note and
+           ellipsizes the widest, with the full text in the anno's title on hover.
+           font-size/line-height match the code column so gutter and code read as
+           one consistent size. It never wraps (white-space: nowrap). */
         .ctx-traits .anno {
             display: block;
-            max-width: 30em;
-            font-size: 12px;
-            line-height: 1.45;
+            width: 25em;
+            font-size: 12.5px;
+            line-height: 1.55;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
