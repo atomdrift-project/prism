@@ -1,3 +1,13 @@
+{{- /* One evidence chip. A dependency-verdict chip carries an Href to the
+     dependency's own record and renders as a link; every other chip is a
+     plain span. Same classes either way, so they read as one family. */ -}}
+{{- define "why-chip" -}}
+{{- if .Href -}}
+<a class="why-chip crit-{{.Crit}}" href="{{.Href}}" title="{{.Full}}">{{.ID}}</a>
+{{- else -}}
+<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>
+{{- end -}}
+{{- end -}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -526,6 +536,25 @@
         .why-chip.crit-hostile::before { background: #ef4444; }
         .why-chip.crit-suspicious::before { background: #facc15; }
         .row-why .why-chip + .why-chip { margin-left: 6px; }
+        /* Dependency chips are links to the dependency's own record. Same
+           chip anatomy; the ↗ suffix and hover tint are the affordance. A
+           pathological locator ellipsizes rather than stretching the row. */
+        .why-chip {
+            max-width: 48ch;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        a.why-chip {
+            cursor: pointer;
+            text-decoration: none;
+        }
+        a.why-chip::after { content: " ↗"; opacity: 0.55; }
+        a.why-chip:hover, a.why-chip:focus-visible {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        a.why-chip:focus-visible { outline: 2px solid var(--toxic-muted); outline-offset: 1px; }
         .catch-evidence {
             display: flex;
             align-items: center;
@@ -886,7 +915,7 @@
                 <div class="catch-foot">
                     {{if .TopTraits}}
                     <span class="ev-label">Evidence</span>
-                    {{range .TopTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
+                    {{range .TopTraits}}{{template "why-chip" .}}{{end}}
                     {{end}}
                     <a class="view-analysis" href="/file/{{.SHA256}}">View full analysis →</a>
                 </div>
@@ -979,7 +1008,7 @@
                         {{else if .FallbackTraits}}
                         <div class="row-why">
                             {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
-                            {{range .FallbackTraits}}<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>{{end}}
+                            {{range .FallbackTraits}}{{template "why-chip" .}}{{end}}
                         </div>
                         {{end}}
                     </div>

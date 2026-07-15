@@ -3227,21 +3227,24 @@ func llmWhy(raw []byte) (why string, conf int) {
 }
 
 // feedTrait is one of a row's headline traits, ready for the chip the feed
-// renders: the display id (last directory + leaf of the cleave trait path,
-// "exfil.dns-tunnel"), the full id for the tooltip, and the criticality class
-// for the colored dot.
+// renders: the display text (last directory + leaf of the cleave trait path,
+// "exfil.dns-tunnel" — or, for a dependency verdict, the phrase naming what
+// the verdict is inherited from), the full detail for the tooltip, and the
+// criticality class for the colored dot. Href, when set, links the chip to
+// the dependency's own record.
 type feedTrait struct {
 	ID   string
 	Full string
 	Crit string
+	Href string
 }
 
 // parseTopTraits decodes hopper's top_traits column (JSON []hopper.TopTrait)
 // into display-ready chips, deduped by chip ID — named traits from the same
-// rule file share a truncated label, and one chip per label is enough. The
-// column is crit-sorted, so the survivor is the highest-criticality entry.
-// Empty or malformed input yields nil — the row simply renders without a
-// traits line.
+// rule file share a truncated label, and one chip per label is enough, while
+// dependency chips naming different packages all survive. The column is
+// crit-sorted, so the survivor is the highest-criticality entry. Empty or
+// malformed input yields nil — the row simply renders without a traits line.
 func parseTopTraits(raw string) []feedTrait {
 	if raw == "" {
 		return nil
@@ -3255,13 +3258,123 @@ func parseTopTraits(raw string) []feedTrait {
 		if t.ID == "" {
 			continue
 		}
-		id := traitChipID(t.ID)
-		if slices.ContainsFunc(chips, func(c feedTrait) bool { return c.ID == id }) {
+		chip := feedTrait{ID: traitChipID(t.ID), Full: t.ID, Crit: critIntToString(t.Crit)}
+		if dep, ok := parseDepIdentity(t.Dep); ok {
+			chip = dependencyChip(t.ID, dep, chip)
+		}
+		if slices.ContainsFunc(chips, func(c feedTrait) bool { return c.ID == chip.ID }) {
 			continue
 		}
-		chips = append(chips, feedTrait{ID: id, Full: t.ID, Crit: critIntToString(t.Crit)})
+		chips = append(chips, chip)
 	}
 	return chips
+}
+
+// depIdentity is the machine-readable identity scan pins on its synthetic
+// fetch/dependency-verdict trait and hopper forwards opaquely: the reference
+// locator (PURL or URL) the dependency was declared at, the fetched payload's
+// sha256, and its sniffed file type.
+type depIdentity struct {
+	Locator string `json:"locator"`
+	SHA     string `json:"sha"`
+	Type    string `json:"type"`
+}
+
+// parseDepIdentity decodes a top trait's dep field. ok is false when it is
+// absent (every ordinary trait, and dependency verdicts scanned before scan
+// emitted the field) or malformed — the caller keeps the generic id chip.
+func parseDepIdentity(raw json.RawMessage) (depIdentity, bool) {
+	var dep depIdentity
+	if len(raw) == 0 || json.Unmarshal(raw, &dep) != nil || dep.Locator == "" {
+		return depIdentity{}, false
+	}
+	return dep, true
+}
+
+// dependencyChip specializes a fetch/dependency-verdict chip with the
+// dependency's identity: the text names the inherited verdict and where it
+// comes from ("depends on hostile npm: zaboodle v1.49", "references hostile
+// pe: x.y.z/x.exe"), the tooltip carries the full locator, and the chip links
+// to the dependency's own record.
+func dependencyChip(traitID string, dep depIdentity, base feedTrait) feedTrait {
+	if eco, name, version, ok := purlCoords(dep.Locator); ok {
+		base.ID = "depends on " + base.Crit + " " + eco + ": " + name
+		if version != "" {
+			base.ID += " v" + version
+		}
+	} else {
+		kind := dep.Type
+		if kind == "" || kind == "unknown" {
+			kind = "dependency"
+		}
+		base.ID = "references " + base.Crit + " " + kind + ": " + urlCoords(dep.Locator)
+	}
+	// Locators are attacker-authored manifest strings; the cap keeps a
+	// pathological one from blowing up the chip row or the atom summary.
+	// The tooltip and the linked record carry the whole thing.
+	base.ID = truncateRunes(base.ID, 80)
+	base.Full = traitID + " — " + dep.Locator
+	if validSHA256(dep.SHA) {
+		base.Href = "/file/" + dep.SHA
+	}
+	return base
+}
+
+// purlCoords splits a PURL locator into the display coordinates for a
+// dependency chip: the ecosystem (purl type), the package name (namespace
+// kept — "@types/node", "debian/curl" — since it is part of the identity),
+// and the version, percent-decoded for display. ok is false for a locator
+// that isn't a PURL (a raw URL reference).
+func purlCoords(locator string) (eco, name, version string, ok bool) {
+	rest, found := strings.CutPrefix(locator, "pkg:")
+	if !found {
+		return "", "", "", false
+	}
+	eco, path, found := strings.Cut(rest, "/")
+	if !found || eco == "" {
+		return "", "", "", false
+	}
+	path, _, _ = strings.Cut(path, "?") // qualifiers never display
+	path = strings.Trim(path, "/")
+	// The version separator is an @ after the last /; an npm scope's leading
+	// @ sits before one, so it can't be mistaken for a version.
+	if i := strings.LastIndexByte(path, '@'); i > strings.LastIndexByte(path, '/') && i > 0 {
+		version = path[i+1:]
+		path = path[:i]
+	}
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
+	if decoded, err := url.PathUnescape(version); err == nil {
+		version = decoded
+	}
+	if path == "" {
+		return "", "", "", false
+	}
+	return eco, path, version, true
+}
+
+// urlCoords compacts a URL locator for chip display: host plus the final path
+// segment ("x.y.z/x.exe"), or just the host when the path names nothing. A
+// locator that doesn't parse as a URL displays raw.
+func urlCoords(locator string) string {
+	u, err := url.Parse(locator)
+	if err != nil || u.Host == "" {
+		return locator
+	}
+	if file := u.Path[strings.LastIndexByte(u.Path, '/')+1:]; file != "" {
+		return u.Host + "/" + file
+	}
+	return u.Host
+}
+
+// truncateRunes caps s at n runes, marking the cut with an ellipsis.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n-1]) + "…"
 }
 
 // traitChipID compacts a cleave trait path for a feed chip: the last two
