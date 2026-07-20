@@ -9,167 +9,165 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
-// indexStats is a point-in-time snapshot of the analyzed-corpus size and the
-// recent ingestion rate, powering the live "samples analyzed" counter on the
-// feed masthead. The rate is top-level only (parent = ”) on purpose: exploded
-// archive members are bulk-inserted already-analyzed, so counting them as
-// throughput inflates the rate ~80x (see hopper's AnalysisRatesSince). The
-// client anchors on Total and extrapolates with RatePerMin between polls, so a
-// coarse refresh cadence is invisible.
+// indexStats is the live estimate published to the masthead counter: how many
+// files are in the index, plus the recent ingestion rate the client
+// extrapolates the digits with between polls. It is a planner estimate, not an
+// exact count — all a "roughly N and climbing" counter needs, and all a
+// zero-scan query can give.
 type indexStats struct {
-	GeneratedAt time.Time // when this snapshot was computed (server clock, UTC)
-	Total       int64     // samples with an analysis result (hopper CountAnalyzed)
-	RatePerMin  float64   // top-level samples analyzed per minute, trailing statsWindow average
-	WindowSecs  int       // the averaging window, in seconds
+	GeneratedAt time.Time // when the estimate was taken (server clock, UTC)
+	Total       int64     // estimated rows in the samples table
+	RatePerMin  float64   // estimated rows added per minute, over statsRateWindow
 }
+
+// statsLatest is the most recent estimate, published by statsPollLoop and read
+// lock-free by the endpoint and the feed renderer. A single background writer
+// polls the database once a minute; every request just reads this pointer, so a
+// client never triggers or blocks on a query.
+var statsLatest atomic.Pointer[indexStats]
 
 const (
-	// statsWindow is the trailing window for the ingestion-rate estimate. A
-	// 15-minute average smooths the bursty per-archive analysis cadence into a
-	// steady rate the client can extrapolate the counter with between polls.
-	statsWindow = 15 * time.Minute
-	// statsCacheTTL bounds how often the corpus-size + rate queries run. Every
-	// viewer polls /_/stats, but FetchTTL singleflights concurrent callers onto
-	// one query pair, so all traffic collapses to at most one refresh per window
-	// regardless of concurrency — the discipline feedCache already uses. The
-	// only full-table scan (CountAnalyzed) therefore runs at most once a minute,
-	// and only while someone is watching; the client extrapolates the in-between
-	// digits from the rate.
-	statsCacheTTL = time.Minute
-	// statsStaleTTL is the degraded-mode fallback lifetime, long like
-	// feedStaleTTL so the counter keeps showing the last-known value through a
-	// multi-hour hopper outage instead of blanking.
-	statsStaleTTL = 24 * time.Hour
-	// statsCacheKey is the single fixed key: the snapshot is global, not
-	// per-request, so one key serves every visitor.
-	statsCacheKey = "index"
+	// statsPollInterval is how often the background poller reads the estimate.
+	// One O(1) catalog read a minute is the entire database cost of the counter,
+	// no matter how many clients are watching or how fast they poll.
+	statsPollInterval = time.Minute
+	// statsRateWindow is the span the ingestion rate is averaged over. The
+	// poller keeps ~this much history of readings and derives the rate from the
+	// oldest-to-newest delta, so the rate costs no extra query.
+	statsRateWindow = 15 * time.Minute
+	// statsQueryTimeout bounds a single estimate read so a wedged catalog query
+	// can't stall the poller (it never should — the read is O(1)).
+	statsQueryTimeout = 3 * time.Second
 )
 
-// loadIndexStats returns the cached corpus snapshot, refreshing it at most once
-// per statsCacheTTL (FetchTTL singleflights concurrent callers onto one query
-// pair). On any live-query failure it serves the last-known-good snapshot from
-// statsStaleCache, mirroring loadFeedSnapshot's degraded-mode fallback.
-func loadIndexStats(ctx context.Context) (indexStats, error) {
-	if statsCache == nil {
-		return buildIndexStats(ctx)
-	}
-	snap, err := statsCache.FetchTTL(ctx, statsCacheKey, statsCacheTTL, func(lctx context.Context) (indexStats, error) {
-		// Detach from the first caller's request context (FetchTTL shares one
-		// loader across coalesced waiters, so a client disconnect must not abort
-		// the shared refresh) but keep a bound so a slow scan can't wedge the
-		// singleflight — same rationale as the feed rebuild.
-		bctx, cancel := context.WithTimeout(context.WithoutCancel(lctx), hopperQueryTimeout)
-		defer cancel()
-		return buildIndexStats(bctx)
-	})
-	if err != nil {
-		if statsStaleCache != nil {
-			if stale, found, gerr := statsStaleCache.Get(ctx, statsCacheKey); gerr == nil && found {
-				return stale, nil
-			}
-		}
-		return indexStats{}, err
-	}
-	return snap, nil
+// statsReading is one timestamped estimate, retained only long enough to derive
+// the trailing-window rate.
+type statsReading struct {
+	at    time.Time
+	value int64
 }
 
-// buildIndexStats runs the two corpus queries behind the shared hopper-db
-// breaker and records the result as last-known-good in statsStaleCache. The
-// rate query is an index range-scan over ~statsWindow of rows
-// (idx_samples_analyzed_at); the total is a full count, which is why it sits
-// behind statsCacheTTL rather than running per request.
-func buildIndexStats(ctx context.Context) (indexStats, error) {
+// statsPollLoop reads the index-size estimate once per statsPollInterval and
+// publishes it (with a trailing-window rate) to statsLatest. It runs for the
+// life of ctx, independent of the hopper connection: sampleCountEstimate errors
+// while hopper is down and the loop simply retries, so it needs no hookup to
+// the connect/reconnect callbacks. All database cost of the counter lives here.
+func statsPollLoop(ctx context.Context) {
+	var readings []statsReading
+	poll := func() {
+		qctx, cancel := context.WithTimeout(ctx, statsQueryTimeout)
+		defer cancel()
+		total, err := sampleCountEstimate(qctx)
+		if err != nil {
+			logger.Debug("stats poll failed", "error", err)
+			return
+		}
+		now := time.Now()
+		readings = append(readings, statsReading{at: now, value: total})
+		// Keep only readings inside the rate window.
+		cutoff := now.Add(-statsRateWindow)
+		kept := readings[:0]
+		for _, rd := range readings {
+			if rd.at.After(cutoff) {
+				kept = append(kept, rd)
+			}
+		}
+		readings = kept
+
+		rate := 0.0
+		if len(readings) >= 2 {
+			oldest := readings[0]
+			if span := now.Sub(oldest.at).Minutes(); span > 0 {
+				if rate = float64(total-oldest.value) / span; rate < 0 {
+					rate = 0 // reltuples can wobble down between analyzes
+				}
+			}
+		}
+		statsLatest.Store(&indexStats{GeneratedAt: now.UTC(), Total: total, RatePerMin: rate})
+	}
+	poll() // warm immediately so the counter can appear on the first page load
+	ticker := time.NewTicker(statsPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			poll()
+		}
+	}
+}
+
+// sampleCountEstimate reads pg_class.reltuples for the samples table — the
+// planner's live-tuple estimate, maintained by (auto)ANALYZE and replicated to
+// our read replica. It is an O(1) catalog read: no scan of the samples table,
+// no dependency on any index or migration, so it costs the same whether the
+// corpus is a thousand rows or a hundred million. It goes through the exposed
+// pool because wrapping a one-line stats read in a hopper method would force a
+// hopper release + go.mod pin bump to ship.
+func sampleCountEstimate(ctx context.Context) (int64, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return indexStats{}, errors.New("hopper not connected")
+		return 0, errors.New("hopper not connected")
 	}
-	// Gate behind the shared hopper-db breaker so a degraded hopper sheds these
-	// reads fast instead of every poll queueing a scan (the same breaker the
-	// feed and per-sample lookups use).
+	pool := db.Pool()
+	if pool == nil {
+		return 0, errors.New("hopper pool unavailable")
+	}
+	// Gate behind the shared hopper-db breaker so a degraded hopper sheds the
+	// read fast, exactly like the feed and per-sample lookups.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
-		return indexStats{}, fmt.Errorf("hopper-db stats: %w", berr)
+		return 0, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	fail := func() {
+	var total int64
+	err := pool.QueryRow(ctx,
+		`SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass`).Scan(&total)
+	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
-	}
-	total, err := db.CountAnalyzed(ctx)
-	if err != nil {
-		fail()
-		return indexStats{}, fmt.Errorf("count analyzed: %w", err)
-	}
-	rates, err := db.AnalysisRatesSince(ctx, statsWindow)
-	if err != nil {
-		fail()
-		return indexStats{}, fmt.Errorf("analysis rates: %w", err)
+		return 0, fmt.Errorf("sample count estimate: %w", err)
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "stats", "ok", start)
-
-	snap := indexStats{
-		GeneratedAt: time.Now().UTC(),
-		Total:       total,
-		RatePerMin:  float64(rates.TopLevel) / statsWindow.Minutes(),
-		WindowSecs:  int(statsWindow.Seconds()),
+	if total < 0 {
+		total = 0 // reltuples is -1 until the table's first ANALYZE
 	}
-	if statsStaleCache != nil {
-		if serr := statsStaleCache.SetTTL(context.WithoutCancel(ctx), statsCacheKey, snap, statsStaleTTL); serr != nil {
-			logger.Debug("stats: stale cache write failed", "error", serr)
-		}
-	}
-	return snap, nil
+	return total, nil
 }
 
-// cachedIndexStats returns the current snapshot only if one is already cached,
-// never triggering a query. renderFeed uses it to server-render an initial
-// counter value without adding a scan to the feed's hot path; the client's
-// /_/stats poll takes over from there.
-func cachedIndexStats(ctx context.Context) (indexStats, bool) {
-	if statsCache == nil {
+// cachedIndexStats returns the latest published estimate, if the poller has
+// produced one yet. renderFeed uses it to seed the counter's initial value.
+func cachedIndexStats() (indexStats, bool) {
+	s := statsLatest.Load()
+	if s == nil {
 		return indexStats{}, false
 	}
-	snap, found, err := statsCache.Get(ctx, statsCacheKey)
-	if err != nil || !found {
-		return indexStats{}, false
-	}
-	return snap, true
+	return *s, true
 }
 
-// handleStats serves the live corpus snapshot as JSON for the masthead's
-// "samples analyzed" counter. It mirrors handleFileStatus's shape (JSON,
-// no-store, hopper nil-guard) but reads through statsCache so concurrent polls
-// collapse to one query per statsCacheTTL and degrade to the stale snapshot on
-// failure.
-func handleStats(w http.ResponseWriter, r *http.Request) {
+// handleStats serves the latest index-size estimate as JSON for the masthead
+// counter. It only ever reads statsLatest (published by statsPollLoop), so it
+// never touches the database and can't block. Before the first poll completes
+// it returns {"ready":false} and the client keeps polling.
+func handleStats(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	if hopperDB.Load() == nil {
-		writeStatsError(w, "hopper not connected")
-		return
-	}
-	snap, err := loadIndexStats(r.Context())
-	if err != nil {
-		writeStatsError(w, "stats unavailable")
+	snap, ok := cachedIndexStats()
+	if !ok {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false}) //nolint:errcheck,errchkjson // JSON-safe; client tolerates and retries
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck,errchkjson // primitive values are JSON-safe
 		"total":        snap.Total,
 		"rate_per_min": math.Round(snap.RatePerMin*10) / 10,
-		"window_secs":  snap.WindowSecs,
 		"as_of":        snap.GeneratedAt.UnixMilli(),
 	})
-}
-
-// writeStatsError writes a 503 JSON error for the stats endpoint. The caller
-// has already set the JSON content-type and no-store headers.
-func writeStatsError(w http.ResponseWriter, msg string) {
-	w.WriteHeader(http.StatusServiceUnavailable)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg}) //nolint:errcheck,errchkjson // JSON-safe; response already failing
 }
 
 // commaInt formats a non-negative integer with thousands separators

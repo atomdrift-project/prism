@@ -105,13 +105,8 @@ var (
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	membersCache       *fido.TieredCache[string, cachedMembers]
-	// statsCache holds the single global corpus snapshot (total analyzed + rate)
-	// behind statsCacheTTL; statsStaleCache is its long-TTL degraded fallback.
-	// Both memory-only (like feedCache): one key, cheap to recompute on restart.
-	statsCache      *fido.TieredCache[string, indexStats]
-	statsStaleCache *fido.TieredCache[string, indexStats]
-	logger          *slog.Logger
-	publicMode      bool // true when --public flag is set; changes branding and shows data-sharing notice
+	logger             *slog.Logger
+	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
 	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
@@ -1032,10 +1027,10 @@ type feedPageData struct {
 	Domains    []string
 	Ecosystems []string
 	Rows       []feedRow
-	// Stats seeds the masthead's live "samples analyzed" counter with the
-	// current corpus snapshot. Populated non-blocking from statsCache (nil until
-	// the cache is warm — the client's /_/stats poll fills it in either way), so
-	// it never adds a DB scan to the feed's hot path.
+	// Stats seeds the masthead's live "files indexed" counter with the latest
+	// estimate published by statsPollLoop (nil until the first poll — the
+	// client's /_/stats poll fills it in either way). A lock-free pointer read,
+	// so it never adds a query to the feed's hot path.
 	Stats *indexStats
 	// Pages holds the per-page links (empty when a single page covers every
 	// row); Page is the 1-indexed current page over the cached snapshot.
@@ -1742,7 +1737,6 @@ func main() {
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 		membersCache = openNullCache[cachedMembers]("members cache")
-		statsCache = openNullCache[indexStats]("stats cache")
 	} else {
 		cacheDir := os.Getenv("CACHE_DIR")
 		if cacheDir == "" {
@@ -1776,17 +1770,11 @@ func main() {
 		// sample set — persisting these survives restarts and keeps warmed
 		// archive pages instant.
 		membersCache = openLocalFSCache[cachedMembers]("prism-members", cacheDir, "members cache")
-		// statsCache is memory-only for the same reason as feedCache: one key,
-		// cheap to recompute, and it holds only a small corpus snapshot.
-		statsCache = openNullCache[indexStats]("stats cache")
 	}
 	// feedStaleCache is always memory-only (like feedCache) — even under
 	// --no-cache, the in-memory tier is what backs the degraded-mode fallback,
 	// and it holds only last-known-good feed snapshots that are cheap to rebuild.
 	feedStaleCache = openNullCache[cachedFeedSnapshot]("feed stale cache")
-	// statsStaleCache is the counter's degraded-mode fallback, memory-only and
-	// long-TTL like feedStaleCache.
-	statsStaleCache = openNullCache[indexStats]("stats stale cache")
 
 	// Parse templates. isPublic is available in all templates so base.html
 	// can switch branding and banners without per-handler plumbing.
@@ -1870,6 +1858,13 @@ func main() {
 		}
 	}
 
+	// Publish the live index-size estimate for the masthead counter. Runs for
+	// the life of ctx independent of the hopper connection — it retries every
+	// statsPollInterval and starts succeeding once hopper connects — so it needs
+	// no hookup to the connect/reconnect callbacks. This background poll is the
+	// counter's entire database cost; the endpoint only ever reads its result.
+	go statsPollLoop(ctx)
+
 	mux := newMux()
 
 	// Shed per-client request floods (aggressive crawlers, runaway scrapers)
@@ -1936,16 +1931,6 @@ func main() {
 		if membersCache != nil {
 			if err := membersCache.Close(); err != nil {
 				logger.Error("failed to close fido members cache", "error", err)
-			}
-		}
-		if statsCache != nil {
-			if err := statsCache.Close(); err != nil {
-				logger.Error("failed to close fido stats cache", "error", err)
-			}
-		}
-		if statsStaleCache != nil {
-			if err := statsStaleCache.Close(); err != nil {
-				logger.Error("failed to close fido stats stale cache", "error", err)
 			}
 		}
 
@@ -4280,11 +4265,11 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			paginateFeed(&data, r)
 		}
 	}
-	// Seed the live counter with the cached corpus snapshot if one is already
-	// warm — a non-blocking read that never triggers a scan on the feed path.
-	// When cold, the template omits the initial value and the client's /_/stats
-	// poll populates it.
-	if s, ok := cachedIndexStats(r.Context()); ok {
+	// Seed the live counter with the latest published estimate if the poller has
+	// produced one — a lock-free pointer read, no query on the feed path. When
+	// cold (before the first poll), the template omits the initial value and the
+	// client's /_/stats poll populates it.
+	if s, ok := cachedIndexStats(); ok {
 		data.Stats = &s
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {

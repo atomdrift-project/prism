@@ -951,11 +951,11 @@
                 </div>
                 {{if .HasHopper}}
                 <div class="counter c-meter" id="index-counter" role="img"
-                    aria-label="Live count of samples analyzed"
+                    aria-label="Live estimate of files in the index"
                     {{with .Stats}}data-total="{{.Total}}" data-rate="{{.RatePerMin}}" data-asof="{{.GeneratedAt.UnixMilli}}"{{end}}>
-                    <div class="c-eyebrow"><span class="live-dot" id="counter-dot"></span>Samples analyzed</div>
+                    <div class="c-eyebrow"><span class="live-dot" id="counter-dot"></span>Files indexed</div>
                     <div class="meter-row">
-                        <div class="meter-num" id="counter-num">{{with .Stats}}{{commaInt .Total}}{{else}}&mdash;{{end}}</div>
+                        <div class="meter-num" id="counter-num">{{with .Stats}}{{commaInt .Total}}{{end}}</div>
                         <div class="peak-meter" id="counter-meter" aria-hidden="true"></div>
                     </div>
                 </div>

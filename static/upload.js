@@ -312,16 +312,18 @@ if (input && form) {
   });
 }
 
-// --- Live "samples analyzed" counter -------------------------------------
+// --- Live "files indexed" counter ----------------------------------------
 //
-// The masthead shows a live estimate of the analyzed-corpus size. The server
-// hands us an anchor {total, rate_per_min, as_of}; we extrapolate the digits
-// between polls (total + rate * elapsed) so the number climbs smoothly, and
-// re-anchor every poll — never backward. Each whole-number tick is one
-// "detection": it flicks the dot and kicks the peak meter, the Geiger cue.
-// The counter is progressive enhancement: with no JS the server-rendered
-// value still shows; a failed poll simply keeps extrapolating from the last
-// anchor. Guarded so it no-ops on pages without the counter.
+// The masthead shows a live estimate of how many files are in the index. A
+// background poller on the server refreshes the estimate once a minute; the
+// endpoint just serves that cached value, so a client never touches the
+// database. Each response is an anchor {total, rate_per_min, as_of}; we
+// extrapolate the digits between polls (total + rate * elapsed) so the number
+// climbs smoothly, re-anchor every poll — never backward — and cap the
+// extrapolation so a stalled poller can't let the number run away. Each
+// whole-number tick flicks the dot and kicks the peak meter. Progressive
+// enhancement: the server-rendered value shows without JS; a failed poll just
+// coasts on the last anchor. Guarded so it no-ops on pages without the counter.
 (() => {
   const el = document.getElementById("index-counter");
   if (!el) return;
@@ -329,6 +331,9 @@ if (input && form) {
   const meterEl = document.getElementById("counter-meter");
   const dotEl = document.getElementById("counter-dot");
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  // Cap how far past an anchor we extrapolate (server refreshes ~every 60s), so
+  // if updates stop the counter settles instead of racing off.
+  const STALE_CAP_SEC = 150;
 
   const SEGMENTS = 10;
   const segs = [];
@@ -352,10 +357,11 @@ if (input && form) {
 
   const fmt = (n) => Math.floor(n).toLocaleString("en-US");
 
-  // projected value of an anchor at the current wall clock.
+  // projected value of an anchor at the current wall clock, capped so a stale
+  // anchor (poller stopped) can't extrapolate without bound.
   const projected = (a) => {
     if (!a) return displayed;
-    const elapsed = Math.max(0, (Date.now() - a.asOfMs) / 1000);
+    const elapsed = Math.min(STALE_CAP_SEC, Math.max(0, (Date.now() - a.asOfMs) / 1000));
     return a.total + a.ratePerSec * elapsed;
   };
 
