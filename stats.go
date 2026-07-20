@@ -42,6 +42,12 @@ const (
 	// the poller. Generous: both queries are fast, but the rate scan is bounded
 	// only by how many rows landed in the last statsRateWindow.
 	statsQueryTimeout = 5 * time.Second
+	// statsPersistKey is the single fixed key for the persisted running total.
+	statsPersistKey = "index"
+	// statsPersistTTL keeps the persisted total valid across typical restart /
+	// deploy gaps. A longer gap just cold-seeds from reltuples, which the running
+	// total's floor heals within a few polls.
+	statsPersistTTL = 7 * 24 * time.Hour
 )
 
 // statsQueryResult is one poll's raw readings from the database.
@@ -69,6 +75,18 @@ func statsPollLoop(ctx context.Context) {
 	lastPollAt := time.Now().Add(-statsRateWindow)
 	var total int64
 	seeded := false
+	// Resume the running total from disk so a restart continues where it left
+	// off. The first poll then advances it by the rows inserted during the
+	// downtime (capped at the window; the reltuples floor heals a longer gap)
+	// instead of dropping back to the planner estimate. Absent/expired → cold
+	// seed from reltuples on the first poll.
+	if statsPersistCache != nil {
+		if snap, found, err := statsPersistCache.Get(ctx, statsPersistKey); err == nil && found {
+			total = snap.Total
+			lastPollAt = snap.GeneratedAt
+			seeded = true
+		}
+	}
 	poll := func() {
 		qctx, cancel := context.WithTimeout(ctx, statsQueryTimeout)
 		defer cancel()
@@ -87,11 +105,17 @@ func statsPollLoop(ctx context.Context) {
 			}
 		}
 		lastPollAt = res.dbNow
-		statsLatest.Store(&indexStats{
+		snap := indexStats{
 			GeneratedAt: time.Now().UTC(),
 			Total:       total,
 			RatePerMin:  float64(res.recent) / statsRateWindow.Minutes(),
-		})
+		}
+		statsLatest.Store(&snap)
+		if statsPersistCache != nil {
+			if err := statsPersistCache.SetTTL(ctx, statsPersistKey, snap, statsPersistTTL); err != nil {
+				logger.Debug("stats persist write failed", "error", err)
+			}
+		}
 	}
 	poll() // warm immediately so the counter can appear on the first page load
 	ticker := time.NewTicker(statsPollInterval)

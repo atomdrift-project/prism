@@ -105,8 +105,12 @@ var (
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	membersCache       *fido.TieredCache[string, cachedMembers]
-	logger             *slog.Logger
-	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
+	// statsPersistCache holds the running index-size total (one bounded key) on
+	// disk so the counter resumes across a restart instead of re-seeding from the
+	// stale planner estimate. Re-derivable, so it's cache, not required storage.
+	statsPersistCache *fido.TieredCache[string, indexStats]
+	logger            *slog.Logger
+	publicMode        bool // true when --public flag is set; changes branding and shows data-sharing notice
 	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
@@ -1737,6 +1741,7 @@ func main() {
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 		membersCache = openNullCache[cachedMembers]("members cache")
+		statsPersistCache = openNullCache[indexStats]("stats persist cache")
 	} else {
 		cacheDir := os.Getenv("CACHE_DIR")
 		if cacheDir == "" {
@@ -1770,6 +1775,9 @@ func main() {
 		// sample set — persisting these survives restarts and keeps warmed
 		// archive pages instant.
 		membersCache = openLocalFSCache[cachedMembers]("prism-members", cacheDir, "members cache")
+		// One bounded key; on disk so the live "files indexed" total resumes
+		// across a restart instead of dipping back to the planner estimate.
+		statsPersistCache = openLocalFSCache[indexStats]("prism-stats", cacheDir, "stats persist cache")
 	}
 	// feedStaleCache is always memory-only (like feedCache) — even under
 	// --no-cache, the in-memory tier is what backs the degraded-mode fallback,
@@ -1931,6 +1939,11 @@ func main() {
 		if membersCache != nil {
 			if err := membersCache.Close(); err != nil {
 				logger.Error("failed to close fido members cache", "error", err)
+			}
+		}
+		if statsPersistCache != nil {
+			if err := statsPersistCache.Close(); err != nil {
+				logger.Error("failed to close fido stats persist cache", "error", err)
 			}
 		}
 
