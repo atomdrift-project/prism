@@ -391,9 +391,12 @@ if (input && form) {
     as_of: parseFloat(el.getAttribute("data-asof")),
   };
   if (Number.isFinite(seed.total) && Number.isFinite(seed.as_of)) {
-    displayed = seed.total;
-    lastWhole = Math.floor(displayed);
     applyAnchor(seed);
+    // Start at the extrapolated value, not the raw anchor, so a reload picks up
+    // where the previous view left off instead of visibly dipping back.
+    displayed = projected(anchor);
+    lastWhole = Math.floor(displayed);
+    if (numEl) numEl.textContent = fmt(displayed);
   }
 
   const poll = () => {

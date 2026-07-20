@@ -44,21 +44,54 @@ const (
 	statsQueryTimeout = 5 * time.Second
 )
 
-// statsPollLoop refreshes the estimate once per statsPollInterval and publishes
-// it to statsLatest. It runs for the life of ctx, independent of the hopper
-// connection: buildIndexStats errors while hopper is down and the loop simply
-// retries, so it needs no hookup to the connect/reconnect callbacks. All
-// database cost of the counter lives here.
+// statsQueryResult is one poll's raw readings from the database.
+type statsQueryResult struct {
+	dbNow    time.Time // the database clock, for the next poll's delta boundary
+	estimate int64     // pg_class.reltuples — the planner's live-row estimate
+	delta    int64     // rows inserted since the previous poll (capped at the window)
+	recent   int64     // rows inserted in the last statsRateWindow
+}
+
+// statsPollLoop maintains the published index-size estimate. It keeps a
+// monotonic running total that advances each poll by the exact number of rows
+// inserted since the previous poll (the created_at delta), with reltuples as a
+// floor that heals any undercount. This is what makes the counter survive a
+// reload: the estimate lives on the server, not in each client, so every
+// visitor — and every refresh — shares the same up-to-the-minute total and the
+// number never jumps backward. Between polls the client scales it with the
+// published rate. The loop runs for the life of ctx, independent of the hopper
+// connection (queryStats errors while hopper is down and it simply retries), so
+// it needs no hookup to the connect/reconnect callbacks. All database cost of
+// the counter lives here: one bounded query a minute.
 func statsPollLoop(ctx context.Context) {
+	// Seed the delta boundary a window back so the very first query scans only
+	// the last statsRateWindow rather than the whole table.
+	lastPollAt := time.Now().Add(-statsRateWindow)
+	var total int64
+	seeded := false
 	poll := func() {
 		qctx, cancel := context.WithTimeout(ctx, statsQueryTimeout)
 		defer cancel()
-		snap, err := buildIndexStats(qctx)
+		res, err := queryStats(qctx, lastPollAt)
 		if err != nil {
 			logger.Debug("stats poll failed", "error", err)
 			return
 		}
-		statsLatest.Store(&snap)
+		if !seeded {
+			total = res.estimate // anchor the running total to the planner estimate once
+			seeded = true
+		} else {
+			total += res.delta // advance by the exact inserts since the last poll
+			if res.estimate > total {
+				total = res.estimate // heal an undercount; never move backward
+			}
+		}
+		lastPollAt = res.dbNow
+		statsLatest.Store(&indexStats{
+			GeneratedAt: time.Now().UTC(),
+			Total:       total,
+			RatePerMin:  float64(res.recent) / statsRateWindow.Minutes(),
+		})
 	}
 	poll() // warm immediately so the counter can appear on the first page load
 	ticker := time.NewTicker(statsPollInterval)
@@ -73,63 +106,55 @@ func statsPollLoop(ctx context.Context) {
 	}
 }
 
-// buildIndexStats reads the current index-size estimate and recent ingestion
-// rate with two cheap queries through the exposed pool. The total is
-// pg_class.reltuples — the planner's live-tuple estimate, an O(1) catalog read
-// with no table scan, so it costs the same at a thousand rows or a hundred
-// million. The rate counts rows inserted in the last statsRateWindow, an index
-// range scan over just that window via idx_samples_created_at (the Grafana
-// ingest-rate index), so it stays cheap regardless of corpus size. Both go
+// queryStats reads the estimate, the since-last-poll delta, the trailing-window
+// count, and the database clock in a single query through the exposed pool. The
+// estimate is pg_class.reltuples — an O(1) catalog read, no table scan. The two
+// counts come from one index range scan over just the last statsRateWindow via
+// idx_samples_created_at (the Grafana ingest-rate index), so the whole poll
+// stays cheap regardless of corpus size. The delta's lower bound is clamped to
+// the window with GREATEST so a delayed poll can never widen the scan. It goes
 // through the pool rather than a hopper method so a one-line stats read needs no
 // hopper release + pin bump to ship.
-func buildIndexStats(ctx context.Context) (indexStats, error) {
+func queryStats(ctx context.Context, since time.Time) (statsQueryResult, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return indexStats{}, errors.New("hopper not connected")
+		return statsQueryResult{}, errors.New("hopper not connected")
 	}
 	pool := db.Pool()
 	if pool == nil {
-		return indexStats{}, errors.New("hopper pool unavailable")
+		return statsQueryResult{}, errors.New("hopper pool unavailable")
 	}
 	// Gate behind the shared hopper-db breaker so a degraded hopper sheds the
-	// reads fast, exactly like the feed and per-sample lookups.
+	// read fast, exactly like the feed and per-sample lookups.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
-		return indexStats{}, fmt.Errorf("hopper-db stats: %w", berr)
+		return statsQueryResult{}, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	fail := func() {
-		dbBreaker.failure()
-		recordDep(ctx, "hopper-db", "stats", "error", start)
-	}
-
-	var total int64
-	if err := pool.QueryRow(ctx,
-		`SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass`).Scan(&total); err != nil {
-		fail()
-		return indexStats{}, fmt.Errorf("sample count estimate: %w", err)
-	}
-	if total < 0 {
-		total = 0 // reltuples is -1 until the table's first ANALYZE
-	}
-
-	// The interval literal is derived from statsRateWindow so the divisor below
+	// The interval literal is derived from statsRateWindow so the rate divisor
 	// can't drift from the window the query measures.
 	window := fmt.Sprintf("%d minutes", int(statsRateWindow.Minutes()))
-	var recent int64
-	if err := pool.QueryRow(ctx,
-		`SELECT count(*) FROM samples WHERE created_at >= now() - $1::interval`, window).Scan(&recent); err != nil {
-		fail()
-		return indexStats{}, fmt.Errorf("recent insert count: %w", err)
+	var res statsQueryResult
+	err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass),
+		  count(*) FILTER (WHERE created_at >= GREATEST($1::timestamptz, now() - $2::interval)),
+		  count(*) FILTER (WHERE created_at >= now() - $2::interval),
+		  now()
+		FROM samples
+		WHERE created_at >= now() - $2::interval`,
+		since, window).Scan(&res.estimate, &res.delta, &res.recent, &res.dbNow)
+	if err != nil {
+		dbBreaker.failure()
+		recordDep(ctx, "hopper-db", "stats", "error", start)
+		return statsQueryResult{}, fmt.Errorf("stats query: %w", err)
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "stats", "ok", start)
-
-	return indexStats{
-		GeneratedAt: time.Now().UTC(),
-		Total:       total,
-		RatePerMin:  float64(recent) / statsRateWindow.Minutes(),
-	}, nil
+	if res.estimate < 0 {
+		res.estimate = 0 // reltuples is -1 until the table's first ANALYZE
+	}
+	return res, nil
 }
 
 // cachedIndexStats returns the latest published estimate, if the poller has
