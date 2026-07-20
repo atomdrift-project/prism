@@ -43,7 +43,7 @@ type flaggedDep struct {
 // Structure tab does that). Sidecars are skipped: a registry record about a
 // dependency is provenance, not the payload. Returns the capped chips and how
 // many were dropped, so the panel can say so instead of silently truncating.
-func flaggedDeps(files []cleaveFile) ([]flaggedDep, int) {
+func flaggedDeps(files []cleaveFile) (flagged []flaggedDep, dropped int) {
 	declared := declaredLocators(files)
 
 	var deps []flaggedDep

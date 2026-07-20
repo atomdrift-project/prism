@@ -31,63 +31,34 @@ type indexStats struct {
 var statsLatest atomic.Pointer[indexStats]
 
 const (
-	// statsPollInterval is how often the background poller reads the estimate.
-	// One O(1) catalog read a minute is the entire database cost of the counter,
-	// no matter how many clients are watching or how fast they poll.
+	// statsPollInterval is how often the background poller refreshes the
+	// estimate. Two cheap queries a minute — one O(1) catalog read and one
+	// bounded index range scan — is the entire database cost of the counter, no
+	// matter how many clients are watching or how fast they poll.
 	statsPollInterval = time.Minute
-	// statsRateWindow is the span the ingestion rate is averaged over. The
-	// poller keeps ~this much history of readings and derives the rate from the
-	// oldest-to-newest delta, so the rate costs no extra query.
+	// statsRateWindow is the trailing window the ingestion rate is measured over.
 	statsRateWindow = 15 * time.Minute
-	// statsQueryTimeout bounds a single estimate read so a wedged catalog query
-	// can't stall the poller (it never should — the read is O(1)).
-	statsQueryTimeout = 3 * time.Second
+	// statsQueryTimeout bounds one poll's queries so a wedged read can't stall
+	// the poller. Generous: both queries are fast, but the rate scan is bounded
+	// only by how many rows landed in the last statsRateWindow.
+	statsQueryTimeout = 5 * time.Second
 )
 
-// statsReading is one timestamped estimate, retained only long enough to derive
-// the trailing-window rate.
-type statsReading struct {
-	at    time.Time
-	value int64
-}
-
-// statsPollLoop reads the index-size estimate once per statsPollInterval and
-// publishes it (with a trailing-window rate) to statsLatest. It runs for the
-// life of ctx, independent of the hopper connection: sampleCountEstimate errors
-// while hopper is down and the loop simply retries, so it needs no hookup to
-// the connect/reconnect callbacks. All database cost of the counter lives here.
+// statsPollLoop refreshes the estimate once per statsPollInterval and publishes
+// it to statsLatest. It runs for the life of ctx, independent of the hopper
+// connection: buildIndexStats errors while hopper is down and the loop simply
+// retries, so it needs no hookup to the connect/reconnect callbacks. All
+// database cost of the counter lives here.
 func statsPollLoop(ctx context.Context) {
-	var readings []statsReading
 	poll := func() {
 		qctx, cancel := context.WithTimeout(ctx, statsQueryTimeout)
 		defer cancel()
-		total, err := sampleCountEstimate(qctx)
+		snap, err := buildIndexStats(qctx)
 		if err != nil {
 			logger.Debug("stats poll failed", "error", err)
 			return
 		}
-		now := time.Now()
-		readings = append(readings, statsReading{at: now, value: total})
-		// Keep only readings inside the rate window.
-		cutoff := now.Add(-statsRateWindow)
-		kept := readings[:0]
-		for _, rd := range readings {
-			if rd.at.After(cutoff) {
-				kept = append(kept, rd)
-			}
-		}
-		readings = kept
-
-		rate := 0.0
-		if len(readings) >= 2 {
-			oldest := readings[0]
-			if span := now.Sub(oldest.at).Minutes(); span > 0 {
-				if rate = float64(total-oldest.value) / span; rate < 0 {
-					rate = 0 // reltuples can wobble down between analyzes
-				}
-			}
-		}
-		statsLatest.Store(&indexStats{GeneratedAt: now.UTC(), Total: total, RatePerMin: rate})
+		statsLatest.Store(&snap)
 	}
 	poll() // warm immediately so the counter can appear on the first page load
 	ticker := time.NewTicker(statsPollInterval)
@@ -102,43 +73,63 @@ func statsPollLoop(ctx context.Context) {
 	}
 }
 
-// sampleCountEstimate reads pg_class.reltuples for the samples table — the
-// planner's live-tuple estimate, maintained by (auto)ANALYZE and replicated to
-// our read replica. It is an O(1) catalog read: no scan of the samples table,
-// no dependency on any index or migration, so it costs the same whether the
-// corpus is a thousand rows or a hundred million. It goes through the exposed
-// pool because wrapping a one-line stats read in a hopper method would force a
-// hopper release + go.mod pin bump to ship.
-func sampleCountEstimate(ctx context.Context) (int64, error) {
+// buildIndexStats reads the current index-size estimate and recent ingestion
+// rate with two cheap queries through the exposed pool. The total is
+// pg_class.reltuples — the planner's live-tuple estimate, an O(1) catalog read
+// with no table scan, so it costs the same at a thousand rows or a hundred
+// million. The rate counts rows inserted in the last statsRateWindow, an index
+// range scan over just that window via idx_samples_created_at (the Grafana
+// ingest-rate index), so it stays cheap regardless of corpus size. Both go
+// through the pool rather than a hopper method so a one-line stats read needs no
+// hopper release + pin bump to ship.
+func buildIndexStats(ctx context.Context) (indexStats, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return 0, errors.New("hopper not connected")
+		return indexStats{}, errors.New("hopper not connected")
 	}
 	pool := db.Pool()
 	if pool == nil {
-		return 0, errors.New("hopper pool unavailable")
+		return indexStats{}, errors.New("hopper pool unavailable")
 	}
 	// Gate behind the shared hopper-db breaker so a degraded hopper sheds the
-	// read fast, exactly like the feed and per-sample lookups.
+	// reads fast, exactly like the feed and per-sample lookups.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
-		return 0, fmt.Errorf("hopper-db stats: %w", berr)
+		return indexStats{}, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	var total int64
-	err := pool.QueryRow(ctx,
-		`SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass`).Scan(&total)
-	if err != nil {
+	fail := func() {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
-		return 0, fmt.Errorf("sample count estimate: %w", err)
 	}
-	dbBreaker.success()
-	recordDep(ctx, "hopper-db", "stats", "ok", start)
+
+	var total int64
+	if err := pool.QueryRow(ctx,
+		`SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass`).Scan(&total); err != nil {
+		fail()
+		return indexStats{}, fmt.Errorf("sample count estimate: %w", err)
+	}
 	if total < 0 {
 		total = 0 // reltuples is -1 until the table's first ANALYZE
 	}
-	return total, nil
+
+	// The interval literal is derived from statsRateWindow so the divisor below
+	// can't drift from the window the query measures.
+	window := fmt.Sprintf("%d minutes", int(statsRateWindow.Minutes()))
+	var recent int64
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM samples WHERE created_at >= now() - $1::interval`, window).Scan(&recent); err != nil {
+		fail()
+		return indexStats{}, fmt.Errorf("recent insert count: %w", err)
+	}
+	dbBreaker.success()
+	recordDep(ctx, "hopper-db", "stats", "ok", start)
+
+	return indexStats{
+		GeneratedAt: time.Now().UTC(),
+		Total:       total,
+		RatePerMin:  float64(recent) / statsRateWindow.Minutes(),
+	}, nil
 }
 
 // cachedIndexStats returns the latest published estimate, if the poller has
