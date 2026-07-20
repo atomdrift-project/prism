@@ -30,6 +30,7 @@ func uploadTemplateForTest(t *testing.T) *template.Template {
 		},
 		"ecoColor":  func(string) string { return "slate" },
 		"chromaCSS": func() template.CSS { return "" },
+		"commaInt":  commaInt,
 	}
 	tmpl, err := template.New("upload.html").Funcs(funcs).ParseFS(templatesFS,
 		"templates/base.html", "templates/upload.html")
@@ -186,9 +187,9 @@ func TestUploadTemplateEmptyFeed(t *testing.T) {
 	}
 }
 
-// TestRenderFeedCriticalityDefault covers the new default: a bare frontpage
-// URL is the suspicious+hostile view (>=1), and criticality=any is the
-// explicit opt-out.
+// TestRenderFeedCriticalityDefault covers the default: a bare frontpage URL is
+// the unfiltered "Any" view (crit ""), identical to the explicit criticality=any
+// opt-in; junk criticality also degrades to it.
 func TestRenderFeedCriticalityDefault(t *testing.T) {
 	if uploadTemplate == nil {
 		uploadTemplate = uploadTemplateForTest(t)
@@ -197,7 +198,7 @@ func TestRenderFeedCriticalityDefault(t *testing.T) {
 		url  string
 		want string
 	}{
-		{"/", `value="&gt;=1" selected`}, // default: suspicious + hostile
+		{"/", `value="any" selected`}, // default: unfiltered (Any)
 		{"/?criticality=any", `value="any" selected`},
 		{"/?criticality=benign", `value="benign" selected`},
 		{"/?criticality=bogus", `value="any" selected`}, // junk degrades to the unfiltered view

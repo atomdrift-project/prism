@@ -232,6 +232,83 @@
             font-size: 13.5px;
             white-space: nowrap;
         }
+        /* Masthead: the Fallout lockup on the left, the live "samples analyzed"
+           counter (Peak Meter) on the right. Bottom-aligned so the number sits
+           on the lede's baseline and the two columns read as one lockup. */
+        .masthead {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 14px 48px;
+            align-items: end;
+        }
+        .mh-lock { min-width: 0; }
+        .mh-lock .lede { white-space: normal; max-width: 52ch; text-wrap: balance; }
+        .counter {
+            display: grid;
+            gap: 10px;
+            justify-items: end;
+            min-width: 0;
+        }
+        .c-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--mono);
+            font-size: 11px;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+            color: var(--slate);
+            white-space: nowrap;
+        }
+        .live-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--toxic-muted);
+            box-shadow: 0 0 0 3px var(--toxic-dim);
+            flex: 0 0 auto;
+            transition: transform 0.12s ease, background 0.12s, box-shadow 0.2s;
+        }
+        /* The dot flicks on each detection — the only "Geiger" cue; the trefoil
+           stays in the wordmark and is never repeated here. */
+        .live-dot.blip {
+            background: var(--toxic-dark);
+            transform: scale(1.5);
+            box-shadow: 0 0 0 4px var(--toxic-dim);
+        }
+        .meter-row { display: flex; align-items: flex-end; gap: 16px; }
+        .meter-num {
+            font-family: var(--mono);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            font-size: clamp(30px, 5vw, 50px);
+            color: var(--carbon);
+            line-height: 1;
+            letter-spacing: -0.01em;
+        }
+        /* Peak meter: a compact dose-meter column that kicks on each catch and
+           decays, with a slow-decaying peak-hold marker. Built by upload.js. */
+        .peak-meter {
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 3px;
+            height: 48px;
+            padding-bottom: 3px;
+        }
+        .peak-seg {
+            width: 10px;
+            height: 6px;
+            border-radius: 1.5px;
+            background: var(--mist);
+            border: 1px solid var(--border);
+            transition: background 0.1s, border-color 0.1s;
+        }
+        .peak-seg.on { background: var(--toxic-muted); border-color: var(--toxic-muted); }
+        .peak-seg.on.hi { background: var(--toxic-dark); border-color: var(--toxic-dark); }
+        .peak-seg.peak { background: var(--toxic-dark); border-color: var(--toxic-dark); box-shadow: 0 0 0 2px var(--toxic-dim); }
+        @media (prefers-reduced-motion: reduce) {
+            .live-dot, .peak-seg { transition: none; }
+        }
         .filters {
             display: flex;
             flex-direction: column;
@@ -820,6 +897,9 @@
             h1 { font-size: 22px; }
             .fallout-symbol { width: 28px; height: 28px; }
             .lede { white-space: normal; }
+            .masthead { grid-template-columns: 1fr; gap: 16px; }
+            .mh-lock .lede { max-width: none; }
+            .counter { justify-items: start; }
             .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
             .filter-form { display: grid; grid-template-columns: 1fr; }
             select { width: 100%; }
@@ -855,18 +935,31 @@
         </nav>
 
         <section class="intro">
-            <div class="headline">
-                <h1 class="fallout-lockup">
-                    <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                        <circle class="field" cx="50" cy="50" r="44"></circle>
-                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
-                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
-                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
-                        <circle class="core" cx="50" cy="50" r="8"></circle>
-                    </svg>
-                    <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
-                </h1>
-                <p class="lede">{{if or (eq .SelectedCrit "hostile") (eq .SelectedCrit ">=1")}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
+            <div class="masthead">
+                <div class="headline mh-lock">
+                    <h1 class="fallout-lockup">
+                        <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+                            <circle class="field" cx="50" cy="50" r="44"></circle>
+                            <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
+                            <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
+                            <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
+                            <circle class="core" cx="50" cy="50" r="8"></circle>
+                        </svg>
+                        <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
+                    </h1>
+                    <p class="lede">{{if or (eq .SelectedCrit "hostile") (eq .SelectedCrit ">=1")}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
+                </div>
+                {{if .HasHopper}}
+                <div class="counter c-meter" id="index-counter" role="img"
+                    aria-label="Live count of samples analyzed"
+                    {{with .Stats}}data-total="{{.Total}}" data-rate="{{.RatePerMin}}" data-asof="{{.GeneratedAt.UnixMilli}}"{{end}}>
+                    <div class="c-eyebrow"><span class="live-dot" id="counter-dot"></span>Samples analyzed</div>
+                    <div class="meter-row">
+                        <div class="meter-num" id="counter-num">{{with .Stats}}{{commaInt .Total}}{{else}}&mdash;{{end}}</div>
+                        <div class="peak-meter" id="counter-meter" aria-hidden="true"></div>
+                    </div>
+                </div>
+                {{end}}
             </div>
         </section>
 

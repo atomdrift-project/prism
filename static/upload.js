@@ -311,3 +311,143 @@ if (input && form) {
     }, 15000);
   });
 }
+
+// --- Live "samples analyzed" counter -------------------------------------
+//
+// The masthead shows a live estimate of the analyzed-corpus size. The server
+// hands us an anchor {total, rate_per_min, as_of}; we extrapolate the digits
+// between polls (total + rate * elapsed) so the number climbs smoothly, and
+// re-anchor every poll — never backward. Each whole-number tick is one
+// "detection": it flicks the dot and kicks the peak meter, the Geiger cue.
+// The counter is progressive enhancement: with no JS the server-rendered
+// value still shows; a failed poll simply keeps extrapolating from the last
+// anchor. Guarded so it no-ops on pages without the counter.
+(() => {
+  const el = document.getElementById("index-counter");
+  if (!el) return;
+  const numEl = document.getElementById("counter-num");
+  const meterEl = document.getElementById("counter-meter");
+  const dotEl = document.getElementById("counter-dot");
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  const SEGMENTS = 10;
+  const segs = [];
+  if (meterEl) {
+    for (let i = 0; i < SEGMENTS; i++) {
+      const s = document.createElement("div");
+      s.className = "peak-seg";
+      meterEl.appendChild(s);
+      segs.push(s);
+    }
+  }
+  let level = 0.14;
+  let peak = 0.14;
+
+  // anchor: { total, ratePerSec, asOfMs }. displayed is the eased on-screen
+  // value; started gates the loop until we have any anchor.
+  let anchor = null;
+  let displayed = 0;
+  let lastWhole = 0;
+  let started = false;
+
+  const fmt = (n) => Math.floor(n).toLocaleString("en-US");
+
+  // projected value of an anchor at the current wall clock.
+  const projected = (a) => {
+    if (!a) return displayed;
+    const elapsed = Math.max(0, (Date.now() - a.asOfMs) / 1000);
+    return a.total + a.ratePerSec * elapsed;
+  };
+
+  const applyAnchor = (d) => {
+    const next = {
+      total: Number(d.total),
+      ratePerSec: Number(d.rate_per_min || 0) / 60,
+      asOfMs: Number(d.as_of),
+    };
+    if (!Number.isFinite(next.total) || !Number.isFinite(next.asOfMs)) return;
+    // Never let a re-anchor move the counter backward: if the fresh anchor
+    // projects below what's already shown (we extrapolated ahead), keep
+    // climbing from the current value under the new rate instead of snapping.
+    if (!started || projected(next) >= displayed) {
+      anchor = next;
+    } else {
+      anchor = { total: displayed, ratePerSec: next.ratePerSec, asOfMs: Date.now() };
+    }
+    started = true;
+  };
+
+  // Seed from the server-rendered attributes so the counter moves on first
+  // paint, before the first poll returns.
+  const seed = {
+    total: parseFloat(el.getAttribute("data-total")),
+    rate_per_min: parseFloat(el.getAttribute("data-rate")),
+    as_of: parseFloat(el.getAttribute("data-asof")),
+  };
+  if (Number.isFinite(seed.total) && Number.isFinite(seed.as_of)) {
+    displayed = seed.total;
+    lastWhole = Math.floor(displayed);
+    applyAnchor(seed);
+  }
+
+  const poll = () => {
+    fetch("/_/stats", { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.total === "number") applyAnchor(d);
+      })
+      .catch(() => {
+        /* keep extrapolating from the last anchor — the counter just coasts */
+      });
+  };
+
+  let lastFrame = performance.now();
+  const frame = (now) => {
+    const dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+
+    if (started) {
+      const target = projected(anchor);
+      if (target > displayed) {
+        displayed += (target - displayed) * Math.min(1, dt * 3);
+        if (target - displayed < 0.5) displayed = target;
+      }
+      const whole = Math.floor(displayed);
+      if (whole !== lastWhole) {
+        const ticks = whole - lastWhole;
+        lastWhole = whole;
+        if (numEl) numEl.textContent = fmt(displayed);
+        if (!reduceMotion) {
+          level = Math.min(1, level + 0.26 * Math.min(ticks, 3));
+          if (dotEl) {
+            dotEl.classList.add("blip");
+            setTimeout(() => dotEl.classList.remove("blip"), 110);
+          }
+        }
+      }
+    }
+
+    if (segs.length) {
+      if (reduceMotion) {
+        level = 0.4;
+        peak = 0.6;
+      } else {
+        level *= 0.5 ** (dt / 0.55); // ~0.55s half-life
+        peak = Math.max(level, peak * 0.5 ** (dt / 2.4)); // slow peak-hold
+      }
+      const lit = Math.max(1, Math.round(level * SEGMENTS));
+      const pIdx = Math.min(SEGMENTS - 1, Math.max(0, Math.round(peak * SEGMENTS) - 1));
+      for (let i = 0; i < SEGMENTS; i++) {
+        const on = i < lit;
+        segs[i].classList.toggle("on", on);
+        segs[i].classList.toggle("hi", on && i >= SEGMENTS - 3);
+        segs[i].classList.toggle("peak", i === pIdx && pIdx >= lit);
+      }
+    }
+    requestAnimationFrame(frame);
+  };
+
+  poll();
+  setInterval(poll, 20000);
+  requestAnimationFrame(frame);
+})();

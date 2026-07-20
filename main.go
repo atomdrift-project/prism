@@ -105,8 +105,13 @@ var (
 	reportCache        *fido.TieredCache[string, cachedReport]
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	membersCache       *fido.TieredCache[string, cachedMembers]
-	logger             *slog.Logger
-	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
+	// statsCache holds the single global corpus snapshot (total analyzed + rate)
+	// behind statsCacheTTL; statsStaleCache is its long-TTL degraded fallback.
+	// Both memory-only (like feedCache): one key, cheap to recompute on restart.
+	statsCache      *fido.TieredCache[string, indexStats]
+	statsStaleCache *fido.TieredCache[string, indexStats]
+	logger          *slog.Logger
+	publicMode      bool // true when --public flag is set; changes branding and shows data-sharing notice
 	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
 	// because connectHopperWithRetry may replace it from a background
 	// goroutine after a startup-time hopper.Open failure; all readers must
@@ -1017,6 +1022,11 @@ type feedPageData struct {
 	Domains    []string
 	Ecosystems []string
 	Rows       []feedRow
+	// Stats seeds the masthead's live "samples analyzed" counter with the
+	// current corpus snapshot. Populated non-blocking from statsCache (nil until
+	// the cache is warm — the client's /_/stats poll fills it in either way), so
+	// it never adds a DB scan to the feed's hot path.
+	Stats *indexStats
 	// Pages holds the per-page links (empty when a single page covers every
 	// row); Page is the 1-indexed current page over the cached snapshot.
 	Pages     []feedPageLink
@@ -1722,6 +1732,7 @@ func main() {
 		reportCache = openNullCache[cachedReport]("report cache")
 		parentArchiveCache = openNullCache[cachedParents]("parent-archive cache")
 		membersCache = openNullCache[cachedMembers]("members cache")
+		statsCache = openNullCache[indexStats]("stats cache")
 	} else {
 		cacheDir := os.Getenv("CACHE_DIR")
 		if cacheDir == "" {
@@ -1755,11 +1766,17 @@ func main() {
 		// sample set — persisting these survives restarts and keeps warmed
 		// archive pages instant.
 		membersCache = openLocalFSCache[cachedMembers]("prism-members", cacheDir, "members cache")
+		// statsCache is memory-only for the same reason as feedCache: one key,
+		// cheap to recompute, and it holds only a small corpus snapshot.
+		statsCache = openNullCache[indexStats]("stats cache")
 	}
 	// feedStaleCache is always memory-only (like feedCache) — even under
 	// --no-cache, the in-memory tier is what backs the degraded-mode fallback,
 	// and it holds only last-known-good feed snapshots that are cheap to rebuild.
 	feedStaleCache = openNullCache[cachedFeedSnapshot]("feed stale cache")
+	// statsStaleCache is the counter's degraded-mode fallback, memory-only and
+	// long-TTL like feedStaleCache.
+	statsStaleCache = openNullCache[indexStats]("stats stale cache")
 
 	// Parse templates. isPublic is available in all templates so base.html
 	// can switch branding and banners without per-handler plumbing.
@@ -1780,6 +1797,7 @@ func main() {
 		},
 		"ecoColor":  ecosystemColor,
 		"chromaCSS": func() template.CSS { return chromaStylesheet },
+		"commaInt":  commaInt,
 	}
 	var tmplErr error
 	uploadTemplate, tmplErr = template.New("upload.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
@@ -1910,6 +1928,16 @@ func main() {
 				logger.Error("failed to close fido members cache", "error", err)
 			}
 		}
+		if statsCache != nil {
+			if err := statsCache.Close(); err != nil {
+				logger.Error("failed to close fido stats cache", "error", err)
+			}
+		}
+		if statsStaleCache != nil {
+			if err := statsStaleCache.Close(); err != nil {
+				logger.Error("failed to close fido stats stale cache", "error", err)
+			}
+		}
 
 		// Flush OTel exporters last so the shutdown logs/spans go out.
 		if err := obsShutdown(shutdownCtx); err != nil {
@@ -1998,6 +2026,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /_/challenge", handleChallenge)
 	mux.HandleFunc("POST /_/challenge", handleChallenge)
 	mux.HandleFunc("GET /_/health", handleHealth)
+	mux.HandleFunc("GET /_/stats", handleStats)
 	mux.Handle("GET /_/metrik", obs.MetricsHandler())
 	registerPprof(mux)
 	mux.HandleFunc("GET /{ecosystem}", handleEcosystemRedirect)
@@ -2707,11 +2736,10 @@ var feedStaticPrecacheEcosystems = []string{
 }
 
 // feedPrecacheVariants enumerates the baseline feed views the static tier
-// sweeps: the criticality views (hostile first — it is the frontpage default
-// and the Hot Particle's candidate pool), the unfiltered "any" view, the
-// feeds-only views, and each static ecosystem's default (hostile) view. The
-// hot tier adds whatever pivots real traffic favors; everything else is
-// cached on demand.
+// sweeps: the unfiltered "any" view (the frontpage default), the criticality
+// views (hostile is the Hot Particle's candidate pool), the feeds-only views,
+// and each static ecosystem's default (hostile) view. The hot tier adds
+// whatever pivots real traffic favors; everything else is cached on demand.
 var feedPrecacheVariants = func() []feedQueryArgs {
 	v := []feedQueryArgs{
 		{criticality: "hostile"},
@@ -4141,13 +4169,14 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// The feed's default view is the malware feed: with no explicit
-	// ?criticality= key the page shows suspicious and hostile verdicts
-	// (class >= 1). The unfiltered view stays reachable — the dropdown's Any
-	// option submits criticality=any, which normalizes to "". The search box
-	// mirrors only explicit choices (critToken), so the default view keeps an
-	// empty box and round-trips back to itself.
-	crit, critToken := ">=1", ""
+	// The feed's default view is unfiltered ("Any" — every analyzed verdict).
+	// With no explicit ?criticality= key crit is "", which loadFeedRowsFromHopper
+	// treats as "require litmus, no class filter". The dropdown's Any option
+	// submits criticality=any, which normalizes to "" too, so the default and the
+	// explicit Any view render identically. The search box mirrors only explicit
+	// choices (critToken), so the default view keeps an empty box and round-trips
+	// back to itself.
+	crit, critToken := "", ""
 	if r.URL.Query().Has("criticality") {
 		crit = normalizeCriticality(r.URL.Query().Get("criticality"))
 		critToken = firstNonEmpty(crit, "any")
@@ -4240,6 +4269,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			}
 			paginateFeed(&data, r)
 		}
+	}
+	// Seed the live counter with the cached corpus snapshot if one is already
+	// warm — a non-blocking read that never triggers a scan on the feed path.
+	// When cold, the template omits the initial value and the client's /_/stats
+	// poll populates it.
+	if s, ok := cachedIndexStats(r.Context()); ok {
+		data.Stats = &s
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
