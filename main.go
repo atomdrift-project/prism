@@ -774,6 +774,12 @@ type resultData struct {
 	// in the Structure tab. Its single root has children only for an archive;
 	// a lone file yields a one-node tree, and the tab stays hidden.
 	Tree []*treeNode
+	// FlaggedDeps are the fetched dependencies whose own scan classified
+	// suspicious or hostile, shown in a panel between the hero and the tabs
+	// (same placement as "Found in"/"Referenced by"). Benign dependencies are
+	// deliberately absent — the panel exists to explain an elevated verdict,
+	// not to inventory every reference (the Structure tab does that).
+	FlaggedDeps []flaggedDep
 	// TopTraits is the Content tab's headline: the few most significant traits
 	// (highest crit×confidence, suspicious+), each linking to its evidence
 	// section. Empty when nothing reaches the suspicious bar.
@@ -7193,6 +7199,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Tree = buildFileTree(report.Files)
 		data.HasTree = len(data.Tree) > 0 && len(data.Tree[0].Children) > 0
 	}
+
+	// Flagged fetched dependencies: external content the sample references
+	// whose own scan classified suspicious or hostile — the panel answers "why
+	// is this sample elevated" at a glance. Benign dependencies stay out of it
+	// (they remain visible in the Structure tab's fetched chips).
+	data.FlaggedDeps = flaggedDeps(report.Files)
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).
