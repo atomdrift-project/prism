@@ -780,6 +780,10 @@ type resultData struct {
 	// deliberately absent — the panel exists to explain an elevated verdict,
 	// not to inventory every reference (the Structure tab does that).
 	FlaggedDeps []flaggedDep
+	// FlaggedDepsHidden is how many flagged dependencies the panel's cap
+	// dropped, so a sample with hundreds of them says so rather than
+	// presenting the first two dozen as the whole set.
+	FlaggedDepsHidden int
 	// TopTraits is the Content tab's headline: the few most significant traits
 	// (highest crit×confidence, suspicious+), each linking to its evidence
 	// section. Empty when nothing reaches the suspicious bar.
@@ -7204,7 +7208,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// whose own scan classified suspicious or hostile — the panel answers "why
 	// is this sample elevated" at a glance. Benign dependencies stay out of it
 	// (they remain visible in the Structure tab's fetched chips).
-	data.FlaggedDeps = flaggedDeps(report.Files)
+	data.FlaggedDeps, data.FlaggedDepsHidden = flaggedDeps(report.Files)
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).

@@ -1561,6 +1561,65 @@
         .parents-when {
             font-variant-numeric: tabular-nums;
         }
+        /* Flagged-dependency chips. A chip is a link to the dependency's own
+           record — the ↗ suffix and hover tint are the affordance, matching
+           the feed's dependency chips. A pathological locator ellipsizes
+           rather than stretching the panel. */
+        .dep-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px 16px;
+        }
+        .dep-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 48ch;
+            overflow: hidden;
+            padding: 3px 9px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--mist);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--carbon);
+            text-decoration: none;
+        }
+        .dep-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .dep-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .dep-chip.hostile .dep-dot { background: #ef4444; }
+        .dep-chip.suspicious .dep-dot { background: #facc15; }
+        .dep-kind {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        a.dep-chip::after { content: " ↗"; opacity: 0.55; }
+        a.dep-chip:hover, a.dep-chip:focus-visible {
+            border-color: var(--isotope);
+            color: var(--isotope);
+            background: var(--white);
+        }
+        a.dep-chip:focus-visible { outline: 2px solid var(--isotope); outline-offset: 1px; }
+        .dep-chip.more {
+            color: var(--slate);
+            font-weight: 400;
+        }
         .feedback-prompt {
             text-align: center;
             font-size: 14px;
@@ -1845,6 +1904,23 @@
         <div class="limited-info-notice">
             This file type is not yet supported, so analysis could not be performed. See <a href="/formats">supported formats</a> for best results, or analyze locally with <a href="https://codeberg.org/atomdrift/litmus">litmus</a>.
         </div>
+        {{end}}
+
+        {{- /* Flagged dependencies lead the panels: they explain an elevated
+             verdict, where the backlinks below only place the sample. A chip
+             links to the dependency's own record; one without a usable sha
+             renders as a plain span, same anatomy either way. */ -}}
+        {{if .FlaggedDeps}}
+        <section class="parents-panel" aria-labelledby="deps-title">
+            <h2 class="parents-title" id="deps-title">{{len .FlaggedDeps}} flagged dependenc{{if eq (len .FlaggedDeps) 1}}y{{else}}ies{{end}}</h2>
+            <div class="dep-chips">
+                {{range .FlaggedDeps}}
+                {{if .Href}}<a class="dep-chip {{.Crit}}" href="{{.Href}}" title="{{.Locator}}"><span class="dep-dot" aria-hidden="true"></span><span class="dep-label">{{.Label}}</span>{{if .Kind}}<span class="dep-kind">{{.Kind}}</span>{{end}}</a>
+                {{else}}<span class="dep-chip {{.Crit}}" title="{{.Locator}}"><span class="dep-dot" aria-hidden="true"></span><span class="dep-label">{{.Label}}</span>{{if .Kind}}<span class="dep-kind">{{.Kind}}</span>{{end}}</span>{{end}}
+                {{end}}
+                {{if .FlaggedDepsHidden}}<span class="dep-chip more">+{{.FlaggedDepsHidden}} more in Structure</span>{{end}}
+            </div>
+        </section>
         {{end}}
 
         {{define "parentItem"}}
