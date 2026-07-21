@@ -994,16 +994,38 @@ func (r feedRow) SubID() string {
 }
 
 // FallbackTraits is the ledger row's rationale line when no LLM
-// interpretation ran: the top two headline traits. Nil when a Why line
-// exists — the interpretation replaces the chips rather than stacking with
-// them. Value receiver for the same html/template reason as Title.
+// interpretation ran: the top two headline traits. The interpretation replaces
+// the chips rather than stacking with them. Value receiver for the same
+// html/template reason as Title.
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r feedRow) FallbackTraits() []feedTrait {
-	if r.Why != "" {
-		return nil
+	if r.Why == "" {
+		return r.TopTraits[:min(2, len(r.TopTraits))]
 	}
-	return r.TopTraits[:min(2, len(r.TopTraits))]
+	return r.DependencyTraits()
+}
+
+// DependencyTraits are the row's chips that link somewhere — the flagged
+// dependencies this sample pulled in, each pointing at that dependency's own
+// record.
+//
+// These survive an LLM rationale where ordinary chips do not, because they are
+// not a restatement of it. A prose rationale explains *why* the sample is
+// elevated; the chip is the only way to navigate to the dependency that made it
+// so. Suppressing them alongside the rest hid that link on precisely the rows
+// most likely to have one: a verdict inherited from a hostile dependency is
+// exactly what an interpretation pass tends to write about.
+//
+//nolint:gocritic // value receiver required by html/template, as above
+func (r feedRow) DependencyTraits() []feedTrait {
+	var deps []feedTrait
+	for _, t := range r.TopTraits {
+		if t.Href != "" {
+			deps = append(deps, t)
+		}
+	}
+	return deps[:min(2, len(deps))]
 }
 
 type feedPageData struct {

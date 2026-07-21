@@ -1097,6 +1097,10 @@
                         <div class="row-why">
                             {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
                             <span class="why">{{.Why}}</span>
+                            {{/* Dependency chips ride alongside the prose: the rationale
+                                 says why this sample is elevated, the chip is the only
+                                 link to the dependency that made it so. */}}
+                            {{range .DependencyTraits}}{{template "why-chip" .}}{{end}}
                         </div>
                         {{else if .FallbackTraits}}
                         <div class="row-why">

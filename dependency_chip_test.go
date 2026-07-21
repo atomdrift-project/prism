@@ -243,3 +243,65 @@ func TestUploadTemplateEscapesHostileChipText(t *testing.T) {
 		t.Error("hostile locator reached the page unescaped")
 	}
 }
+
+// A dependency chip is navigation, not rationale: it is the only link from a
+// feed row to the dependency that elevated it. An LLM interpretation replaces
+// the ordinary trait chips, and suppressing the dependency chip with them hid
+// that link on exactly the rows most likely to need it — a verdict inherited
+// from a hostile dependency is what an interpretation tends to write about.
+func TestDependencyChipSurvivesAnLLMRationale(t *testing.T) {
+	depChip := feedTrait{
+		ID:   "depends on hostile npm: zaboodle v1.49",
+		Full: "fetch/dependency-verdict — pkg:npm/zaboodle@1.49",
+		Crit: "hostile",
+		Href: "/file/" + depTestSHA,
+	}
+	plainChip := feedTrait{ID: "exec.install-hook", Full: "objectives/exec/install-hook", Crit: "hostile"}
+
+	withWhy := feedRow{Why: "Installs a hook that exfiltrates env vars.", TopTraits: []feedTrait{depChip, plainChip}}
+	got := withWhy.FallbackTraits()
+	if len(got) != 1 || got[0].Href != depChip.Href {
+		t.Errorf("with a rationale: chips = %+v, want only the dependency chip", got)
+	}
+
+	withoutWhy := feedRow{TopTraits: []feedTrait{depChip, plainChip}}
+	if len(withoutWhy.FallbackTraits()) != 2 {
+		t.Errorf("without a rationale: chips = %+v, want both headline traits", withoutWhy.FallbackTraits())
+	}
+
+	noDeps := feedRow{Why: "Nothing linkable here.", TopTraits: []feedTrait{plainChip}}
+	if len(noDeps.FallbackTraits()) != 0 {
+		t.Errorf("a rationale with no dependency chips = %+v, want none", noDeps.FallbackTraits())
+	}
+}
+
+// The chip must actually reach the page alongside the prose, not just survive
+// the accessor.
+func TestUploadTemplateRendersDependencyChipBesideRationale(t *testing.T) {
+	tmpl := uploadTemplateForTest(t)
+	data := feedPageData{
+		HasHopper: true,
+		Rows: []feedRow{{
+			SHA256:         testSHARow,
+			Filename:       "wrapper-1.0.0.tgz",
+			Classification: "hostile",
+			Why:            "Pulls a hostile dependency at install time.",
+			TopTraits: []feedTrait{{
+				ID: "depends on hostile npm: zaboodle v1.49", Crit: "hostile",
+				Href: "/file/" + depTestSHA,
+			}},
+			AnalyzedDate: "2h ago",
+		}},
+	}
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, data); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	html := sb.String()
+	if !strings.Contains(html, "Pulls a hostile dependency at install time.") {
+		t.Error("rationale missing")
+	}
+	if !strings.Contains(html, `href="/file/`+depTestSHA+`"`) {
+		t.Error("dependency chip must render beside the rationale, not be replaced by it")
+	}
+}
