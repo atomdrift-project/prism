@@ -294,7 +294,7 @@ if (input && form) {
     if (file.size > maxSize) {
       uploadStatus.className = "top-upload-status";
       uploadStatus.innerHTML =
-        'File exceeds 100 MB. Use <a href="https://codeberg.org/atomdrift/litmus">litmus CLI</a>.';
+        'File exceeds 100 MB. Use <a href="https://github.com/atomdrift-project/litmus">litmus CLI</a>.';
       input.value = "";
       return;
     }

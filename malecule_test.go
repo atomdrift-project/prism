@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/atomdrift/hopper"
+	"github.com/atomdrift-project/hopper"
 )
 
 func TestMain(m *testing.M) {

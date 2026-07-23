@@ -50,7 +50,7 @@ var depLatencyBucketsSec = []float64{
 // and leave the instrument nil; recordDep then degrades to a no-op so a
 // telemetry fault never breaks a request path.
 func initDependencyMetrics() {
-	m := otel.Meter("codeberg.org/atomdrift/prism")
+	m := otel.Meter("github.com/atomdrift-project/prism")
 
 	if c, err := m.Int64Counter(
 		"prism.dependency.requests",

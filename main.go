@@ -40,9 +40,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"codeberg.org/atomdrift/hopper"
-	"codeberg.org/atomdrift/hopper/pkgparse"
-	"codeberg.org/atomdrift/obs"
+	"github.com/atomdrift-project/hopper"
+	"github.com/atomdrift-project/hopper/pkgparse"
+	"github.com/atomdrift-project/obs"
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -6160,7 +6160,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 					Icon:  "⚖",
 					Title: "File too large",
 					MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
-						`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+						`<a href="https://github.com/atomdrift-project/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
 				})
 				return
 			}
@@ -6244,7 +6244,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 				Icon:  "⚖",
 				Title: "File too large",
 				MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
-					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+					`<a href="https://github.com/atomdrift-project/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
 			})
 			return
 		}
