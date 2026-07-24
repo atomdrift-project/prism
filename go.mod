@@ -3,9 +3,9 @@ module github.com/atomdrift-project/prism
 go 1.26
 
 require (
-	github.com/atomdrift-project/hopper v0.0.0-20260721061334-4b1079552073
-	github.com/atomdrift-project/obs v0.0.0-20260703082727-3c749c4cdf21
 	github.com/alecthomas/chroma/v2 v2.27.0
+	github.com/atomdrift-project/hopper v0.0.0-20260723192823-acc1cb744fe1
+	github.com/atomdrift-project/obs v0.0.0-20260723192826-95a12564dd6f
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/null v1.11.0

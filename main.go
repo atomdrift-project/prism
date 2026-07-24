@@ -40,13 +40,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/atomdrift-project/hopper"
-	"github.com/atomdrift-project/hopper/pkgparse"
-	"github.com/atomdrift-project/obs"
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/atomdrift-project/hopper"
+	"github.com/atomdrift-project/hopper/pkgparse"
+	"github.com/atomdrift-project/obs"
 	"github.com/codeGROOVE-dev/fido"
 	"github.com/codeGROOVE-dev/fido/pkg/store/localfs"
 	"github.com/codeGROOVE-dev/fido/pkg/store/null"
@@ -127,11 +127,13 @@ const (
 	// server-side attribution in pg_stat_activity.
 	defaultHopperDSN     = "postgres://hopper@hopper-replica:5432/hopper?sslmode=disable&application_name=prism"
 	defaultHopperAPIAddr = "hopper-api:8081"
-	// defaultLitmusAddr is the dedicated litmus analysis server (litmus serve's
-	// default listen port). Uploads are analyzed here first; when it returns,
-	// prism publishes the result to hopper so hopper's own worker pool doesn't
-	// duplicate the work. Optional — when unreachable, hopper analyzes instead.
-	defaultLitmusAddr = "litmus:49999"
+	// defaultLitmusAddr is the dedicated analysis server (atomscan serve's
+	// default listen port), reachable as "scan" — "litmus" is the service's
+	// former name and no longer resolves. Uploads are analyzed here first; when
+	// it returns, prism publishes the result to hopper so hopper's own worker
+	// pool doesn't duplicate the work. Optional — when unreachable, hopper
+	// analyzes instead.
+	defaultLitmusAddr = "scan:49999"
 	// feedCacheTTL is the absolute lifetime of any cached feed query
 	// (frontpage default, criticality variants, ecosystem/domain/formula
 	// filtered, and free-text ?q= searches). Every feed query goes through
@@ -431,15 +433,19 @@ func (tl *tokenLimiter) reap() {
 	}
 }
 
-// Upload: 1 every 30 seconds per IP, burst of 2 (a single quick retry).
-var uploadRateLimiter = newTokenLimiter(2, 1.0/30.0)
+// Upload: 1 every 10 seconds per IP, burst of 5. A burst of 2 rejected anyone
+// comparing a handful of samples back to back, which is ordinary use, not abuse
+// — the real capacity backstop is the litmusSlots semaphore, which sheds to
+// hopper-only analysis rather than failing.
+var uploadRateLimiter = newTokenLimiter(5, 1.0/10.0)
 
 // uploadGlobalLimiter caps the total upload rate across all clients so a
 // botnet rotating IPs can't bypass the per-IP limiter and overwhelm the
-// hopper analyzer pipeline. 5/min sustained, burst of 10 absorbs a small
-// crowd of legitimate users without queueing. Bypassing both this and the
-// per-IP limiter requires both a botnet *and* patience.
-var uploadGlobalLimiter = newTokenBucket(5.0/60.0, 10)
+// analyzer pipeline. 15/min sustained, burst of 20 absorbs a small crowd of
+// legitimate users without queueing, and leaves enough headroom that one
+// active uploader isn't throttled by the global budget alone. Bypassing both
+// this and the per-IP limiter requires both a botnet *and* patience.
+var uploadGlobalLimiter = newTokenBucket(15.0/60.0, 20)
 
 // Download: 25 per hour, no burst above the hourly budget.
 var downloadRateLimiter = newTokenLimiter(25, 25.0/3600.0)
@@ -2661,6 +2667,15 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		if classification == "" {
 			continue
 		}
+		// Registry sidecars are the `*.registry.json` provenance snapshots
+		// (cleave types them "registry") forager writes beside each package —
+		// metadata *about* an artifact, not an artifact. hopper's feed query
+		// excludes them (file_type <> 'registry'), so this is a fallback that
+		// keeps the index clean when served by an older hopper predating that
+		// filter, mirroring the criticality recheck below.
+		if firstNonEmpty(res.FileType, sample.FileType) == "registry" {
+			continue
+		}
 		// Belt-and-suspenders check that the row's class falls into the
 		// requested set even after hopper's SQL filter. The criticality
 		// argument may be a named band ("hostile") or a comparison
@@ -4442,6 +4457,18 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			renderPending(w, r, sha, pend.Filename)
 			return
 		}
+		// Ingestion ran and gave up. Say so plainly: a 404 here would tell the
+		// user to re-upload, which cannot help until the backends recover.
+		var failed *uploadFailedError
+		if errors.As(err, &failed) {
+			reqLogger.Warn("rendering upload-failure state", "filename", failed.Filename)
+			renderError(w, r, http.StatusServiceUnavailable, errorData{
+				Icon:    "⚠",
+				Title:   "Analysis unavailable",
+				Message: "We received this file but couldn't analyze it — the analysis backends were unreachable. This is a problem on our side; re-uploading won't help until it's resolved.",
+			})
+			return
+		}
 		reqLogger.Warn("failed to retrieve or regenerate result",
 			"error", err,
 			"hopper_api_addr", hopperAPIAddr,
@@ -4888,11 +4915,20 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		// A just-uploaded sample may not be in hopper yet (upload + analysis
 		// run in the background) and may not have reached prism's cache either.
 		// Show the "analyzing" page rather than a 404 until ingestion lands a
-		// result or gives up.
+		// result, and an explicit failure page once it has given up.
 		if v, ok := uploadsInFlight.Load(sha); ok {
-			var pend *pendingAnalysisError
-			if filename, isStr := v.(string); isStr && !errors.As(err, &pend) {
-				return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: filename}
+			if st, isState := v.(uploadState); isState {
+				switch {
+				case st.FailedAt.IsZero():
+					var pend *pendingAnalysisError
+					if !errors.As(err, &pend) {
+						return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: st.Filename}
+					}
+				case time.Since(st.FailedAt) <= uploadFailureTTL:
+					return false, storedResult{}, &uploadFailedError{SHA: sha, Filename: st.Filename}
+				default:
+					uploadsInFlight.Delete(sha)
+				}
 			}
 		}
 		return false, storedResult{}, err
@@ -6160,7 +6196,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 					Icon:  "⚖",
 					Title: "File too large",
 					MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
-						`<a href="https://github.com/atomdrift-project/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+						`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
 				})
 				return
 			}
@@ -6244,7 +6280,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 				Icon:  "⚖",
 				Title: "File too large",
 				MessageHTML: `The web interface accepts files up to 100 MB. For larger files, use ` +
-					`<a href="https://github.com/atomdrift-project/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
 			})
 			return
 		}
@@ -6269,20 +6305,17 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	// alone makes /file/<sha> render. Mark the sha in-flight first so the page
 	// shows an "analyzing" state (not a 404) during the window before either
 	// backend has a result.
-	uploadsInFlight.Store(sha, filename)
+	uploadsInFlight.Store(sha, uploadState{Filename: filename})
 	go ingestUpload(context.WithoutCancel(ctx), buf, sha, filename)
 
 	http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
 }
 
-// errUploadTokenUnavailable means hopper hasn't yet provisioned the upload
-// token (typically because the hopper service is still warming up). The
-// upload handler surfaces this as a 503-equivalent UX to the user.
-var errUploadTokenUnavailable = errors.New("hopper upload token unavailable")
-
 // uploadTokenKey is the hopper KV key carrying the Bearer token for
-// POST /api/upload. Rotations are signalled by hopper returning 401 to a
-// previously-valid token; the next read picks up the new value.
+// POST /api/upload. The token is optional: hopper only enforces one when it has
+// provisioned one, so an absent key means the endpoint is open and prism uploads
+// without an Authorization header. Rotations are signalled by hopper returning
+// 401 to a previously-valid token; the next read picks up the new value.
 const uploadTokenKey = "upload_token"
 
 // buildUploadEnvelope encodes the multipart body hopper's /api/upload expects:
@@ -6324,16 +6357,18 @@ func buildUploadEnvelope(buf []byte, sha, filename string) (payload []byte, cont
 	return body.Bytes(), mw.FormDataContentType(), nil
 }
 
-// uploadToHopper POSTs the provenance+file envelope to hopper /api/upload with
-// a Bearer token read from hopper's KV table. The envelope is buffered so the
-// request can be safely retried with backoff (and so the 401 rotation path can
-// resend the same bytes). On a 401 (token rotation signal) we re-read the token
-// from KV and retry the upload exactly once.
+// uploadToHopper POSTs the provenance+file envelope to hopper /api/upload,
+// optionally bearing a token read from hopper's KV table. The envelope is
+// buffered so the request can be safely retried with backoff (and so the 401
+// rotation path can resend the same bytes). On a 401 (token rotation signal) we
+// re-read the token from KV and retry the upload exactly once.
+//
+// The token is best-effort by design: hopper leaves /api/upload unauthenticated
+// unless it has provisioned one, so neither an absent KV row nor an unreachable
+// hopper-db is a reason to skip an upload that would otherwise succeed. Failing
+// here would strand the sample entirely whenever the analysis server is also
+// down, which is exactly when the durable store matters most.
 func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
-	db := hopperDB.Load()
-	if db == nil {
-		return nil, errUploadTokenUnavailable
-	}
 	target := hopperUploadURL(filename)
 
 	body, contentType, err := buildUploadEnvelope(buf, sha, filename)
@@ -6341,8 +6376,12 @@ func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *
 		return nil, err
 	}
 
-	token, err := fetchUploadToken(ctx, db, log)
-	if err != nil {
+	db := hopperDB.Load()
+	token := ""
+	if db == nil {
+		log.Warn("hopper db not connected; uploading without a token",
+			"hopper_db_host", hopperDSNHost(hopperDBDSN))
+	} else if token, err = fetchUploadToken(ctx, db, log); err != nil {
 		return nil, err
 	}
 	resp, err := postUploadWithRetry(ctx, target, body, contentType, token, log)
@@ -6365,17 +6404,19 @@ func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *
 }
 
 // fetchUploadToken reads the upload token from hopper's KV with exponential
-// backoff and jitter. ErrNotFound is treated as terminal — it signals that
-// hopper hasn't been provisioned yet, and no amount of retrying will help
-// inside this request's lifetime; we map it to errUploadTokenUnavailable so
-// the handler can render a clean "warming up" page.
+// backoff and jitter, returning "" when hopper has not provisioned one. An
+// absent key is a normal, terminal answer rather than a failure: hopper's
+// checkUploadAuth is a no-op until a token is set, so "" means "upload without
+// an Authorization header", not "give up".
 func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (string, error) {
 	var token string
 	err := retry.Do(
 		func() error {
 			v, err := db.KVGet(ctx, uploadTokenKey)
 			if errors.Is(err, hopper.ErrNotFound) {
-				return retry.Unrecoverable(errUploadTokenUnavailable)
+				log.Debug("no hopper upload token provisioned; uploading unauthenticated")
+				token = ""
+				return nil
 			}
 			if err != nil {
 				return err
@@ -6397,9 +6438,6 @@ func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (str
 			log.Warn("upload token fetch retry", "attempt", n+1, "error", err)
 		}),
 	)
-	if errors.Is(err, errUploadTokenUnavailable) {
-		return "", errUploadTokenUnavailable
-	}
 	if err != nil {
 		return "", fmt.Errorf("fetch upload token: %w", err)
 	}
@@ -6461,7 +6499,11 @@ func postOnce(ctx context.Context, target string, body []byte, contentType, toke
 		return nil, fmt.Errorf("build hopper request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Authorization", "Bearer "+token)
+	// An empty token means hopper has not provisioned one and leaves the
+	// endpoint open; sending "Bearer " would be rejected as malformed.
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
 	if err != nil {
@@ -6528,10 +6570,50 @@ const (
 var litmusSlots = make(chan struct{}, maxConcurrentLitmus)
 
 // uploadsInFlight tracks shas whose upload is being ingested in the background
-// (sha -> filename string). lookupResult renders a pending "analyzing" page for
+// (sha -> uploadState). lookupResult renders a pending "analyzing" page for
 // these instead of a 404 during the window before hopper has the sample row or
-// litmus has cached a verdict.
+// litmus has cached a verdict, and an explicit failure page once ingestion has
+// given up.
 var uploadsInFlight sync.Map
+
+// uploadState is what uploadsInFlight holds for one sha. FailedAt is zero while
+// ingestion is in flight and set when both paths gave up — the entry outlives
+// the ingestion in that case so /file/<sha> can explain what happened instead of
+// 404ing a hash the user handed us seconds ago.
+type uploadState struct {
+	FailedAt time.Time
+	Filename string
+}
+
+// uploadFailureTTL bounds how long a failed ingestion stays visible on the
+// detail page. Long enough to cover the redirect plus a few manual reloads,
+// short enough that a later successful re-upload of the same sha isn't
+// shadowed by the stale failure.
+const uploadFailureTTL = 15 * time.Minute
+
+// markUploadFailed records a terminal ingestion failure and sweeps expired
+// entries. The sweep is O(entries) but runs only on failure, and the map holds
+// at most one entry per in-flight or recently-failed upload.
+func markUploadFailed(sha, filename string, now time.Time) {
+	uploadsInFlight.Store(sha, uploadState{Filename: filename, FailedAt: now})
+	uploadsInFlight.Range(func(k, v any) bool {
+		if st, ok := v.(uploadState); ok && !st.FailedAt.IsZero() && now.Sub(st.FailedAt) > uploadFailureTTL {
+			uploadsInFlight.Delete(k)
+		}
+		return true
+	})
+}
+
+// uploadFailedError signals that a sample's background ingestion finished with
+// neither path accepting it. Handlers render a "couldn't analyze" page rather
+// than a 404, which would wrongly invite the user to retry an upload that just
+// failed deterministically.
+type uploadFailedError struct {
+	SHA      string
+	Filename string
+}
+
+func (e *uploadFailedError) Error() string { return "upload ingestion failed for " + e.SHA }
 
 // litmusEnvelope is the subset of litmus /analyze's {"ml":…,"raw":…} response
 // that prism forwards to hopper. Error is set when litmus reports a structured
@@ -6581,7 +6663,6 @@ func litmusAnalyzeURL() string {
 func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
 	ctx, cancel := context.WithTimeout(ctx, uploadIngestTimeout)
 	defer cancel()
-	defer uploadsInFlight.Delete(sha)
 	log := logger.With("sha256", sha, "filename", filename)
 
 	var (
@@ -6640,8 +6721,16 @@ func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
 	case hopperOK:
 		log.Warn("upload ingested via hopper only; litmus fast path failed (hopper worker will analyze)")
 	default:
+		// Keep the sha marked so /file/<sha> can say the analysis failed. A bare
+		// delete here leaves the detail page unable to tell a just-failed upload
+		// from an unknown hash, which is what produced a "Result not found" 404
+		// telling the user to re-upload a file that had just deterministically
+		// failed to ingest.
 		log.Error("UPLOAD INGESTION FAILED: neither litmus nor hopper accepted the sample; it is not viewable")
+		markUploadFailed(sha, filename, time.Now())
+		return
 	}
+	uploadsInFlight.Delete(sha)
 }
 
 // cacheLitmusResult stores a litmus verdict in prism's result cache so
