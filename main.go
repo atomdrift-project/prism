@@ -629,6 +629,13 @@ type ParentArchive struct {
 	Classification string // "hostile" / "suspicious" / "benign" / ""
 	AnalyzedAt     string // human-readable UTC date
 	AnalyzedAgo    string // relative time
+	// Parent identity, for members whose headline names their source (OS images):
+	// feed distinguishes an image container, and ecosystem/version/package give the
+	// clean "netbsd 10.1 (amd64)" without parsing the filename.
+	Feed      string
+	Ecosystem string
+	Version   string
+	Package   string
 }
 
 // containsChild reports whether this parent physically contains the child
@@ -982,6 +989,74 @@ func identityHeadline(registryTitle, pkg, filename, version string) string {
 		return title
 	}
 	return title + " " + version
+}
+
+// imageMemberHeadline builds a headline naming the OS image a file came from —
+// e.g. "/bin/ls from netbsd 10.1 (amd64)" — for a sample found inside an osimage
+// container. It reads the already-loaded found-in parents (no extra query): the
+// in-archive path from the containment edge, and the OS/version/edition from the
+// parent anchor's columns. Returns false when no osimage parent applies, leaving
+// the ordinary filename headline in place.
+func imageMemberHeadline(parents []ParentArchive) (string, bool) {
+	for _, p := range parents {
+		if p.Feed != "osimage" {
+			continue
+		}
+		inPath := p.Path
+		if i := strings.Index(inPath, "!!"); i >= 0 {
+			inPath = inPath[i+2:] // the path within the image, past the "container!!" prefix
+		} else {
+			inPath = filepath.Base(inPath)
+		}
+		if inPath != "" && !strings.HasPrefix(inPath, "/") {
+			inPath = "/" + inPath
+		}
+		os := osDisplayName(firstNonEmpty(p.Ecosystem, p.Package))
+		if os == "" {
+			return inPath, inPath != ""
+		}
+		hl := inPath + " from " + os
+		if p.Version != "" {
+			hl += " " + p.Version
+		}
+		// Package is "os/edition"; surface just the edition (e.g. "amd64").
+		if edition := strings.TrimPrefix(p.Package, p.Ecosystem+"/"); edition != "" && edition != p.Package {
+			hl += " (" + edition + ")"
+		}
+		return hl, true
+	}
+	return "", false
+}
+
+// osDisplayNames maps an os-image ecosystem slug to its properly-cased product
+// name. Only irregular capitalizations and multi-word names need an entry; a plain
+// title-case fallback handles the rest (and any future slug). Keys are the lower-
+// case slugs the osimage feed emits.
+var osDisplayNames = map[string]string{
+	"macos": "macOS", "netbsd": "NetBSD", "freebsd": "FreeBSD", "openbsd": "OpenBSD",
+	"ghostbsd": "GhostBSD", "dragonflybsd": "DragonFly BSD", "opensuse": "openSUSE",
+	"nixos": "NixOS", "freedos": "FreeDOS", "reactos": "ReactOS", "redox": "Redox",
+	"raspios": "Raspberry Pi OS", "androidx86": "Android-x86", "kdeneon": "KDE neon",
+	"mxlinux": "MX Linux", "almalinux": "AlmaLinux", "amazonlinux": "Amazon Linux",
+	"oraclelinux": "Oracle Linux", "endeavouros": "EndeavourOS", "cachyos": "CachyOS",
+	"omnios": "OmniOS", "openindiana": "OpenIndiana", "9front": "9front",
+	"talos": "Talos Linux", "photon": "Photon OS", "qubes": "Qubes OS", "arch": "Arch Linux",
+	"kali": "Kali Linux", "mint": "Linux Mint", "void": "Void Linux", "rocky": "Rocky Linux",
+	"centos": "CentOS", "proxmox": "Proxmox VE", "parrot": "Parrot OS", "kubuntu": "Kubuntu",
+	"lubuntu": "Lubuntu", "xubuntu": "Xubuntu", "opensuse-tumbleweed": "openSUSE Tumbleweed",
+}
+
+// osDisplayName returns the product name for an os-image ecosystem slug — an
+// explicit entry when the casing is irregular ("macos" → "macOS"), otherwise the
+// slug with its first letter upper-cased. Empty in, empty out.
+func osDisplayName(slug string) string {
+	if slug == "" {
+		return ""
+	}
+	if d, ok := osDisplayNames[strings.ToLower(slug)]; ok {
+		return d
+	}
+	return strings.ToUpper(slug[:1]) + slug[1:]
 }
 
 // SubID is the machine coordinate shown muted beside the headline, only when
@@ -4537,6 +4612,13 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			parentsDur = time.Since(parentsStart)
 		}
 	}
+	// For a file extracted from an OS image, name the source image in the headline
+	// — "/bin/ls from netbsd 10.1 (amd64)" — so a thousand "ls" binaries don't all
+	// read the same. Sourced from the already-fetched found-in parent, so no query.
+	if hl, ok := imageMemberHeadline(data.Parents); ok {
+		data.Headline = hl
+	}
+
 	switch r.URL.Query().Get("layout") {
 	case "helix4", "helix5", "organic2", "organic4", "organic5", "flat":
 		data.Layout = r.URL.Query().Get("layout")
@@ -4849,6 +4931,10 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 			ChildSHA:    childSHA,
 			Path:        ref.Path,
 			Rel:         ref.Rel,
+			Feed:        ref.Feed,
+			Ecosystem:   ref.Ecosystem,
+			Version:     ref.Version,
+			Package:     ref.Package,
 		}
 		if len(ref.LitmusResult) > 0 {
 			var ml litmusMlResponse
