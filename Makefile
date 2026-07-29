@@ -9,7 +9,7 @@ help:
 	@echo "  make dev                    Run locally against PRODUCTION hopper-db + hopper-api"
 	@echo "  make dev-watch              Like 'dev' but auto-rebuilds/restarts on changes (needs air)"
 	@echo "  make clean                  Clean build artifacts"
-	@echo "  make deploy                 git pull + bastille rollout (BUILD=build RUN=prism)"
+	@echo "  make deploy                 git pull + native rollout (Bastille or systemd + Cloudflare)"
 	@echo "  make install-precommit      Install the pre-commit hook (test + lint + no go.mod overrides)"
 	@echo ""
 
@@ -20,10 +20,11 @@ RUN ?= prism
 
 deploy: export MAKEFLAGS :=
 deploy:
-	git pull
+	env -u HOPPER_DB_PASS -u CF_TUNNEL_TOKEN git pull --ff-only
 	@case "$$(uname -s)" in \
 		FreeBSD) ./hacks/rollout-bastille.sh "$(BUILD)" "$(RUN)" ;; \
-		*) echo "error: deploy is bastille-only; run from a FreeBSD host"; exit 1 ;; \
+		Linux) ./hacks/rollout-systemd.sh ;; \
+		*) echo "error: deploy supports FreeBSD/Bastille and Linux/systemd"; exit 1 ;; \
 	esac
 
 build:

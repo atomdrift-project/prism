@@ -49,6 +49,24 @@ func TestRetryAfterSeconds(t *testing.T) {
 	}
 }
 
+func TestDownloadFastFailsWhenHopperAPIIsUnavailable(t *testing.T) {
+	oldStatus := backendStatus
+	backendStatus = newBackendAvailabilityMonitor("", "", &http.Client{Timeout: time.Second})
+	t.Cleanup(func() { backendStatus = oldStatus })
+
+	const sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/file/"+sha+".dl", http.NoBody)
+	serveFileDownload(w, r, sha, "127.0.0.1")
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "15" {
+		t.Fatalf("Retry-After = %q, want 15", got)
+	}
+}
+
 // fetchOutcome captures everything a test needs to assert about one
 // fetchHopperFile call. The response body is read and closed inside the helper,
 // so it never escapes and tests stay free of lifecycle boilerplate.

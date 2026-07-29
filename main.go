@@ -212,19 +212,29 @@ func randomCSRFKey() [32]byte {
 	return k
 }
 
-// loadCSRFKey resolves the CSRF HMAC key from PRISM_CSRF_KEY. The secret is run
-// through SHA-256 so any encoding (hex, base64, raw) yields a full-width
+// loadCSRFKey resolves the CSRF HMAC key from PRISM_CSRF_KEY_FILE (preferred)
+// or PRISM_CSRF_KEY. The file form lets service managers provide the key as a
+// credential instead of exposing it in the process environment. The secret is
+// run through SHA-256 so any encoding (hex, base64, raw) yields a full-width
 // 256-bit key; a >=32-character minimum is a coarse entropy floor. Absent or
 // too-short, it keeps the per-process random key and warns — fine for a single
 // instance or local dev, but a multi-instance deployment will otherwise see
 // intermittent "session expired" failures on upload/rescan/download.
 func loadCSRFKey() [32]byte {
 	secret := strings.TrimSpace(os.Getenv("PRISM_CSRF_KEY"))
+	if path := strings.TrimSpace(os.Getenv("PRISM_CSRF_KEY_FILE")); path != "" {
+		data, err := os.ReadFile(path) //nolint:gosec // service-operator configuration, not request input
+		if err != nil {
+			logger.Warn("failed to read PRISM_CSRF_KEY_FILE; falling back to PRISM_CSRF_KEY", "error", err)
+		} else {
+			secret = strings.TrimSpace(string(data))
+		}
+	}
 	if len(secret) < 32 {
 		if secret != "" {
-			logger.Warn("PRISM_CSRF_KEY too short (need >=32 chars); using per-process CSRF key")
+			logger.Warn("configured CSRF key too short (need >=32 chars); using per-process CSRF key")
 		} else {
-			logger.Warn("PRISM_CSRF_KEY unset; using per-process CSRF key — tokens will not validate across instances or restarts")
+			logger.Warn("CSRF key unset; using per-process CSRF key — tokens will not validate across instances or restarts")
 		}
 		return csrfKey
 	}
@@ -709,6 +719,7 @@ type resultData struct {
 	StyleNonce      string // style-src nonce
 	Size            string
 	SizeBytes       int64 // raw size of the top-level (or first) file; gates the download button
+	DownloadEnabled bool  // false when the shared hopper-api liveness probe is down
 	RiskLevel       string
 	ReportCreated   string
 	ReportProvider  string
@@ -1150,8 +1161,9 @@ type feedPageData struct {
 	// the feed section just shows a "temporarily unavailable" notice instead
 	// of a 500. HasHopper stays true so the filter bar keeps working.
 	FeedDegraded bool
-	// UploadEnabled mirrors the package-level toggle so the template can
-	// pick the real upload form vs. the disabled placeholder.
+	// UploadEnabled combines the package-level toggle with the shared backend
+	// liveness state so the template can pick the real upload form vs. the
+	// disabled placeholder without probing either backend per request.
 	UploadEnabled bool
 	// FeedsOnly restricts the feed to label='bad' samples (threat-intel +
 	// curated open-source malware sources) — the rows that carry the
@@ -1768,16 +1780,16 @@ func main() {
 	// Parse command-line flags via the stdlib flag package. Single-dash and
 	// double-dash forms are both accepted (flag package treats `--foo` as
 	// `-foo`), with `-flag=value` and `-flag value` both supported.
-	var (
-		noCache bool
-		dbDSN   string
-		port    string
-	)
+	var noCache bool
+	var dbDSN string
+	var listenAddr string
+	var port string
 	cli := flag.NewFlagSet("prism", flag.ExitOnError)
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
 	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: atomdrift lab branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
+	cli.StringVar(&listenAddr, "listen", os.Getenv("LISTEN_ADDR"), "HTTP listen address (overrides LISTEN_ADDR env; empty means all interfaces)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
 	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "litmus analysis server host:port (also reads LITMUS_ADDR env; empty disables, falling back to hopper-only analysis)")
@@ -1834,6 +1846,12 @@ func main() {
 
 	// Load configuration from environment
 	loadConfig()
+	// Optional controls depend on live HTTP backends, but page renders must not
+	// fan out into per-request probes. Check both servers once now, then refresh
+	// their process-wide atomic status at most every 15 seconds.
+	backendStatus = newBackendAvailabilityMonitor(hopperAPIAddr, litmusAddr, nil)
+	backendStatus.refresh(ctx)
+	go backendStatus.run(ctx)
 
 	// Initialize fido caches. See doc.go for the cache discipline.
 	if noCache {
@@ -1990,7 +2008,7 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:              ":" + port,
+		Addr:              net.JoinHostPort(listenAddr, port),
 		Handler:           obs.Middleware(requestLogger(rl.limit(securityHeaders(mux)))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -2059,6 +2077,7 @@ func main() {
 	}()
 
 	logger.Info("server starting",
+		"listen_addr", listenAddr,
 		"port", port,
 		"hopper_api_addr", hopperAPIAddr,
 	)
@@ -4314,7 +4333,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	purlCanonical, purlBase, purlVersion := normalizePURL(rawPURL)
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
-		UploadEnabled:   uploadEnabled,
+		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
 		FeedsOnly:       parseBoolQuery(r.URL.Query().Get("feeds")),
 		Nonce:           nonceFor(r),
 		StyleNonce:      styleNonceFor(r),
@@ -4581,6 +4600,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "rescan")
 	data.DownloadToken = csrfToken(r, "download")
+	data.DownloadEnabled = hopperAPIAvailable()
 	// A compacted-archive envelope carries member stubs but no member bodies;
 	// the browser hydrates the Content + galaxy from /file/{sha}/members after
 	// first paint.
@@ -5527,6 +5547,13 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 
+	if !hopperAPIAvailable() {
+		reqLogger.Info("download rejected: hopper-api unavailable")
+		w.Header().Set("Retry-After", "15")
+		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Gate downloads to button-driven flows. The token in ?t=<…> is
 	// session-bound and short-lived (csrfMaxAge), so a copy-pasted URL,
 	// a search-engine fetch, or a wayback capture all fail. Mirrors the
@@ -6199,6 +6226,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			Icon:    "⏸",
 			Title:   "Upload temporarily disabled",
 			Message: "Uploads are temporarily disabled while we rework this feature.",
+		})
+		return
+	}
+	if !uploadBackendsAvailable() {
+		reqLogger.Info("upload rejected: analysis backends unavailable")
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "⏸",
+			Title:   "Upload temporarily unavailable",
+			Message: "Uploads will return automatically when the analysis services reconnect.",
 		})
 		return
 	}

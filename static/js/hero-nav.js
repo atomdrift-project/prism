@@ -59,7 +59,7 @@ wireDownloadClipboard();
 // click (both mouse and the `d` shortcut route here, since the keyboard
 // path calls `.click()`) so the user can paste it into the save dialog.
 function wireDownloadClipboard() {
-  const link = document.querySelector(".download-btn[data-basename]");
+  const link = document.querySelector("a.download-btn[data-basename]");
   if (!link) return;
   const live = document.getElementById("a11y-live");
   link.addEventListener("click", () => {
@@ -131,7 +131,7 @@ function wireKeys() {
       case "d": {
         // The download is a plain <a> — .click() honors its href and
         // triggers the browser's normal download/navigate behavior.
-        const link = document.querySelector(".download-btn");
+        const link = document.querySelector("a.download-btn");
         if (link) {
           ev.preventDefault();
           link.click();
@@ -193,7 +193,7 @@ function refreshHelpRows(dialog) {
   if (next) rows.push(["j", "Next sample"]);
   if (prev) rows.push(["k", "Previous sample"]);
   if (document.querySelector(".rescan-btn:not([disabled])")) rows.push(["r", "Re-queue analysis"]);
-  if (document.querySelector(".download-btn")) rows.push(["d", "Download original bytes"]);
+  if (document.querySelector("a.download-btn")) rows.push(["d", "Download original bytes"]);
   rows.push(["x", "Back to the feed"]);
   rows.push(["?", "This help"]);
   rows.push(["Esc", "Close help"]);

@@ -1,0 +1,64 @@
+[Unit]
+Description=Cloudflare Tunnel for Prism
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+Wants=network-online.target prism.service
+After=network-online.target prism.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=cloudflared
+DynamicUser=yes
+ExecStart=cloudflared tunnel --no-autoupdate run --token-file %d/tunnel-token
+LoadCredential=tunnel-token:/etc/prism/cloudflared-token
+Environment=HOME=/run/cloudflared
+RuntimeDirectory=cloudflared
+RuntimeDirectoryMode=0700
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=15
+KillSignal=SIGTERM
+UMask=0077
+TasksMax=256
+
+# cloudflared needs outbound TCP/UDP, local origin access, and its private
+# notify/metrics sockets, but no privilege or host-level mutation.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+ProtectSystem=strict
+ProtectHome=yes
+NoExecPaths=/
+ExecPaths=/usr/bin/cloudflared /usr/local/bin/cloudflared
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+PrivateIPC=yes
+PrivateMounts=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+KeyringMode=private
+RemoveIPC=yes
+
+[Install]
+WantedBy=multi-user.target

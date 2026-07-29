@@ -584,9 +584,8 @@
             cursor: default;
         }
         /* Download-original-bytes button, shown next to Size. Only rendered
-           server-side when SizeBytes is in (0, 400 MB] and the download
-           rate limit hasn't fired. Same visual weight as .rescan-btn so
-           they share the inline-meta look. */
+           server-side when SizeBytes is in (0, 400 MB]. Same visual weight as
+           .rescan-btn so they share the inline-meta look. */
         .download-btn {
             display: inline-flex;
             align-items: center;
@@ -605,6 +604,14 @@
             color: var(--toxic-dark);
             border-color: var(--toxic-muted);
             background: var(--toxic-dim);
+        }
+        .download-btn.is-disabled,
+        .download-btn.is-disabled:hover {
+            color: var(--slate);
+            border-color: var(--border);
+            background: var(--mist);
+            cursor: not-allowed;
+            opacity: 0.72;
         }
         /* Brief confirmation that the filename was copied to clipboard
            alongside the download. Mirrors .rescan-btn.is-done. */
@@ -1841,7 +1848,7 @@
                         <span class="meta-label">Size</span>
                         <span class="meta-value">
                             {{.Size}}
-                            {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{end}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects"><span aria-hidden="true">⇩ </span>download unavailable</span>{{end}}{{end}}
                         </span>
                     </div>
                     {{if .FirstSeenAt}}

@@ -127,6 +127,32 @@ func TestResultTemplateParses(t *testing.T) {
 	}
 }
 
+func TestResultDownloadTracksHopperAvailability(t *testing.T) {
+	tmpl := resultTemplateForTest(t)
+
+	available := singleFileData()
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, available); err != nil {
+		t.Fatalf("execute available: %v", err)
+	}
+	if !strings.Contains(buf.String(), `class="download-btn" href="/file/`) {
+		t.Fatal("available hopper-api did not render the download link")
+	}
+
+	unavailable := singleFileData()
+	unavailable.DownloadEnabled = false
+	buf.Reset()
+	if err := tmpl.Execute(&buf, unavailable); err != nil {
+		t.Fatalf("execute unavailable: %v", err)
+	}
+	if !strings.Contains(buf.String(), "download unavailable") {
+		t.Fatal("unavailable hopper-api did not render the disabled download control")
+	}
+	if strings.Contains(buf.String(), `.dl?t=`) {
+		t.Fatal("unavailable hopper-api still exposed a download link")
+	}
+}
+
 // parentsAndReferrersData is a standalone child page with one containing
 // archive and one merely-referencing sample, exercising both backlink panels.
 func parentsAndReferrersData() resultData {
@@ -220,22 +246,24 @@ func detectedByData() resultData {
 
 func singleFileData() resultData {
 	return resultData{
-		Filename:     "x.exe",
-		SHA256:       strings.Repeat("a", 64),
-		SHA256Short:  strings.Repeat("a", 12) + "...",
-		Verdict:      "BENIGN",
-		Formula:      template.HTML("Os"),
-		FileType:     "PE",
-		Size:         "1.2 KB",
-		FindingCount: "0",
-		Duration:     "10ms",
-		MoleculeJSON: template.JS("{}"),
-		Layout:       "organic2",
-		BuildCommit:  "test",
-		SuspiciousT:  0.65,
-		HostileT:     0.887,
-		Nonce:        "n",
-		Level:        new(-1), // benign sentinel: badge must be hidden, not crash
+		Filename:        "x.exe",
+		SHA256:          strings.Repeat("a", 64),
+		SHA256Short:     strings.Repeat("a", 12) + "...",
+		Verdict:         "BENIGN",
+		Formula:         template.HTML("Os"),
+		FileType:        "PE",
+		Size:            "1.2 KB",
+		SizeBytes:       1200,
+		DownloadEnabled: true,
+		FindingCount:    "0",
+		Duration:        "10ms",
+		MoleculeJSON:    template.JS("{}"),
+		Layout:          "organic2",
+		BuildCommit:     "test",
+		SuspiciousT:     0.65,
+		HostileT:        0.887,
+		Nonce:           "n",
+		Level:           new(-1), // benign sentinel: badge must be hidden, not crash
 		Provenance: []ProvenanceGroup{
 			{Title: "Identity", Rows: []ProvenanceRow{
 				{Label: "SHA-256", Value: strings.Repeat("a", 64), Mono: true},

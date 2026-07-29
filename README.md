@@ -36,6 +36,7 @@ Flags win over the matching environment variable.
 
 | Flag | Env | Default | Purpose |
 | --- | --- | --- | --- |
+| `--listen` | `LISTEN_ADDR` | all interfaces | HTTP listen address |
 | `--port` | `PORT` | `8080` | HTTP listen port |
 | `--db` | `HOPPER_DSN` / `FALLOUT_DB` | `postgres://hopper@hopper-db:5432/hopper?sslmode=disable` | hopper PostgreSQL DSN |
 | `--hopper-api-addr` | `HOPPER_API_ADDR` | `hopper-api:8081` | hopper-api host:port (file bytes) |
@@ -46,12 +47,63 @@ Flags win over the matching environment variable.
 | `--rate-limit` | — | `10` | max requests per client IP per window before 429/challenge (0 disables) |
 | `--rate-window` | — | `10m` | window over which `--rate-limit` applies |
 | — | `PRISM_CSRF_KEY` | — | HMAC key for CSRF tokens (required for uploads) |
+| — | `PRISM_CSRF_KEY_FILE` | — | file containing the HMAC key; preferred over `PRISM_CSRF_KEY` |
 | — | `CACHE_DIR` | OS user cache dir | localfs cache location |
+
+Prism probes hopper-api and litmus once per process every 15 seconds, using
+their liveness endpoints. Page requests only read the shared atomic result:
+hopper-api outages disable downloads, and uploads are disabled unless both
+hopper-api and litmus are available. Feed and result rendering remain
+independent of these probes.
 
 ## Deployment
 
-Production runs in a FreeBSD jail managed with
-[bastille](https://bastille.live/), using separate build and run jails:
+`make deploy` selects the native rollout for the host OS.
+
+On Linux (systemd 249 or newer) it builds and tests locally, then installs a
+hardened systemd service using `doas` or `sudo` when needed. For the first
+deployment, provide the PostgreSQL password; the upstream `hopper-db` primary
+is the default:
+
+```bash
+CF_TUNNEL_TOKEN='...' HOPPER_DB_HOST=hopper-db HOPPER_DB_PASS='...' make deploy
+```
+
+The selected host is persisted in `/etc/prism/prism.env`. Later deploys reuse
+both it and `/etc/prism/pgpass`, so the password does not need to be supplied
+again. If the invoking account already has an exact matching entry in
+`$PGPASSFILE` or `~/.pgpass`, the first deploy imports only that entry into the
+root-only service credential instead. The Linux DSN forces PostgreSQL
+transactions read-only even when it points at the primary. PostgreSQL and CSRF
+secrets are exposed to prism through systemd's read-only credential directory,
+not its environment or command line.
+The service runs under a transient systemd identity with no capabilities, a
+read-only filesystem, syscall/address-family/device/namespace restrictions,
+and a single writable systemd-managed directory at `/var/cache/prism` for fido
+caches. It binds only `127.0.0.1:8080`.
+
+The rollout also installs (through an already-configured host package manager
+when necessary) and manages `cloudflared.service`. The tunnel token is
+persisted as a root-only file and supplied through a systemd credential;
+cloudflared 2025.4.0 or newer is required for token-file support. Configure
+the remotely-managed tunnel's public hostname in the Cloudflare dashboard with
+`http://127.0.0.1:8080` as its origin. Later deploys reuse the saved token.
+Ensure `hopper-db`, `hopper-api`, and (when enabled) `scan` resolve on the Linux
+host.
+
+Useful commands:
+
+```bash
+systemctl status prism
+systemctl status cloudflared
+journalctl -u prism -f
+journalctl -u cloudflared -f
+systemd-analyze security prism.service
+systemd-analyze security cloudflared.service
+```
+
+On FreeBSD, production uses [bastille](https://bastille.live/) with separate
+build and run jails:
 
 ```bash
 make deploy            # git pull + ./hacks/rollout-bastille.sh build prism
@@ -64,8 +116,8 @@ in-flight requests during a 5-second graceful shutdown). See
 `hacks/rollout-bastille.sh` for the full sequence and prerequisites
 (`hopper-api` / `hopper-db` entries in `/etc/hosts`, `CF_TUNNEL_TOKEN`).
 
-`make deploy` is FreeBSD-only. The binary itself is portable — `make build`
-produces a static `CGO_ENABLED=0` binary that runs anywhere Go does.
+The binary itself is portable — `make build` produces a static
+`CGO_ENABLED=0` binary that runs anywhere Go does.
 
 ## Development
 
