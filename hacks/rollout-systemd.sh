@@ -42,9 +42,11 @@ fi
 
 TMP_ENV=
 TMP_SECRET=
+TMP_CLOUDFLARED_UNIT=
 cleanup() {
     [ -z "$TMP_ENV" ] || rm -f "$TMP_ENV"
     [ -z "$TMP_SECRET" ] || rm -f "$TMP_SECRET"
+    [ -z "$TMP_CLOUDFLARED_UNIT" ] || rm -f "$TMP_CLOUDFLARED_UNIT"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -179,6 +181,11 @@ if [ "$CLOUDFLARED_YEAR" -lt 2025 ] \
     || { [ "$CLOUDFLARED_YEAR" -eq 2025 ] && [ "$CLOUDFLARED_MONTH" -lt 4 ]; }; then
     die "cloudflared 2025.4.0 or newer is required for secure token-file support"
 fi
+CLOUDFLARED_EXEC_PATHS=$CLOUDFLARED_BIN
+for libdir in /usr/lib /usr/lib64 /lib /lib64; do
+    [ -e "$libdir" ] || continue
+    CLOUDFLARED_EXEC_PATHS="$CLOUDFLARED_EXEC_PATHS $libdir"
+done
 
 if [ -n "$TUNNEL_TOKEN" ]; then
     log "Installing the supplied Cloudflare Tunnel token"
@@ -246,11 +253,18 @@ fi
 if [ -e "$CLOUDFLARED_UNIT_TARGET" ]; then
     as_root cp -p "$CLOUDFLARED_UNIT_TARGET" "$BACKUP_DIR/cloudflared.service.previous"
 fi
+TMP_CLOUDFLARED_UNIT=$(mktemp)
+sed "s|@CLOUDFLARED_BIN@|$CLOUDFLARED_BIN|g" \
+    "$CLOUDFLARED_UNIT_SOURCE" \
+    | sed "s|@CLOUDFLARED_EXEC_PATHS@|$CLOUDFLARED_EXEC_PATHS|g" \
+        >"$TMP_CLOUDFLARED_UNIT"
 as_root install -o root -g root -m 0644 "$UNIT_SOURCE" "${UNIT_TARGET}.new"
 as_root mv -f "${UNIT_TARGET}.new" "$UNIT_TARGET"
 as_root install -o root -g root -m 0644 \
-    "$CLOUDFLARED_UNIT_SOURCE" "${CLOUDFLARED_UNIT_TARGET}.new"
+    "$TMP_CLOUDFLARED_UNIT" "${CLOUDFLARED_UNIT_TARGET}.new"
 as_root mv -f "${CLOUDFLARED_UNIT_TARGET}.new" "$CLOUDFLARED_UNIT_TARGET"
+rm -f "$TMP_CLOUDFLARED_UNIT"
+TMP_CLOUDFLARED_UNIT=
 as_root install -o root -g root -m 0755 "$REPO_DIR/prism" "${BINARY_TARGET}.new"
 as_root mv -f "${BINARY_TARGET}.new" "$BINARY_TARGET"
 

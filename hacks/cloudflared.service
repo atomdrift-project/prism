@@ -11,7 +11,7 @@ Type=notify
 NotifyAccess=main
 User=cloudflared
 DynamicUser=yes
-ExecStart=cloudflared tunnel --no-autoupdate run --token-file %d/tunnel-token
+ExecStart=@CLOUDFLARED_BIN@ tunnel --no-autoupdate run --token-file %d/tunnel-token
 LoadCredential=tunnel-token:/etc/prism/cloudflared-token
 Environment=HOME=/run/cloudflared
 RuntimeDirectory=cloudflared
@@ -38,7 +38,10 @@ SystemCallErrorNumber=EPERM
 ProtectSystem=strict
 ProtectHome=yes
 NoExecPaths=/
-ExecPaths=/usr/bin/cloudflared /usr/local/bin/cloudflared
+# The rollout expands this to the exact binary plus existing system library
+# roots. Some distro packages are dynamically linked; everything else remains
+# on the service's no-execute mount.
+ExecPaths=@CLOUDFLARED_EXEC_PATHS@
 PrivateTmp=yes
 PrivateDevices=yes
 DevicePolicy=closed
