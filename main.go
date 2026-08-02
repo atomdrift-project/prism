@@ -1788,6 +1788,7 @@ func main() {
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
 	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: atomdrift lab branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
+	cli.BoolVar(&noEscalateScan, "no-escalate-scan", noEscalateScan, "when someone waits on an unanalyzed sample, only promote it in hopper's queue instead of also analyzing it on the litmus server (also reads PRISM_NO_ESCALATE_SCAN env, set to 1/true to disable the local scan)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
 	cli.StringVar(&listenAddr, "listen", os.Getenv("LISTEN_ADDR"), "HTTP listen address (overrides LISTEN_ADDR env; empty means all interfaces)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
@@ -1800,23 +1801,15 @@ func main() {
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
-	// Env-var fallback so the rc.d script can flip uploads without
-	// shipping a new binary. CLI flag wins if both are set.
-	uploadsFlagSet := false
-	cli.Visit(func(f *flag.Flag) {
-		if f.Name == "uploads" {
-			uploadsFlagSet = true
-		}
-	})
-	if !uploadsFlagSet {
-		if v := os.Getenv("PRISM_UPLOADS"); v != "" {
-			switch strings.ToLower(v) {
-			case "1", "true", "yes", "on":
-				uploadEnabled = true
-			case "0", "false", "no", "off":
-				uploadEnabled = false
-			}
-		}
+	// Env-var fallback so the rc.d script can flip these without shipping a new
+	// binary. The CLI flag wins if both are set.
+	set := map[string]bool{}
+	cli.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if !set["uploads"] {
+		uploadEnabled = envBool("PRISM_UPLOADS", uploadEnabled)
+	}
+	if !set["no-escalate-scan"] {
+		noEscalateScan = envBool("PRISM_NO_ESCALATE_SCAN", noEscalateScan)
 	}
 
 	if dbDSN == "" {
@@ -6024,35 +6017,54 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	// pick up the already-stale analysis the rescan was meant to replace.
 	after := parseAfterMillis(r.URL.Query().Get("after"))
 
-	check := func() (state string, payload string) {
+	// name is hopper's filename for a still-pending sample, which escalation
+	// hands the scan server as a format hint. Empty in every other state.
+	check := func() (state, payload, name string) {
 		if after.IsZero() {
-			switch uploadViewState(ctx, sha) {
+			st, filename := uploadViewState(ctx, sha)
+			switch st {
 			case "ready":
-				return "ready", readyPayload(sha)
+				return "ready", readyPayload(sha), ""
 			case "missing":
-				return "missing", `{"reason":"not found"}`
+				return "missing", `{"reason":"not found"}`, ""
 			}
-			return "pending", ""
+			return "pending", "", filename
 		}
 		// Fresh-analysis mode: pull the full row so we can compare the
 		// timestamp. This is a heavier query than SampleAnalyzed but
 		// only fires once per poll, well within hopper's budget.
 		sample, err := db.SampleBySHA256(ctx, sha)
 		if err != nil || sample == nil {
-			return "missing", `{"reason":"not found"}`
+			return "missing", `{"reason":"not found"}`, ""
 		}
 		if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(after) {
-			return "ready", readyPayload(sha)
+			return "ready", readyPayload(sha), ""
 		}
-		return "pending", ""
+		return "pending", "", ""
 	}
 
 	// Initial probe before the first tick — covers the worker-finishes-
 	// before-SSE-open race so the browser doesn't wait an extra 50 ms
 	// for a result that already exists.
-	if state, payload := check(); state == "missing" || state == "ready" {
+	state, payload, name := check()
+	if state == "missing" || state == "ready" {
 		emit(state, payload)
 		return
+	}
+
+	// Somebody is waiting on a sample no worker has reached. This is the one
+	// place in prism that knows that, so spend it: escalate once, on the first
+	// probe of this connection, and let the loop below just watch. Detached from
+	// the request context because the browser drops this stream the instant the
+	// result lands — which is exactly when the escalation is finishing its work.
+	//
+	// Not done in ?after= mode: that is the post-rescan stream, where the sample
+	// is already sitting in the tier escalation would promote it to. And not
+	// done in handleFileStatus, the no-SSE fallback — it re-polls every two
+	// seconds, and a trigger that fires on a timer is not the attention signal
+	// this is meant to capture.
+	if after.IsZero() {
+		go escalate(context.WithoutCancel(ctx), sha, name, logger.With("sha256", sha, "client_ip", ip))
 	}
 
 	for {
@@ -6064,7 +6076,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-pollTicker.C:
-			state, payload := check()
+			state, payload, _ := check()
 			if state == "missing" || state == "ready" {
 				emit(state, payload)
 				return
@@ -6079,16 +6091,19 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 // ingestion is still in flight, "missing" otherwise. lookupResult checks
 // prism's cache before hopper, so a litmus-only result (hopper upload failed)
 // still flips the page to the result view.
-func uploadViewState(ctx context.Context, sha string) string {
+//
+// The second result is hopper's filename for a pending sample, which escalation
+// passes to the scan server as a format hint. It is empty in every other state.
+func uploadViewState(ctx context.Context, sha string) (state, filename string) {
 	_, _, err := lookupResult(ctx, sha, logger)
 	if err == nil {
-		return "ready"
+		return "ready", ""
 	}
 	var pend *pendingAnalysisError
 	if errors.As(err, &pend) {
-		return "pending"
+		return "pending", pend.Filename
 	}
-	return "missing"
+	return "missing", ""
 }
 
 // parseAfterMillis parses an ?after=<unix-ms> query value into a UTC
@@ -6142,7 +6157,8 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		switch uploadViewState(ctx, sha) {
+		state, _ := uploadViewState(ctx, sha)
+		switch state {
 		case "ready":
 			exists, ready = true, true
 		case "pending":
@@ -6206,6 +6222,26 @@ func hopperUploadURL(filename string) string {
 // to off so a fresh deploy is closed-by-default. When false the handler
 // short-circuits to a 503 and the UI greys out the button.
 var uploadEnabled = false
+
+// noEscalateScan keeps the scan server for uploads only, leaving escalated
+// samples to hopper's workers. Set via --no-escalate-scan or
+// PRISM_NO_ESCALATE_SCAN (1/true/yes/on).
+//
+// The flag is negative because pointing --litmus at a scan server is already
+// the opt-in; see escalate.go for why that is the right default.
+var noEscalateScan = false
+
+// envBool reads a 1/true/yes/on or 0/false/no/off environment variable,
+// returning cur when it is unset or unrecognized.
+func envBool(name string, cur bool) bool {
+	switch strings.ToLower(os.Getenv(name)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return cur
+}
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	requestStart := time.Now()

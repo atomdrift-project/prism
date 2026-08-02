@@ -54,4 +54,15 @@
 // If you find yourself wanting a query that can't fit this pattern, ask
 // before merging — the answer is almost always a new cache, not a
 // bypass.
+//
+// # The one deliberate exception
+//
+// escalate.go calls hopper-api outside a cache loader (sampleBytes). It is
+// exempt rather than an oversight: the rule exists so N concurrent users can't
+// become N backend hits, and escalation gets that property from a per-SHA
+// in-flight guard plus a global token bucket instead of from a cache. Caching
+// would also be actively wrong here — the bytes are read once, fed to the scan
+// server, and never wanted again, so storing up to 16 MB per escalated sample
+// would spend the disk tier on data with no second reader. Anything that IS
+// read twice still belongs in a cache.
 package main

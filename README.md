@@ -42,6 +42,7 @@ Flags win over the matching environment variable.
 | `--hopper-api-addr` | `HOPPER_API_ADDR` | `hopper-api:8081` | hopper-api host:port (file bytes) |
 | `--litmus` | `LITMUS_ADDR` | `litmus:49999` | litmus analysis server; empty disables it, falling back to hopper-only analysis |
 | `--uploads` | `PRISM_UPLOADS` | off | enable browser uploads via `POST /upload` |
+| `--no-escalate-scan` | `PRISM_NO_ESCALATE_SCAN` | off | leave waited-on unanalyzed samples to hopper's workers instead of also analyzing them on the litmus server (see [Escalation](#escalation)) |
 | `--public` | — | off | public-deployment mode: atomdrift lab branding and Secure cookies |
 | `--no-cache` | — | off | disable persistent caching (in-memory only) |
 | `--rate-limit` | — | `10` | max requests per client IP per window before 429/challenge (0 disables) |
@@ -55,6 +56,56 @@ their liveness endpoints. Page requests only read the shared atomic result:
 hopper-api outages disable downloads, and uploads are disabled unless both
 hopper-api and litmus are available. Feed and result rendering remain
 independent of these probes.
+
+## Escalation
+
+A sample hopper has ingested but not analyzed renders the "Analyzing…" page.
+Workers claim that backlog in random SHA order, so being viewed does not
+normally make a worker reach a sample any sooner — a 6 KB wheel can sit
+unclaimed for a day behind a few hundred thousand siblings.
+
+Somebody waiting on that page is the only signal prism has that a particular
+row matters. When the page opens its SSE wait channel, prism asks hopper to
+promote the sample to the forced-rescan tier, which workers drain ahead of the
+unanalyzed backlog. That is one `POST /api/rescan/{sha}`; no bytes move, and it
+works whether or not a scan server is configured.
+
+Promotion alone is a scheduling hint, not a deadline. It moves a sample from a
+random draw out of the backlog to the head of a tier that is normally empty,
+which is an enormous improvement in expectation — workers poll every two
+seconds when idle — but they claim in batches whenever a slot frees, so nothing
+bounds the wait. Analysis time is not size-proportional either: a few-KB wheel
+still gets extracted, trait-scanned, and possibly LLM-interpreted.
+
+So whenever `--litmus` points at a scan server and it probes healthy, prism also
+fetches the sample from hopper-api, analyzes it there, caches the verdict and
+publishes it to hopper — the only path whose latency prism can observe end to
+end. Publishing clears hopper's queue fields, so a local scan that wins the race
+retires the promotion that preceded it.
+
+There is no flag to turn that on: configuring a scan server is the opt-in, and
+without one escalation is promotion-only on its own. `--no-escalate-scan`
+overrides it the other way, keeping the scan server for uploads only.
+
+The local scan runs only when hopper accepted the promotion. hopper accepts one
+for top-level, non-skipped samples only, so its 200 is what proves the SHA is
+safe to analyze and publish directly — an archive child gets its `cleave_result`
+from the reassembly of its parent, and writing one straight to the child row
+would corrupt that.
+
+Fetched bytes are verified against the SHA that was asked for before anything
+is analyzed or published. prism is a reader everywhere else — wrong bytes render
+a wrong page and the next request corrects it — but this path writes an analysis
+to hopper's authoritative row and marks the sample done, and no worker re-queues
+a row that already looks analyzed. prism knows the expected digest for free, so
+it does not take hopper-api's word for which file came back.
+
+The trigger is the SSE channel rather than `GET /file/{sha}` on purpose: the
+detail page is public and every feed entry links one, so a crawler sweep would
+otherwise escalate the whole feed. Reaching the wait channel takes a browser
+that ran the page's JavaScript. Escalations are deduplicated per SHA, capped
+globally at 1/sec with a burst of 10, bounded to 16 MB per sample, and shed
+entirely when the scan slots that uploads use are full. See `escalate.go`.
 
 ## Deployment
 

@@ -162,3 +162,11 @@ func hopperAPIAvailable() bool {
 func uploadBackendsAvailable() bool {
 	return backendStatus != nil && backendStatus.hopper.available() && backendStatus.litmus.available()
 }
+
+// litmusAvailable reports whether the analysis server is up. Uploads need it
+// paired with hopper-api (uploadBackendsAvailable); escalation needs the same
+// pair for a different reason — hopper-api to fetch the sample, litmus to
+// analyze it — so it asks for the two halves separately.
+func litmusAvailable() bool {
+	return backendStatus != nil && backendStatus.litmus.available()
+}
