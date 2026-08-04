@@ -82,6 +82,7 @@ func shortBuildCommit() string {
 
 var (
 	uploadTemplate    *template.Template
+	falloutTemplate   *template.Template
 	resultTemplate    *template.Template
 	errorTemplate     *template.Template
 	formatsTemplate   *template.Template
@@ -652,7 +653,10 @@ type ParentArchive struct {
 // (an extracted or unpacked member) as opposed to merely referencing it (a
 // fetched payload or registry lookup). Splits the backlinks into the
 // "Found in N archives" and "Referenced by N samples" panels — the former is
-// a containment claim and must never be made for fetched content.
+// a containment claim and must never be made for fetched content. Value
+// receiver on purpose: html/template calls it on {{range}} copies.
+//
+//nolint:gocritic // hugeParam — a pointer receiver breaks template rendering
 func (p ParentArchive) containsChild() bool {
 	return p.Rel == "" || p.Rel == "unpacked"
 }
@@ -1009,7 +1013,8 @@ func identityHeadline(registryTitle, pkg, filename, version string) string {
 // parent anchor's columns. Returns false when no osimage parent applies, leaving
 // the ordinary filename headline in place.
 func imageMemberHeadline(parents []ParentArchive) (string, bool) {
-	for _, p := range parents {
+	for i := range parents {
+		p := &parents[i]
 		if p.Feed != "osimage" {
 			continue
 		}
@@ -1022,11 +1027,11 @@ func imageMemberHeadline(parents []ParentArchive) (string, bool) {
 		if inPath != "" && !strings.HasPrefix(inPath, "/") {
 			inPath = "/" + inPath
 		}
-		os := osDisplayName(firstNonEmpty(p.Ecosystem, p.Package))
-		if os == "" {
+		osName := osDisplayName(firstNonEmpty(p.Ecosystem, p.Package))
+		if osName == "" {
 			return inPath, inPath != ""
 		}
-		hl := inPath + " from " + os
+		hl := inPath + " from " + osName
 		if p.Version != "" {
 			hl += " " + p.Version
 		}
@@ -1046,7 +1051,7 @@ func imageMemberHeadline(parents []ParentArchive) (string, bool) {
 var osDisplayNames = map[string]string{
 	"macos": "macOS", "netbsd": "NetBSD", "freebsd": "FreeBSD", "openbsd": "OpenBSD",
 	"ghostbsd": "GhostBSD", "dragonflybsd": "DragonFly BSD", "opensuse": "openSUSE",
-	"nixos": "NixOS", "freedos": "FreeDOS", "reactos": "ReactOS", "redox": "Redox",
+	"nixos": "NixOS", "freedos": "FreeDOS", "reactos": "ReactOS", "redox": "Redox", //nolint:misspell // FreeDOS is the OS's real name, not "freedoms"
 	"raspios": "Raspberry Pi OS", "androidx86": "Android-x86", "kdeneon": "KDE neon",
 	"mxlinux": "MX Linux", "almalinux": "AlmaLinux", "amazonlinux": "Amazon Linux",
 	"oraclelinux": "Oracle Linux", "endeavouros": "EndeavourOS", "cachyos": "CachyOS",
@@ -1136,12 +1141,8 @@ type feedPageData struct {
 	CSRFToken    string
 	SelectedEco  string
 	// PrevURL/NextURL are empty when there is no adjacent page.
-	PrevURL string
-	NextURL string
-	// Hero is the Hot Particle — the featured catch card above the
-	// frontpage feed. Nil (section omitted) on filtered views, deep pages,
-	// and days with no eligible catch.
-	Hero       *feedHero
+	PrevURL    string
+	NextURL    string
 	Domains    []string
 	Ecosystems []string
 	Rows       []feedRow
@@ -1152,10 +1153,16 @@ type feedPageData struct {
 	Stats *indexStats
 	// Pages holds the per-page links (empty when a single page covers every
 	// row); Page is the 1-indexed current page over the cached snapshot.
-	Pages     []feedPageLink
-	Page      int
-	Refresh   bool
-	HasHopper bool
+	Pages []feedPageLink
+	Page  int
+	// WeeklyHostile is the count behind the Fallout nav pill's badge: hostile
+	// catches in the fallout log's rolling window. Zero hides the badge.
+	WeeklyHostile int
+	Refresh       bool
+	HasHopper     bool
+	// ZeroState marks the unfiltered, unsearched first page — the view that
+	// gets the "Latest analyses" framing instead of query results.
+	ZeroState bool
 	// FeedDegraded is set when hopper is connected but the feed query failed
 	// (timeout, circuit breaker open, replica blip). The page still renders —
 	// the feed section just shows a "temporarily unavailable" notice instead
@@ -1925,6 +1932,11 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
+	falloutTemplate, tmplErr = template.New("fallout.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/fallout.html")
+	if tmplErr != nil {
+		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
 	resultTemplate, tmplErr = template.New("result.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
@@ -2135,6 +2147,7 @@ func newMux() *http.ServeMux {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
 	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("GET /fallout", handleFallout)
 	mux.HandleFunc("GET /feed.atom", handleAtomFeed)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
@@ -4326,6 +4339,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	purlCanonical, purlBase, purlVersion := normalizePURL(rawPURL)
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
+		WeeklyHostile:   weeklyHostileCount(r.Context()),
 		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
 		FeedsOnly:       parseBoolQuery(r.URL.Query().Get("feeds")),
 		Nonce:           nonceFor(r),
@@ -4338,7 +4352,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
-		Title:           "Fallout",
+		Title:           "Search",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
@@ -4346,7 +4360,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
-		data.Title = ecosystem + " Fallout"
+		data.Title = ecosystem + " · Search"
 	}
 
 	var diags []queryDiag
@@ -4383,22 +4397,10 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 			data.Rows = feedRowsFromSnapshot(snapshot)
 			data.Domains = snapshot.Domains
 			data.Ecosystems = snapshot.Ecosystems
-			// The Hot Particle fronts only the plain frontpage views (any
-			// criticality, first page): filtered, searched, and ecosystem
-			// views keep the reader's query as the star. When the hero also
-			// appears in the current row set it moves up into the card rather
-			// than rendering twice.
-			if data.SelectedEco == "" && data.SelectedDomain == "" &&
+			data.ZeroState = data.SelectedEco == "" && data.SelectedDomain == "" &&
 				data.SelectedFormula == "" && data.SelectedQ == "" &&
-				data.SelectedPURL == "" &&
-				!data.FeedsOnly && r.URL.Query().Get("page") == "" {
-				if hero := loadFeedHero(r.Context(), data.SelectedCrit, data.Rows, logger); hero != nil {
-					data.Hero = hero
-					data.Rows = slices.DeleteFunc(data.Rows, func(row feedRow) bool {
-						return row.SHA256 == hero.SHA256
-					})
-				}
-			}
+				data.SelectedPURL == "" && data.SelectedCrit == "" &&
+				!data.FeedsOnly && r.URL.Query().Get("page") == ""
 			paginateFeed(&data, r)
 		}
 	}
@@ -4936,7 +4938,8 @@ func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *s
 		return nil
 	}
 	out := make([]ParentArchive, 0, len(refs))
-	for _, ref := range refs {
+	for i := range refs {
+		ref := &refs[i]
 		entry := ParentArchive{
 			SHA256:      ref.SHA256,
 			SHA256Short: shortSHA(ref.SHA256),

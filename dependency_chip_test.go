@@ -165,8 +165,8 @@ func TestDependencyChipCapsRunawayLocator(t *testing.T) {
 }
 
 // The feed template renders a dependency chip as a link to the dependency's
-// record and an ordinary trait as a plain span — in both the hero's Evidence
-// line and a ledger row's fallback rationale.
+// record and an ordinary trait as a plain span, in a ledger row's fallback
+// rationale line.
 func TestUploadTemplateRendersDependencyChipAsLink(t *testing.T) {
 	tmpl := uploadTemplateForTest(t)
 	depChip := feedTrait{
@@ -178,21 +178,12 @@ func TestUploadTemplateRendersDependencyChipAsLink(t *testing.T) {
 	plainChip := feedTrait{ID: "exec.install-hook", Full: "objectives/exec/install-hook", Crit: "hostile"}
 	data := feedPageData{
 		HasHopper: true,
-		Hero: &feedHero{
-			feedRow: feedRow{
-				SHA256:         testSHAHero,
-				Filename:       "wrapper-1.0.0.tgz",
-				Classification: "hostile",
-				TopTraits:      []feedTrait{depChip, plainChip},
-				AnalyzedDate:   "1h ago",
-			},
-		},
 		Rows: []feedRow{{
 			SHA256:         testSHARow,
 			Filename:       "other-2.0.0.tgz",
 			Classification: "hostile",
 			Conf:           92,
-			TopTraits:      []feedTrait{depChip},
+			TopTraits:      []feedTrait{depChip, plainChip},
 			AnalyzedDate:   "2h ago",
 		}},
 	}
@@ -204,8 +195,8 @@ func TestUploadTemplateRendersDependencyChipAsLink(t *testing.T) {
 	html := sb.String()
 
 	anchor := `<a class="why-chip crit-hostile" href="/file/` + depTestSHA + `"`
-	if n := strings.Count(html, anchor); n != 2 {
-		t.Errorf("dependency chip anchor rendered %d times, want 2 (hero + ledger row)", n)
+	if n := strings.Count(html, anchor); n != 1 {
+		t.Errorf("dependency chip anchor rendered %d times, want 1", n)
 	}
 	if !strings.Contains(html, "depends on hostile npm: zaboodle v1.49</a>") {
 		t.Error("dependency chip text missing or not inside the anchor")

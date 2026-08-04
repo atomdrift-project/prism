@@ -14,13 +14,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <meta http-equiv="refresh" content="300">
-    <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Fallout</title>
+    <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Search</title>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{.Title}} — {{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
-    <meta property="og:description" content="The latest malware caught across open-source registries and marketplaces — analyzed in the open." />
-    <meta name="description" content="The latest malware caught across open-source registries and marketplaces — analyzed in the open." />
+    <meta property="og:description" content="Search millions of analyzed open-source artifacts by filename, purl, or sha256 — malware analysis in the open." />
+    <meta name="description" content="Search millions of analyzed open-source artifacts by filename, purl, or sha256 — malware analysis in the open." />
     <meta name="twitter:card" content="summary" />
     <link rel="alternate" type="application/atom+xml" title="Fallout — hostile catches" href="/feed.atom" />
     <style nonce="{{.StyleNonce}}">
@@ -103,6 +102,39 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .site-nav { display: flex; gap: 4px; margin-left: 6px; }
+        .site-nav a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--slate);
+            text-decoration: none;
+            padding: 5px 11px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            white-space: nowrap;
+        }
+        .site-nav a:hover { color: var(--carbon); border-color: var(--border); }
+        .site-nav a.active {
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border-color: rgba(208, 255, 0, 0.25);
+        }
+        .nav-count {
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid rgba(208, 255, 0, 0.3);
+            border-radius: 999px;
+            padding: 0 6px;
+            line-height: 1.5;
+            font-variant-numeric: tabular-nums;
+        }
+        .site-nav a.active .nav-count { background: var(--white); }
         .upload-button {
             display: inline-flex;
             align-items: center;
@@ -199,32 +231,14 @@
             letter-spacing: 0;
             font-weight: 650;
         }
-        .fallout-lockup {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 0;
-        }
-        .fallout-symbol {
-            width: 32px;
-            height: 32px;
-            flex: 0 0 auto;
-        }
-        .fallout-symbol .field {
-            fill: var(--carbon);
-        }
-        .fallout-symbol .blade,
-        .fallout-symbol .core {
-            fill: var(--toxic);
-        }
-        .fallout-wordmark {
+        .search-title {
+            margin: 0;
             font-family: "Oxanium", monospace;
             font-weight: 700;
-            color: var(--carbon);
+            font-size: 24px;
+            line-height: 1.1;
         }
-        .fallout-eco {
-            color: var(--toxic-dark);
-        }
+        .search-eco { color: var(--toxic-dark); }
         .lede {
             max-width: none;
             margin: 6px 0 0;
@@ -232,6 +246,8 @@
             font-size: 13.5px;
             white-space: nowrap;
         }
+        .lede a { color: var(--toxic-dark); font-weight: 600; text-decoration: none; }
+        .lede a:hover { text-decoration: underline; text-underline-offset: 3px; }
         /* Masthead: the Fallout lockup on the left, the live "samples analyzed"
            counter (Peak Meter) on the right. Bottom-aligned so the number sits
            on the lede's baseline and the two columns read as one lockup. */
@@ -632,174 +648,21 @@
             background: var(--toxic-dim);
         }
         a.why-chip:focus-visible { outline: 2px solid var(--toxic-muted); outline-offset: 1px; }
-        .catch-evidence {
+        .ledger-label {
             display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 3px;
+            align-items: baseline;
+            gap: 10px;
+            padding: 16px 0 0;
         }
-        .ev-label {
-            font-size: 10px;
+        .ledger-label .l-title {
+            font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.08em;
             color: var(--slate);
             font-weight: 700;
         }
-        /* Hot Particle — the featured catch card above the frontpage feed. */
-        .catch {
-            margin-top: 16px;
-            background: var(--white);
-            border: 1px solid var(--border);
-            border-top: 3px solid var(--toxic);
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-        }
-        .catch-head {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 18px;
-            border-bottom: 1px solid var(--mist);
-        }
-        .catch-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-family: "Oxanium", monospace;
-            font-weight: 700;
-            font-size: 12.5px;
-            letter-spacing: 0.09em;
-            cursor: default;
-        }
-        .catch-eyebrow .fallout-symbol { width: 16px; height: 16px; }
-        .catch-date {
-            font-size: 12px;
-            color: var(--slate);
-            font-variant-numeric: tabular-nums;
-        }
-        .head-badges {
-            margin-left: auto;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        /* The verdict stamp shares the eco-badge's exact metrics (mono 10.5px,
-           1px 6px padding, radius 3, lowercase) so the head-bar badges read as
-           one family; only the palette and the crit square differ. */
-        .verdict-stamp {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-family: var(--mono);
-            font-size: 10.5px;
-            letter-spacing: 0.3px;
-            border-radius: 3px;
-            padding: 1px 6px;
-        }
-        .verdict-stamp .band {
-            width: 7px;
-            height: 7px;
-        }
-        .verdict-stamp.hostile {
-            color: #991b1b;
-            background: rgba(239, 68, 68, 0.08);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-        }
-        .verdict-stamp.suspicious {
-            color: #854d0e;
-            background: rgba(234, 179, 8, 0.1);
-            border: 1px solid rgba(234, 179, 8, 0.35);
-        }
-        .verdict-stamp.benign {
-            color: #166534;
-            background: rgba(34, 197, 94, 0.08);
-            border: 1px solid rgba(34, 197, 94, 0.3);
-        }
-        .catch-body {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 8px 26px;
-            padding: 12px 18px 14px;
-        }
-        .catch-main {
-            display: grid;
-            gap: 7px;
-            align-content: start;
-            min-width: 0;
-        }
-        .catch-title {
-            margin: 0;
-            font-size: 20px;
-            font-weight: 650;
-            letter-spacing: -0.01em;
-        }
-        .catch-sub {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin: 0;
-            color: var(--iron);
-            font-size: 13px;
-        }
-        .catch-why {
-            margin: 0;
-            color: var(--graphite);
-            font-size: 13.5px;
-            line-height: 1.55;
-            max-width: 76ch;
-        }
-        .catch-why .conf-chip { vertical-align: 1px; margin-right: 6px; }
-        /* The right-hand coordinate stack: sha at title height, malecule
-           beneath it, reach beneath that — identity left, coordinates right,
-           the same scan order as a ledger row. */
-        .catch-coords {
-            display: grid;
-            gap: 4px;
-            align-content: start;
-            justify-items: end;
-            text-align: right;
-            padding-top: 5px;
-        }
-        .coord-sha {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .catch-reach {
-            font-size: 12px;
-            color: var(--iron);
-            white-space: nowrap;
-        }
-        .catch-reach b {
-            color: var(--graphite);
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
-        }
-        .catch-foot {
-            grid-column: 1 / -1;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 2px;
-        }
-        .view-analysis {
-            margin-left: auto;
-            display: inline-flex;
-            align-items: center;
-            min-height: 34px;
-            padding: 0 14px;
-            border: 1px solid var(--carbon);
-            background: var(--carbon);
-            color: var(--white);
-            border-radius: 6px;
-            font-weight: 700;
-            font-size: 13px;
-            text-decoration: none;
-            white-space: nowrap;
-        }
+        .ledger-label .l-sub { font-size: 12px; color: var(--slate); }
+        .ledger-label + .table-wrap { margin-top: 10px; }
         .litmus-stamp {
             display: inline-flex;
             align-items: center;
@@ -890,12 +753,11 @@
         footer a { color: var(--slate); }
         @media (max-width: 860px) {
             .shell { width: min(100vw - 22px, 1320px); padding-top: 14px; }
-            .topbar { align-items: stretch; flex-direction: column; }
+            .topbar { flex-wrap: wrap; gap: 10px; }
+            .site-nav { margin-left: 0; }
+            .site-nav a { padding: 4px 9px; font-size: 12.5px; }
             .filters-row { align-items: stretch; flex-direction: column; }
-            .brand { flex-direction: column; gap: 3px; }
-            .tagline { white-space: normal; }
             h1 { font-size: 22px; }
-            .fallout-symbol { width: 28px; height: 28px; }
             .lede { white-space: normal; }
             .masthead { grid-template-columns: 1fr; gap: 16px; }
             .mh-lock .lede { max-width: none; }
@@ -907,8 +769,6 @@
             .row-id .file-link { max-width: 100%; }
             .row-hash { flex-wrap: wrap; }
             .row-hash .formula { margin-left: 0; }
-            .catch-body { grid-template-columns: 1fr; }
-            .catch-coords { justify-items: start; text-align: left; padding-top: 0; }
         }
     </style>
 </head>
@@ -918,7 +778,10 @@
         <nav class="topbar" aria-label="Primary">
             <div class="brand">
                 <a href="/" class="logo">{{template "wordmark" .}}</a>
-                <p class="tagline">{{template "tagline" .}}</p>
+            </div>
+            <div class="site-nav">
+                <a href="/" class="active">Search</a>
+                <a href="/fallout">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
             </div>
             {{if .UploadEnabled}}
             <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
@@ -937,17 +800,8 @@
         <section class="intro">
             <div class="masthead">
                 <div class="headline mh-lock">
-                    <h1 class="fallout-lockup">
-                        <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                            <circle class="field" cx="50" cy="50" r="44"></circle>
-                            <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
-                            <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
-                            <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
-                            <circle class="core" cx="50" cy="50" r="8"></circle>
-                        </svg>
-                        <span class="fallout-wordmark">{{if .SelectedEco}}<span class="fallout-eco">{{.SelectedEco}}</span> {{end}}Fallout</span>
-                    </h1>
-                    <p class="lede">{{if or (eq .SelectedCrit "hostile") (eq .SelectedCrit ">=1")}}The latest malware caught across open-source registries and marketplaces — evidence included.{{else}}Recently scanned open-source supply-chain artifacts and public lab uploads.{{end}}</p>
+                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Search the index</h1>
+                    <p class="lede">Query analyzed artifacts from registries, marketplaces, and lab uploads{{if .WeeklyHostile}} — or <a href="/fallout">see the latest {{.WeeklyHostile}} hostile catches in the fallout →</a>{{else}}.{{end}}</p>
                 </div>
                 {{if .HasHopper}}
                 <div class="counter c-meter" id="index-counter" role="img"
@@ -963,64 +817,11 @@
             </div>
         </section>
 
-        {{with .Hero}}
-        <section class="catch" aria-label="Hot Particle — featured catch">
-            <div class="catch-head">
-                <span class="catch-eyebrow" title="A hot particle is a discrete, intensely radioactive fallout fragment — the day's most interesting catch. Featured: {{.Reasons}}.">
-                    <svg class="fallout-symbol" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-                        <circle class="field" cx="50" cy="50" r="44"></circle>
-                        <path class="blade" d="M30 15.36A40 40 0 0 1 70 15.36L56 39.61A12 12 0 0 0 44 39.61Z"></path>
-                        <path class="blade" d="M90 50A40 40 0 0 1 70 84.64L56 60.39A12 12 0 0 0 62 50Z"></path>
-                        <path class="blade" d="M30 84.64A40 40 0 0 1 10 50L38 50A12 12 0 0 0 44 60.39Z"></path>
-                        <circle class="core" cx="50" cy="50" r="8"></circle>
-                    </svg>
-                    HOT PARTICLE
-                </span>
-                <span class="catch-date" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
-                <span class="head-badges">
-                    {{if .Ecosystem}}
-                        {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
-                    {{end}}
-                    <span class="verdict-stamp {{.Classification}}"><span class="band {{.Classification}}"></span>{{.Classification}}</span>
-                </span>
-            </div>
-            <div class="catch-body">
-                <div class="catch-main">
-                    <h2 class="catch-title"><a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a></h2>
-                    {{if or .SubID .Desc}}
-                    <p class="catch-sub">
-                        {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
-                        {{with .Desc}}<span class="catch-desc">“{{.}}”</span>{{end}}
-                    </p>
-                    {{end}}
-                    {{if .Why}}
-                    <p class="catch-why">{{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}% confidence</span>{{end}}{{.Why}}</p>
-                    {{end}}
-                </div>
-                <div class="catch-coords">
-                    <span class="coord-sha">
-                        <span class="file-sha" title="click to copy">{{.SHA256}}</span>
-                        {{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated (?feeds=1)">✓</span>{{end}}
-                    </span>
-                    {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
-                    {{with .Users}}<span class="catch-reach"><b>{{.}}</b> installs exposed</span>{{end}}
-                </div>
-                <div class="catch-foot">
-                    {{if .TopTraits}}
-                    <span class="ev-label">Evidence</span>
-                    {{range .TopTraits}}{{template "why-chip" .}}{{end}}
-                    {{end}}
-                    <a class="view-analysis" href="/file/{{.SHA256}}">View full analysis →</a>
-                </div>
-            </div>
-        </section>
-        {{end}}
-
         <section class="filters" aria-label="Feed filters">
             <form method="GET" action="/" class="search-form" id="search-form" role="search">
                 <input type="search" name="q" id="search-input"
                     value="{{.SearchQuery}}"
-                    placeholder="sha256, filename, purl, C₆H₁₂O₆, or crit:hostile ecosystem:npm"
+                    placeholder="filename, purl, or sha256"
                     autocomplete="off" spellcheck="false"
                     aria-label="Search by SHA, filename, package, purl, malecule, or filter expression" />
                 <a class="search-help" href="/help/query" title="Query syntax">? syntax</a>
@@ -1066,6 +867,12 @@
             </div>
         </section>
 
+        {{if .ZeroState}}
+        <div class="ledger-label">
+            <span class="l-title">Latest analyses</span>
+            <span class="l-sub">the newest records across every verdict — search or filter to dig</span>
+        </div>
+        {{end}}
         <section class="table-wrap" aria-label="Recently scanned records">
             {{if .HasHopper}}
             {{if .FeedDegraded}}

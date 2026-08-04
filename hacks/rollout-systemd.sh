@@ -12,8 +12,8 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+REPO_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)
 UNIT_SOURCE="$SCRIPT_DIR/prism.service"
 UNIT_TARGET=/etc/systemd/system/prism.service
 CLOUDFLARED_UNIT_SOURCE="$SCRIPT_DIR/cloudflared.service"

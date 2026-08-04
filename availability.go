@@ -139,11 +139,12 @@ func (p *backendProbe) refresh(ctx context.Context, client *http.Client) {
 	if previous == next || logger == nil {
 		return
 	}
-	if healthy {
+	switch {
+	case healthy:
 		logger.Info("backend available", "dependency", p.name, "url", p.url)
-	} else if p.url == "" {
+	case p.url == "":
 		logger.Info("backend disabled", "dependency", p.name)
-	} else {
+	default:
 		logger.Warn("backend unavailable; dependent controls disabled", "dependency", p.name, "url", p.url)
 	}
 }
