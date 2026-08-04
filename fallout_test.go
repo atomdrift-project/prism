@@ -91,7 +91,7 @@ func TestBuildFalloutViewWaves(t *testing.T) {
 		}(),
 	)
 
-	view := buildFalloutView(rows, []string{"npm", "aur", "pypi", "rubygems"}, falloutTestNow, "")
+	view := buildFalloutView(rows, falloutTestNow, "")
 	if view.WeeklyCount != 6 {
 		t.Errorf("WeeklyCount = %d, want 6 (wave of 4 + 2 singles)", view.WeeklyCount)
 	}
@@ -119,16 +119,12 @@ func TestBuildFalloutViewWaves(t *testing.T) {
 		t.Errorf("second band label = %q, want YESTERDAY", view.Days[1].Label)
 	}
 
-	// The sector strip: damage-descending, then the quiet watched sector.
-	if len(view.Sectors) != 4 {
-		t.Fatalf("sectors = %d, want 4", len(view.Sectors))
+	// The sector strip: damage-descending, zero-count sectors get no chip.
+	if len(view.Sectors) != 3 {
+		t.Fatalf("sectors = %d, want 3 (no zero-count chips)", len(view.Sectors))
 	}
 	if view.Sectors[0].Ecosystem != "npm" || view.Sectors[0].Count != 4 {
 		t.Errorf("first sector = %+v, want npm ×4", view.Sectors[0])
-	}
-	last := view.Sectors[3]
-	if last.Ecosystem != "rubygems" || !last.Quiet {
-		t.Errorf("last sector = %+v, want quiet rubygems", last)
 	}
 }
 
@@ -137,7 +133,7 @@ func TestBuildFalloutViewEcosystemFilter(t *testing.T) {
 		hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "one", time.Hour),
 		hostileRow(testSHABare, "pypi", "python", "O2(CaEu)", "two", 2*time.Hour),
 	}
-	view := buildFalloutView(rows, nil, falloutTestNow, "pypi")
+	view := buildFalloutView(rows, falloutTestNow, "pypi")
 	if view.WeeklyCount != 2 {
 		t.Errorf("WeeklyCount = %d, want 2 — the filter narrows the log, not the totals", view.WeeklyCount)
 	}
@@ -157,7 +153,7 @@ func TestBuildFalloutViewWindowLabel(t *testing.T) {
 		hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "new", time.Hour),
 		hostileRow(testSHABare, "npm", "javascript", "O2(CC)", "old", 6*24*time.Hour),
 	}
-	if got := buildFalloutView(full, nil, falloutTestNow, "").WindowLabel; got != "this week" {
+	if got := buildFalloutView(full, falloutTestNow, "").WindowLabel; got != "this week" {
 		t.Errorf("full-window label = %q, want this week", got)
 	}
 	// A full feedLimit snapshot entirely inside the window: the snapshot ran
@@ -167,31 +163,8 @@ func TestBuildFalloutViewWindowLabel(t *testing.T) {
 		truncated = append(truncated, hostileRow(shaN(byte(i)), "npm", "javascript", "O1(C)", "pkg", time.Duration(i)*time.Minute))
 	}
 	want := "since " + falloutTestNow.Add(-time.Duration(feedLimit-1)*time.Minute).Format("Jan 2")
-	if got := buildFalloutView(truncated, nil, falloutTestNow, "").WindowLabel; got != want {
+	if got := buildFalloutView(truncated, falloutTestNow, "").WindowLabel; got != want {
 		t.Errorf("truncated label = %q, want %q", got, want)
-	}
-}
-
-func TestFalloutSectorsQuietCap(t *testing.T) {
-	week := []feedRow{hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "one", time.Hour)}
-	watched := []string{"npm"}
-	for i := range falloutQuietMax + 4 {
-		watched = append(watched, "quiet-"+string(rune('a'+i)))
-	}
-	sectors, overflow := falloutSectors(week, week, watched, "")
-	if overflow != 4 {
-		t.Errorf("overflow = %d, want 4", overflow)
-	}
-	if len(sectors) != 1+falloutQuietMax {
-		t.Errorf("sectors = %d, want %d (1 damage + capped quiet)", len(sectors), 1+falloutQuietMax)
-	}
-	// An actively-filtered quiet sector beyond the cap keeps its chip.
-	sectors, overflow = falloutSectors(week, week, watched, watched[len(watched)-1])
-	if overflow != 3 {
-		t.Errorf("overflow with active tail sector = %d, want 3", overflow)
-	}
-	if !sectors[len(sectors)-1].Active {
-		t.Error("the filtered quiet sector must survive the cap")
 	}
 }
 
@@ -225,6 +198,28 @@ func TestSplitWavesSectorQuota(t *testing.T) {
 	}
 	if crates != 1 {
 		t.Errorf("crates singles = %d, want 1 — rare sectors always fit", crates)
+	}
+}
+
+func TestNormalizeFalloutIdentity(t *testing.T) {
+	// Threat-feed import: sha as the package name, readable filename behind
+	// it — the filename must lead.
+	bazaar := feedRow{SHA256: testSHAHero, Package: testSHAHero, Version: "x1", Filename: "invoice_scan.exe"}
+	normalizeFalloutIdentity(&bazaar)
+	if got := bazaar.Headline(); got != "invoice_scan.exe" {
+		t.Errorf("bazaar headline = %q, want the filename", got)
+	}
+	// Wholly anonymous: sha everywhere shortens to the sha prefix.
+	anon := feedRow{SHA256: testSHABare, Package: testSHABare, Filename: testSHABare + ".elf"}
+	normalizeFalloutIdentity(&anon)
+	if got := anon.Headline(); got != shortSHA(testSHABare)+"…" {
+		t.Errorf("anonymous headline = %q, want %q", got, shortSHA(testSHABare)+"…")
+	}
+	// A named row is untouched.
+	named := feedRow{SHA256: testSHARow, RegistryTitle: "Volume Max", Package: "abcdef", Version: "1.2"}
+	normalizeFalloutIdentity(&named)
+	if got := named.Headline(); got != "Volume Max 1.2" {
+		t.Errorf("named headline = %q, want unchanged", got)
 	}
 }
 
@@ -332,7 +327,6 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		MeterSegs:   []bool{true, true, false, false, false, false},
 		Sectors: []falloutSector{
 			{Ecosystem: "npm", Color: "red", Count: 24},
-			{Ecosystem: "rubygems", Color: "yellow", Quiet: true, LastCatch: "Jul 26"},
 		},
 		Days: []falloutDay{{Label: "TODAY", Sub: "Mon Aug 4 · 24 catches · 1 wave · 0 singles", Rows: rows}},
 	}
@@ -348,7 +342,6 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		"SECTOR SURVEY",
 		"biggest blast radius",
 		"/fallout?ecosystem=npm",
-		"quiet — nothing hostile this week; last catch Jul 26",
 		"heat-2",
 	} {
 		if !strings.Contains(html, want) {

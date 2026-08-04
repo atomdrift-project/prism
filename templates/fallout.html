@@ -265,7 +265,6 @@
             color: var(--iron);
             font-variant-numeric: tabular-nums;
         }
-        .strip-chip.dim { opacity: 0.55; }
         .table-wrap {
             overflow: hidden;
             background: var(--white);
@@ -583,14 +582,12 @@
         <nav class="eco-strip" aria-label="Filter by ecosystem">
             {{if .Filtered}}<a class="strip-chip" href="/fallout">all sectors</a>{{end}}
             {{range .Sectors}}
-            <a class="strip-chip{{if .Active}} active{{end}}{{if .Quiet}} dim{{end}}"
-               href="{{if .Active}}/fallout{{else}}/fallout?ecosystem={{.Ecosystem}}{{end}}"
-               {{if .Quiet}}title="quiet — nothing hostile {{$.WindowLabel}}{{with .LastCatch}}; last catch {{.}}{{end}}"{{end}}>
+            <a class="strip-chip{{if .Active}} active{{end}}"
+               href="{{if .Active}}/fallout{{else}}/fallout?ecosystem={{.Ecosystem}}{{end}}">
                 <span class="eco-badge eco-{{.Color}}">{{.Ecosystem}}</span>
                 <span class="n">{{.Count}}</span>
             </a>
             {{end}}
-            {{if .QuietOverflow}}<span class="strip-chip dim" title="watched sectors with nothing hostile {{.WindowLabel}}">+{{.QuietOverflow}} quiet</span>{{end}}
         </nav>
         {{end}}
 

@@ -76,16 +76,13 @@ type falloutDay struct {
 	Rows  []falloutRow
 }
 
-// falloutSector is one chip in the ecosystem strip. Quiet sectors (watched,
-// nothing hostile this week) render dimmed with their last-catch date — the
-// coverage evidence a bare omission would hide.
+// falloutSector is one chip in the ecosystem strip: a sector with damage in
+// the window. Sectors with nothing to report get no chip.
 type falloutSector struct {
 	Ecosystem string
 	Color     string
-	LastCatch string // last catch date for quiet sectors; empty when unknown
 	Count     int
 	Active    bool
-	Quiet     bool
 }
 
 type falloutPageData struct {
@@ -93,17 +90,16 @@ type falloutPageData struct {
 	StyleNonce  string
 	BuildCommit string
 	SelectedEco string
-	// WindowLabel and QuietOverflow mirror falloutView; MeterSegs are the
-	// peak-meter segments (lit = today's share of the window's busiest day).
-	WindowLabel   string
-	Sectors       []falloutSector
-	Days          []falloutDay
-	MeterSegs     []bool
-	QuietOverflow int
-	WeeklyCount   int
-	HasHopper     bool
-	FeedDegraded  bool
-	Filtered      bool
+	// WindowLabel mirrors falloutView; MeterSegs are the peak-meter segments
+	// (lit = today's share of the window's busiest day).
+	WindowLabel  string
+	Sectors      []falloutSector
+	Days         []falloutDay
+	MeterSegs    []bool
+	WeeklyCount  int
+	HasHopper    bool
+	FeedDegraded bool
+	Filtered     bool
 }
 
 const falloutMeterSegs = 6
@@ -133,13 +129,12 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		} else {
 			diags = append(diags, diag)
 			data.FeedDegraded = diag.Source == "stale"
-			view := buildFalloutView(feedRowsFromSnapshot(snapshot), snapshot.Ecosystems, time.Now().UTC(), eco)
+			view := buildFalloutView(feedRowsFromSnapshot(snapshot), time.Now().UTC(), eco)
 			data.Days = view.Days
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
 			data.MeterSegs = view.MeterSegs
 			data.WindowLabel = view.WindowLabel
-			data.QuietOverflow = view.QuietOverflow
 		}
 	}
 	if err := falloutTemplate.Execute(w, data); err != nil {
@@ -181,18 +176,14 @@ type falloutView struct {
 	Days        []falloutDay
 	Sectors     []falloutSector
 	MeterSegs   []bool
-	// QuietOverflow counts the watched-but-clean sectors beyond the strip's
-	// cap, summarized in one trailing chip instead of a wall of dim ones.
-	QuietOverflow int
-	WeeklyCount   int
+	WeeklyCount int
 }
 
 // buildFalloutView assembles the log from the hostile snapshot rows: the
-// weekly window, the sector strip (with quiet sectors from the watched list),
-// and the day bands with waves first. selectedEco, when set, narrows the day
-// bands to one sector; the strip always shows every sector so the filter
-// chips stay navigable.
-func buildFalloutView(rows []feedRow, watched []string, now time.Time, selectedEco string) falloutView {
+// weekly window, the sector strip, and the day bands with waves first.
+// selectedEco, when set, narrows the day bands to one sector; the strip
+// always shows every sector with damage so the filter chips stay navigable.
+func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) falloutView {
 	cutoff := now.Add(-falloutWindow)
 	var week []feedRow
 	oldest := now
@@ -215,7 +206,7 @@ func buildFalloutView(rows []feedRow, watched []string, now time.Time, selectedE
 	if len(week) == len(rows) && len(rows) >= feedLimit {
 		view.WindowLabel = "since " + oldest.Format("Jan 2")
 	}
-	view.Sectors, view.QuietOverflow = falloutSectors(week, rows, watched, selectedEco)
+	view.Sectors = falloutSectors(week, selectedEco)
 
 	// Heat needs distribution counts over the whole weekly pool — not the
 	// filtered one — so a wave of common typosquats dilutes its own formula
@@ -258,23 +249,16 @@ func falloutMeter(today int, perDay map[string]int) []bool {
 	return segs
 }
 
-// falloutQuietMax caps the strip's dimmed quiet chips. The watched list runs
-// to dozens of sectors; a wall of dim chips reads as noise, so the strip
-// shows the most recently active few and folds the rest into one summary.
-const falloutQuietMax = 6
-
-// falloutSectors builds the strip: every sector with damage in the window
-// (count-descending), then the most recently active watched-but-clean sectors
-// as dimmed quiet chips, with the overflow count folded into the second
-// return value.
-func falloutSectors(week, all []feedRow, watched []string, selectedEco string) (sectors []falloutSector, quietOverflow int) {
+// falloutSectors builds the strip: every sector with damage in the window,
+// count-descending. Sectors with nothing to report get no chip.
+func falloutSectors(week []feedRow, selectedEco string) []falloutSector {
 	counts := make(map[string]int, 16)
 	for i := range week {
 		if week[i].Ecosystem != "" {
 			counts[week[i].Ecosystem]++
 		}
 	}
-	sectors = make([]falloutSector, 0, len(counts))
+	sectors := make([]falloutSector, 0, len(counts))
 	for eco, n := range counts {
 		sectors = append(sectors, falloutSector{
 			Ecosystem: eco,
@@ -289,53 +273,7 @@ func falloutSectors(week, all []feedRow, watched []string, selectedEco string) (
 		}
 		return sectors[i].Ecosystem < sectors[j].Ecosystem
 	})
-
-	// Quiet sectors: watched (on the recency-gated dropdown list) but with
-	// nothing hostile in the window. The last catch may predate the window
-	// while still living in the snapshot; sectors the snapshot has forgotten
-	// entirely sort last and usually fall into the overflow summary.
-	lastCatch := make(map[string]time.Time, len(watched))
-	for i := range all {
-		if all[i].Classification != "hostile" || all[i].Ecosystem == "" {
-			continue
-		}
-		if all[i].AnalyzedAt.After(lastCatch[all[i].Ecosystem]) {
-			lastCatch[all[i].Ecosystem] = all[i].AnalyzedAt
-		}
-	}
-	var quiet []falloutSector
-	for _, eco := range watched {
-		if eco == "" || counts[eco] > 0 {
-			continue
-		}
-		q := falloutSector{
-			Ecosystem: eco,
-			Color:     ecosystemColor(eco),
-			Quiet:     true,
-			Active:    eco == selectedEco,
-		}
-		if last, ok := lastCatch[eco]; ok {
-			q.LastCatch = last.Format("Jan 2")
-		}
-		quiet = append(quiet, q)
-	}
-	sort.SliceStable(quiet, func(i, j int) bool {
-		return lastCatch[quiet[i].Ecosystem].After(lastCatch[quiet[j].Ecosystem])
-	})
-	if len(quiet) > falloutQuietMax {
-		// An actively-filtered quiet sector must keep its chip so the strip
-		// still shows where the reader stands.
-		kept := quiet[:falloutQuietMax:falloutQuietMax]
-		for _, q := range quiet[falloutQuietMax:] {
-			if q.Active {
-				kept = append(kept, q)
-				continue
-			}
-			quietOverflow++
-		}
-		quiet = kept
-	}
-	return append(sectors, quiet...), quietOverflow
+	return sectors
 }
 
 // falloutDays groups the shown rows into day bands, newest day first, each
@@ -401,13 +339,6 @@ func splitWaves(rows []feedRow, ecoCount, formulaCount map[string]int, poolSize 
 	for _, members := range groups {
 		if len(members) >= waveMinSize {
 			ex := waveExemplar(members, heat)
-			// A wave of wholly anonymous members titles as a sha-wall —
-			// whichever identity field carries it. Shorten to the sha
-			// prefix; the row still links to the full record.
-			if hexWall(ex.Title()) {
-				ex.RegistryTitle, ex.Package, ex.Version = "", "", ""
-				ex.Filename = shortSHA(ex.SHA256) + "…"
-			}
 			waves = append(waves, falloutRow{feedRow: ex, WaveSize: len(members), Siblings: len(members) - 1})
 			continue
 		}
@@ -503,10 +434,27 @@ func waveExemplar(members []feedRow, heat func(*feedRow) float64) feedRow {
 	return members[best]
 }
 
+// normalizeFalloutIdentity rescues rows whose leading identity is a hash:
+// threat-feed imports (MalwareBazaar and kin) often carry the sha as the
+// package name while the real filename sits behind it. Prefer the readable
+// filename; a wholly anonymous row shortens to its sha prefix — the row
+// still links to the full record.
+func normalizeFalloutIdentity(r *feedRow) {
+	if !hexWall(r.Title()) {
+		return
+	}
+	r.RegistryTitle, r.Package, r.Version = "", "", ""
+	if r.Filename == "" || hexWall(r.Filename) {
+		r.Filename = shortSHA(r.SHA256) + "…"
+	}
+}
+
 // decorateFalloutRows applies the presentation layer to a finished day band:
-// skeletal thumbnails, decay classes, trimmed chips, and the day's ribbons.
+// identity cleanup, skeletal thumbnails, decay classes, trimmed chips, and
+// the day's ribbons.
 func decorateFalloutRows(rows []falloutRow, now time.Time) {
 	for i := range rows {
+		normalizeFalloutIdentity(&rows[i].feedRow)
 		rows[i].MolSVG = skeletalSVG(rows[i].Formula, rows[i].TopTraits)
 		rows[i].HeatClass = decayClass(now.Sub(rows[i].AnalyzedAt))
 		if len(rows[i].TopTraits) > 2 {
