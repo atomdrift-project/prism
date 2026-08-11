@@ -779,6 +779,11 @@ type resultData struct {
 	// the version appended. Empty for uploads and ecosystems without a PURL
 	// type; the template hides the meta row when empty.
 	PURL string
+	// PURLIndexURL makes the hero's Package row a link to the package's
+	// version index — normally the coordinate's rooted path (/npm/lodash),
+	// see purlIndexURL. Empty when the sample has no purl_base, which leaves
+	// the row plain text.
+	PURLIndexURL string
 	// DetectedBy lists the external sources that have also cited this sample
 	// (hopper's sightings ledger, keyed by sha256 + purl_base), filtered to
 	// the sources we name publicly: open databases (osv, opensourcemalware) and blogs
@@ -2493,6 +2498,13 @@ type feedQueryArgs struct {
 	// pasted URL resolves to one cache key and one indexed query.
 	purlBase    string
 	purlVersion string
+	// claimName / claimSigner filter by identity claim through hopper's
+	// asset_claims view: any claim — a registry's, or the analyzer's read of
+	// the file's own version resource / signature — asserting this exact
+	// name / signer. Claim hits are typically archive members (an exe inside
+	// each installer that ships it), so these disable TopLevelOnly.
+	claimName   string
+	claimSigner string
 	// feedsOnly toggles the "malware feeds" view: only label='bad'
 	// samples (curated threat-intel / open-source malware sources) are
 	// returned, and the table picks up a Feed column.
@@ -2508,9 +2520,10 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v9:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v10:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
-		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion
+		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
+		":cn=" + a.claimName + ":cs=" + a.claimSigner
 }
 
 // loadFeedSnapshot fetches a feed page, caching every query for feedCacheTTL.
@@ -2600,6 +2613,12 @@ func feedDiagParams(a feedQueryArgs) string {
 		if a.purlVersion != "" {
 			parts = append(parts, "purlver="+diagSafe(a.purlVersion))
 		}
+	}
+	if a.claimName != "" {
+		parts = append(parts, "name="+diagSafe(a.claimName))
+	}
+	if a.claimSigner != "" {
+		parts = append(parts, "signer="+diagSafe(a.claimSigner))
 	}
 	if a.feedsOnly {
 		parts = append(parts, "feeds=1")
@@ -2716,12 +2735,17 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	// the rename, new "forager" rows, manual "upload"s) so the result set
 	// works across the transition.
 	q := hopper.FeedQuery{
-		OrderBy:       "created_at",
-		Formula:       args.formula,
-		Search:        args.search,
-		PURLBase:      args.purlBase,
-		PURLVersion:   args.purlVersion,
-		TopLevelOnly:  true,
+		OrderBy:     "created_at",
+		Formula:     args.formula,
+		Search:      args.search,
+		PURLBase:    args.purlBase,
+		PURLVersion: args.purlVersion,
+		ClaimName:   args.claimName,
+		ClaimSigner: args.claimSigner,
+		// A claim filter searches the whole containment tree: the exe that
+		// carries a signer's claim lives inside its installers, never at the
+		// top level. Every other view keeps the top-level restriction.
+		TopLevelOnly:  args.claimName == "" && args.claimSigner == "",
 		Limit:         feedLimit,
 		CriticalLevel: CriticalLevel,
 	}
@@ -2919,9 +2943,10 @@ func refreshFeedCacheLoop(ctx context.Context) {
 // immediately so the baseline is warm at startup.
 func feedStaticPrecacheLoop(ctx context.Context) {
 	sweep := func() {
-		for _, v := range feedPrecacheVariants {
-			if err := refreshFeedCacheEntry(ctx, v, feedStaticPrecacheInterval); err != nil {
-				logger.Warn("feed static pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
+		for i := range feedPrecacheVariants {
+			v := &feedPrecacheVariants[i]
+			if err := refreshFeedCacheEntry(ctx, *v, feedStaticPrecacheInterval); err != nil {
+				logger.Warn("feed static pre-cache refresh failed", "key", feedCacheKey(*v), "error", err)
 			}
 		}
 	}
@@ -2950,9 +2975,11 @@ func feedHotPrecacheLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, v := range feedPopular.top(feedHotPrecacheCount) {
-				if err := refreshFeedCacheEntry(ctx, v, feedHotPrecacheInterval); err != nil {
-					logger.Warn("feed hot pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
+			hot := feedPopular.top(feedHotPrecacheCount)
+			for i := range hot {
+				v := &hot[i]
+				if err := refreshFeedCacheEntry(ctx, *v, feedHotPrecacheInterval); err != nil {
+					logger.Warn("feed hot pre-cache refresh failed", "key", feedCacheKey(*v), "error", err)
 				}
 			}
 		}
@@ -3705,6 +3732,24 @@ func purlDisplay(res *storedResult) string {
 	return res.PURLBase + "@" + res.Version
 }
 
+// purlIndexURL is the version-index link behind the hero's Package row: the
+// version-less canonical base as a rooted path (pkg:npm/lodash →
+// /npm/lodash), the package hierarchy servePURL serves. A base carrying an
+// identity qualifier (Open VSX's repository_url survives VersionlessPURL)
+// keeps the ?purl= filter form instead — its "?" would otherwise start the
+// path URL's query string and drop the qualifier on the round-trip. Empty
+// in, empty out.
+func purlIndexURL(base string) string {
+	rest, ok := strings.CutPrefix(base, "pkg:")
+	if !ok {
+		return ""
+	}
+	if strings.ContainsAny(rest, "?#") {
+		return "/?purl=" + url.QueryEscape(base)
+	}
+	return "/" + rest
+}
+
 // Citation is one external source that has cited this sample, shown as a chip
 // in the detail page's "also detected by" row. Source is the public display
 // name ("osv", "bleepingcomputer"); URL links to the advisory/report when the
@@ -4001,6 +4046,22 @@ func shaFromSearchQuery(q string) (string, bool) {
 // mistaken for a PURL, and a value carrying whitespace is more than one token
 // (not a bare PURL), so it is left to the free-text path. The returned string is
 // not yet canonical — normalizePURL does that.
+// claimTokenFromSearchQuery sniffs a leading `name:<n>` or `signer:<s>` token
+// from the free-text box — the no-JS twin of upload.js's tokenizer, mirroring
+// purlFromSearchQuery. Unlike a PURL, names and signers legitimately contain
+// spaces ("Igor Pavlov"), so the token consumes the rest of the query.
+func claimTokenFromSearchQuery(q string) (key, value string, ok bool) {
+	q = strings.TrimSpace(q)
+	for _, k := range []string{"name", "signer"} {
+		if len(q) > len(k)+1 && strings.EqualFold(q[:len(k)+1], k+":") {
+			if rest := strings.TrimSpace(q[len(k)+1:]); rest != "" {
+				return k, rest, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 func purlFromSearchQuery(q string) (string, bool) {
 	q = strings.TrimSpace(q)
 	if q == "" || strings.ContainsAny(q, " \t\r\n") {
@@ -4208,7 +4269,7 @@ func urlPathSegment(value string) string {
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
-	renderFeed(w, r, "")
+	renderFeed(w, r, "", "")
 }
 
 func handleEcosystem(w http.ResponseWriter, r *http.Request) {
@@ -4220,7 +4281,81 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	renderFeed(w, r, eco)
+	// A path that continues past the ecosystem is a package coordinate, not a
+	// feed: /npm/lodash@4.17.21 reads as pkg:npm/lodash@4.17.21 and is the
+	// record's URL, extending the hierarchy /npm/ (feed) → /npm/lodash (every
+	// release) → /npm/lodash@4.17.21 (one release).
+	if coordinate := strings.Trim(r.URL.Path, "/"); strings.Contains(coordinate, "/") {
+		servePURL(w, r, coordinate)
+		return
+	}
+	renderFeed(w, r, eco, "")
+}
+
+// servePURL resolves a package coordinate from the URL path. A versioned
+// coordinate that pins exactly one sample lands directly on its /file page;
+// everything else — a version-less package, several matches, an unknown
+// package, hopper down — renders the feed filtered to that identity in
+// place, so /npm/lodash is the package's version index the way /npm/ is the
+// ecosystem's. A version-less coordinate always gets the index (never the
+// sole-sample shortcut): its URL promises every release, even when only one
+// exists yet. The redirect targets are a constant and a DB-sourced hex sha,
+// so no user-controlled byte ever starts the Location header (the
+// open-redirect trick validEcosystem defeats).
+func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
+	canonical, base, version := normalizePURL(coordinate)
+	if base == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if version != "" {
+		if sha := soleSampleByPURL(r.Context(), base, version); sha != "" {
+			http.Redirect(w, r, "/file/"+sha, http.StatusFound)
+			return
+		}
+	}
+	renderFeed(w, r, "", canonical)
+}
+
+// soleSampleByPURL returns the sha256 of the one sample matching the
+// canonical purl base (and version, when set), or "" when the coordinate
+// matches zero or several samples — ambiguity the purl-filtered feed
+// resolves better than a guess. The query is an indexed exact match
+// (samples.purl_base), gated by the shared hopper-db breaker like every
+// other per-request lookup. No litmus requirement: a still-unanalyzed
+// sample should resolve to its record page, which shows analysis progress.
+func soleSampleByPURL(ctx context.Context, base, version string) string {
+	db := hopperDB.Load()
+	if db == nil {
+		return ""
+	}
+	if err := dbBreaker.allow(); err != nil {
+		recordDep(ctx, "hopper-db", "purl", "rejected", time.Time{})
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
+	defer cancel()
+	start := time.Now()
+	samples, err := db.FeedSamples(ctx, &hopper.FeedQuery{
+		PURLBase:      base,
+		PURLVersion:   version,
+		OrderBy:       "created_at",
+		TopLevelOnly:  true,
+		Limit:         2,
+		CriticalLevel: CriticalLevel,
+	})
+	if err != nil {
+		dbBreaker.failure()
+		recordDep(ctx, "hopper-db", "purl", "error", start)
+		logger.Warn("purl lookup failed", "purl", base, "version", version, "error", err)
+		return ""
+	}
+	dbBreaker.success()
+	recordDep(ctx, "hopper-db", "purl", "ok", start)
+	if len(samples) == 1 {
+		return samples[0].SHA256
+	}
+	return ""
 }
 
 func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
@@ -4304,7 +4439,7 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 	}
 }
 
-func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
+func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) {
 	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
 	// JS already short-circuits these before sending, but a pasted URL or
 	// a no-JS client still gets the redirect. Run it on the raw value;
@@ -4326,17 +4461,34 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 		crit = normalizeCriticality(r.URL.Query().Get("criticality"))
 		critToken = firstNonEmpty(crit, "any")
 	}
-	// PURL filter: JS sends the coordinate as ?purl=; a no-JS client or pasted
-	// link carries it in the free-text box, so fall back to sniffing ?q= for a
-	// bare pkg: / purl: token. A coordinate consumed from ?q= must not also run
-	// as a filename search, so its raw value is dropped before normalizeSearch.
-	rawPURL, searchRaw := r.URL.Query().Get("purl"), r.URL.Query().Get("q")
+	// PURL filter: a package path (/npm/lodash) passes the coordinate in
+	// directly and wins. Otherwise JS sends it as ?purl=; a no-JS client or
+	// pasted link carries it in the free-text box, so fall back to sniffing
+	// ?q= for a bare pkg: / purl: token. A coordinate consumed from ?q= must
+	// not also run as a filename search, so its raw value is dropped before
+	// normalizeSearch.
+	rawPURL, searchRaw := firstNonEmpty(purl, r.URL.Query().Get("purl")), r.URL.Query().Get("q")
 	if rawPURL == "" {
 		if p, ok := purlFromSearchQuery(searchRaw); ok {
 			rawPURL, searchRaw = p, ""
 		}
 	}
 	purlCanonical, purlBase, purlVersion := normalizePURL(rawPURL)
+	// Identity-claim filter: JS sends ?name= / ?signer=; a no-JS client types
+	// `name:` / `signer:` into the box. Like the purl sniff above, a consumed
+	// token must not also run as a filename search.
+	claimName := sanitizeFilter(r.URL.Query().Get("name"))
+	claimSigner := sanitizeFilter(r.URL.Query().Get("signer"))
+	if claimName == "" && claimSigner == "" {
+		if key, value, ok := claimTokenFromSearchQuery(searchRaw); ok {
+			if key == "name" {
+				claimName = value
+			} else {
+				claimSigner = value
+			}
+			searchRaw = ""
+		}
+	}
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
 		WeeklyHostile:   weeklyHostileCount(r.Context()),
@@ -4362,6 +4514,11 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 	if ecosystem != "" {
 		data.Title = ecosystem + " · Search"
 	}
+	// A package path (/npm/lodash) titles its tab by the coordinate; the
+	// ?purl= query form stays a plain search, matching the box it came from.
+	if purl != "" && purlCanonical != "" {
+		data.Title = purlCanonical
+	}
 
 	var diags []queryDiag
 	if hopperDB.Load() != nil {
@@ -4375,6 +4532,8 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem string) {
 				search:      data.SelectedQ,
 				purlBase:    purlBase,
 				purlVersion: purlVersion,
+				claimName:   claimName,
+				claimSigner: claimSigner,
 				feedsOnly:   data.FeedsOnly,
 			},
 			logger,
@@ -7171,6 +7330,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.EcosystemURL = ecosystemURL(res.Ecosystem)
 	}
 	data.PURL = purlDisplay(res)
+	data.PURLIndexURL = purlIndexURL(res.PURLBase)
 	// The raw filename feeds the headline (data.Filename is pre-escaped and
 	// the template escapes again on output).
 	data.Headline = identityHeadline(res.RegistryTitle, res.Package, filename, res.Version)

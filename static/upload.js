@@ -71,6 +71,8 @@ function setAnalyzingStatus(fileName) {
 //   domain:<v>     → ?domain=<v>
 //   m:<formula>    → ?m=<formula>       (alias malecule:, formula:)
 //   purl:<coord>   → ?purl=<coord>      (package identity; pkg: added by server)
+//   name:<name>    → ?name=<name>      (identity claim; rest of query, spaces OK)
+//   signer:<org>   → ?signer=<org>     (identity claim by signer; rest of query)
 //   <64-hex>       → sha256:<hex> (paste a hash without prefix)
 //   <pkg:type/…>   → ?purl=<coord> (paste a PURL without the purl: prefix)
 //   <bare token>   → ?q=<term> (filename substring or exact SHA-256)
@@ -106,8 +108,26 @@ function normalizeCrit(value) {
 }
 
 function parseQuery(text) {
-  const out = { crit: "", ecosystem: "", domain: "", m: "", q: "", sha: "", purl: "" };
+  const out = {
+    crit: "",
+    ecosystem: "",
+    domain: "",
+    m: "",
+    q: "",
+    sha: "",
+    purl: "",
+    name: "",
+    signer: "",
+  };
   if (!text) return out;
+  // A leading name:/signer: token consumes the rest of the query — identity
+  // names and signers legitimately contain spaces ("Igor Pavlov"). Mirror of
+  // claimTokenFromSearchQuery in main.go.
+  const claim = text.trim().match(/^(name|signer):\s*(\S.*)$/i);
+  if (claim) {
+    out[claim[1].toLowerCase()] = claim[2].trim();
+    return out;
+  }
   const tokens = text.trim().split(/\s+/);
   const free = [];
   for (const tok of tokens) {
@@ -178,6 +198,8 @@ function parseQuery(text) {
 function composeQueryString(parsed) {
   const parts = [];
   if (parsed.sha) return `sha256:${parsed.sha}`;
+  if (parsed.name) return `name:${parsed.name}`;
+  if (parsed.signer) return `signer:${parsed.signer}`;
   if (parsed.crit) parts.push(`crit:${parsed.crit}`);
   if (parsed.purl) parts.push(`purl:${parsed.purl}`);
   if (parsed.ecosystem) parts.push(`ecosystem:${parsed.ecosystem}`);
@@ -192,6 +214,8 @@ function buildURL(parsed) {
   const url = new URL(window.location.origin + eco);
   if (parsed.crit) url.searchParams.set("criticality", parsed.crit);
   if (parsed.purl) url.searchParams.set("purl", parsed.purl);
+  if (parsed.name) url.searchParams.set("name", parsed.name);
+  if (parsed.signer) url.searchParams.set("signer", parsed.signer);
   if (parsed.domain) url.searchParams.set("domain", parsed.domain);
   if (parsed.m) url.searchParams.set("m", parsed.m);
   if (parsed.q) url.searchParams.set("q", parsed.q);

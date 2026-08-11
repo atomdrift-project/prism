@@ -1869,7 +1869,12 @@
                     {{if .PURL}}
                     <div class="meta-row">
                         <span class="meta-label">Package</span>
+                        {{if .PURLIndexURL}}
+                        <a class="meta-value purl-value" href="{{.PURLIndexURL}}"
+                           title="All analyzed versions of this package">{{.PURL}}</a>
+                        {{else}}
                         <span class="meta-value purl-value" title="Package URL">{{.PURL}}</span>
+                        {{end}}
                     </div>
                     {{end}}
                     {{if .Users}}

@@ -226,6 +226,21 @@
                         <td class="desc">
                             Filter to one package identity by Package URL, e.g. <code>purl:pkg:npm/lodash</code> (every version) or <code>purl:pkg:npm/lodash@4.17.21</code> (one release).
                             <span class="alias">The <code>pkg:</code> scheme is optional — <code>purl:npm/lodash</code> works and is normalized. A bare <code>pkg:…</code> paste is detected without the prefix.</span>
+                            <span class="alias">Records are also linkable directly by URL path: <code>/npm/lodash</code> is the package's version index, and <code>/npm/lodash@4.17.21</code> lands on the sample page when the coordinate pins exactly one record.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">name:&lt;name&gt;</code></td>
+                        <td class="desc">
+                            Every sample any identity claim says is this software — a registry's claim, or the file's own version resource / bundle manifest — e.g. <code>name:7-Zip</code>. Searches inside archives too: the exe inside each installer that ships it.
+                            <span class="alias">Consumes the rest of the query, so names with spaces need no quoting. Combine by signer with <code>signer:</code>.</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="token"><code class="tok">signer:&lt;org&gt;</code></td>
+                        <td class="desc">
+                            Everything signed by one organization (code-signing certificate subject), e.g. <code>signer:Igor Pavlov</code> — the "who vouches for it" view.
+                            <span class="alias">Consumes the rest of the query; spaces are fine.</span>
                         </td>
                     </tr>
                     <tr>

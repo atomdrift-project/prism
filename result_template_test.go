@@ -52,7 +52,10 @@ func TestResultTemplateParses(t *testing.T) {
 		{
 			name: "single_file", data: singleFileData(),
 			dontWant: []string{"verdict-level", "tabbtn-content", `id="tab-content"`}, // benign: badge hidden; no Content tab
-			want:     []string{"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`},
+			want: []string{
+				"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`,
+				`href="/npm/lodash"`, "All analyzed versions of this package",
+			},
 		},
 		// Archive without per-line context: same — Traits-only, no Content tab.
 		// Confidence badge plus a full trait match row (filename — location — evidence).
@@ -263,6 +266,8 @@ func singleFileData() resultData {
 		SuspiciousT:     0.65,
 		HostileT:        0.887,
 		Nonce:           "n",
+		PURL:            "pkg:npm/lodash@4.17.21",
+		PURLIndexURL:    "/npm/lodash",
 		Level:           new(-1), // benign sentinel: badge must be hidden, not crash
 		Provenance: []ProvenanceGroup{
 			{Title: "Identity", Rows: []ProvenanceRow{
