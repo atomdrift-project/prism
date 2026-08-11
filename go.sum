@@ -12,6 +12,8 @@ github.com/atomdrift-project/hopper v0.0.0-20260803213404-66e1e166ea0a h1:2fbHeX
 github.com/atomdrift-project/hopper v0.0.0-20260803213404-66e1e166ea0a/go.mod h1:BTmkOIyvhmR9/XyKfwH71kQ2FSyXqbgOehL7cSsefjA=
 github.com/atomdrift-project/hopper v0.0.0-20260811104754-6278328897dd h1:Yr2K+bnq846/SxNGjn/jmiSK0dE0SH/v8kY43vi/jsY=
 github.com/atomdrift-project/hopper v0.0.0-20260811104754-6278328897dd/go.mod h1:BTmkOIyvhmR9/XyKfwH71kQ2FSyXqbgOehL7cSsefjA=
+github.com/atomdrift-project/hopper v0.0.0-20260811175934-0ef5d14f980a h1:bvh+jzlKFLukyX437VkEeqdicxaCeOFjqZhWNEKzrDY=
+github.com/atomdrift-project/hopper v0.0.0-20260811175934-0ef5d14f980a/go.mod h1:BTmkOIyvhmR9/XyKfwH71kQ2FSyXqbgOehL7cSsefjA=
 github.com/atomdrift-project/obs v0.0.0-20260723192826-95a12564dd6f h1:6tM+BLSWMfRa6F13inxucX3yhPUiPntIOiWjSqv0umk=
 github.com/atomdrift-project/obs v0.0.0-20260723192826-95a12564dd6f/go.mod h1:EX5LXJhxxhmZAV6N3s/Di+UU0mjn0EEZOPl0lSaRYlA=
 github.com/atomdrift-project/obs v0.0.0-20260804141423-6dff25bbc747 h1:u+orE68ZGdHtOiPsGjhhJvH2S8Iazjebz8cNsIFjx1w=

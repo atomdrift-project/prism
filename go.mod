@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/atomdrift-project/hopper v0.0.0-20260811104754-6278328897dd
+	github.com/atomdrift-project/hopper v0.0.0-20260811175934-0ef5d14f980a
 	github.com/atomdrift-project/obs v0.0.0-20260804141423-6dff25bbc747
 	github.com/codeGROOVE-dev/fido v1.11.0
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
