@@ -32,90 +32,51 @@ var statsLatest atomic.Pointer[indexStats]
 
 const (
 	// statsPollInterval is how often the background poller refreshes the
-	// estimate. Two cheap queries a minute — one O(1) catalog read and one
-	// bounded index range scan — is the entire database cost of the counter, no
-	// matter how many clients are watching or how fast they poll.
+	// estimate. One cheap query a minute — an O(1) catalog read plus a bounded
+	// index range scan for the rate — is the entire database cost of the counter,
+	// no matter how many clients are watching or how fast they poll.
 	statsPollInterval = time.Minute
 	// statsRateWindow is the trailing window the ingestion rate is measured over.
 	statsRateWindow = 15 * time.Minute
-	// statsQueryTimeout bounds one poll's queries so a wedged read can't stall
-	// the poller. Generous: both queries are fast, but the rate scan is bounded
-	// only by how many rows landed in the last statsRateWindow.
+	// statsQueryTimeout bounds the poll query so a wedged read can't stall the
+	// poller. Generous: the catalog read is O(1) and the rate scan is bounded to
+	// the rows that landed in the last statsRateWindow.
 	statsQueryTimeout = 5 * time.Second
-	// statsPersistKey is the single fixed key for the persisted running total.
-	statsPersistKey = "index"
-	// statsPersistTTL keeps the persisted total valid across typical restart /
-	// deploy gaps. A longer gap just cold-seeds from reltuples, which the running
-	// total's floor heals within a few polls.
-	statsPersistTTL = 7 * 24 * time.Hour
 )
 
 // statsQueryResult is one poll's raw readings from the database.
 type statsQueryResult struct {
-	dbNow    time.Time // the database clock, for the next poll's delta boundary
-	estimate int64     // pg_class.reltuples — the planner's live-row estimate
-	delta    int64     // rows inserted since the previous poll (capped at the window)
-	recent   int64     // rows inserted in the last statsRateWindow
+	estimate int64 // pg_class.reltuples — the planner's live-row estimate
+	recent   int64 // rows inserted in the last statsRateWindow, for the rate
 }
 
-// statsPollLoop maintains the published index-size estimate. It keeps a
-// monotonic running total that advances each poll by the exact number of rows
-// inserted since the previous poll (the created_at delta), with reltuples as a
-// floor that heals any undercount. This is what makes the counter survive a
-// reload: the estimate lives on the server, not in each client, so every
-// visitor — and every refresh — shares the same up-to-the-minute total and the
-// number never jumps backward. Between polls the client scales it with the
-// published rate. The loop runs for the life of ctx, independent of the hopper
-// connection (queryStats errors while hopper is down and it simply retries), so
-// it needs no hookup to the connect/reconnect callbacks. All database cost of
-// the counter lives here: one bounded query a minute.
+// statsPollLoop maintains the published index-size estimate. Each poll publishes
+// the planner's live-row estimate for the samples table (pg_class.reltuples) as
+// the total, plus the recent ingestion rate the client extrapolates the digits
+// with between polls. reltuples already reflects net inserts minus deletes and
+// stays within a fraction of a percent of an exact count, so the counter is
+// truthful without an O(rows) scan. A purely additive running total, by
+// contrast, could never give back the rows reconciliation deletes and drifted
+// permanently high — which is why this publishes the estimate directly and lets
+// it correct downward. The loop runs for the life of ctx, independent of the
+// hopper connection (queryStats errors while hopper is down and it simply
+// retries), so it needs no hookup to the connect/reconnect callbacks. All
+// database cost of the counter lives here: one bounded query a minute.
 func statsPollLoop(ctx context.Context) {
-	// Seed the delta boundary a window back so the very first query scans only
-	// the last statsRateWindow rather than the whole table.
-	lastPollAt := time.Now().Add(-statsRateWindow)
-	var total int64
-	seeded := false
-	// Resume the running total from disk so a restart continues where it left
-	// off. The first poll then advances it by the rows inserted during the
-	// downtime (capped at the window; the reltuples floor heals a longer gap)
-	// instead of dropping back to the planner estimate. Absent/expired → cold
-	// seed from reltuples on the first poll.
-	if statsPersistCache != nil {
-		if snap, found, err := statsPersistCache.Get(ctx, statsPersistKey); err == nil && found {
-			total = snap.Total
-			lastPollAt = snap.GeneratedAt
-			seeded = true
-		}
-	}
 	poll := func() {
 		qctx, cancel := context.WithTimeout(ctx, statsQueryTimeout)
 		defer cancel()
-		res, err := queryStats(qctx, lastPollAt)
+		res, err := queryStats(qctx)
 		if err != nil {
 			logger.Debug("stats poll failed", "error", err)
 			return
 		}
-		if !seeded {
-			total = res.estimate // anchor the running total to the planner estimate once
-			seeded = true
-		} else {
-			total += res.delta // advance by the exact inserts since the last poll
-			if res.estimate > total {
-				total = res.estimate // heal an undercount; never move backward
-			}
-		}
-		lastPollAt = res.dbNow
 		snap := indexStats{
 			GeneratedAt: time.Now().UTC(),
-			Total:       total,
+			Total:       res.estimate,
 			RatePerMin:  float64(res.recent) / statsRateWindow.Minutes(),
 		}
 		statsLatest.Store(&snap)
-		if statsPersistCache != nil {
-			if err := statsPersistCache.SetTTL(ctx, statsPersistKey, snap, statsPersistTTL); err != nil {
-				logger.Debug("stats persist write failed", "error", err)
-			}
-		}
 	}
 	poll() // warm immediately so the counter can appear on the first page load
 	ticker := time.NewTicker(statsPollInterval)
@@ -130,16 +91,14 @@ func statsPollLoop(ctx context.Context) {
 	}
 }
 
-// queryStats reads the estimate, the since-last-poll delta, the trailing-window
-// count, and the database clock in a single query through the exposed pool. The
-// estimate is pg_class.reltuples — an O(1) catalog read, no table scan. The two
-// counts come from one index range scan over just the last statsRateWindow via
-// idx_samples_created_at (the Grafana ingest-rate index), so the whole poll
-// stays cheap regardless of corpus size. The delta's lower bound is clamped to
-// the window with GREATEST so a delayed poll can never widen the scan. It goes
-// through the pool rather than a hopper method so a one-line stats read needs no
-// hopper release + pin bump to ship.
-func queryStats(ctx context.Context, since time.Time) (statsQueryResult, error) {
+// queryStats reads the planner estimate and the trailing-window insert count in
+// a single query through the exposed pool. The estimate is pg_class.reltuples —
+// an O(1) catalog read, no table scan. The count comes from one index range scan
+// over just the last statsRateWindow via idx_samples_created_at (the Grafana
+// ingest-rate index), so the whole poll stays cheap regardless of corpus size.
+// It goes through the pool rather than a hopper method so a one-line stats read
+// needs no hopper release + pin bump to ship.
+func queryStats(ctx context.Context) (statsQueryResult, error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return statsQueryResult{}, errors.New("hopper not connected")
@@ -162,12 +121,10 @@ func queryStats(ctx context.Context, since time.Time) (statsQueryResult, error) 
 	err := pool.QueryRow(ctx, `
 		SELECT
 		  (SELECT reltuples::bigint FROM pg_class WHERE oid = 'samples'::regclass),
-		  count(*) FILTER (WHERE created_at >= GREATEST($1::timestamptz, now() - $2::interval)),
-		  count(*) FILTER (WHERE created_at >= now() - $2::interval),
-		  now()
+		  count(*)
 		FROM samples
-		WHERE created_at >= now() - $2::interval`,
-		since, window).Scan(&res.estimate, &res.delta, &res.recent, &res.dbNow)
+		WHERE created_at >= now() - $1::interval`,
+		window).Scan(&res.estimate, &res.recent)
 	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
