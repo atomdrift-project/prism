@@ -159,11 +159,23 @@ func weeklyHostileCount(ctx context.Context) int {
 	cutoff := time.Now().UTC().Add(-falloutWindow)
 	n := 0
 	for i := range snapshot.Rows {
-		if snapshot.Rows[i].Classification == "hostile" && snapshot.Rows[i].CreatedAt.After(cutoff) {
+		row := &snapshot.Rows[i]
+		if row.Classification == "hostile" && row.CreatedAt.After(cutoff) &&
+			falloutQualifies(row.Why, row.LLMGrade) {
 			n++
 		}
 	}
 	return n
+}
+
+// falloutQualifies gates a hostile catch into the log. Beyond the hostile
+// verdict (which the blend may reach on ML weight alone), the log shows a
+// catch only when the LLM interpretation pass ran, agreed the sample looks
+// hostile (its own grade), and left a summary to display. The nav badge
+// (weeklyHostileCount) applies the same bar so its count never disagrees with
+// the log the reader lands on.
+func falloutQualifies(why, llmGrade string) bool {
+	return why != "" && llmGrade == "hostile"
 }
 
 // falloutView is the assembled log: what buildFalloutView hands the handler.
@@ -188,7 +200,8 @@ func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) fallout
 	var week []feedRow
 	oldest := now
 	for i := range rows {
-		if rows[i].Classification == "hostile" && rows[i].AnalyzedAt.After(cutoff) {
+		if rows[i].Classification == "hostile" && rows[i].AnalyzedAt.After(cutoff) &&
+			falloutQualifies(rows[i].Why, rows[i].LLMGrade) {
 			week = append(week, rows[i])
 			if rows[i].AnalyzedAt.Before(oldest) {
 				oldest = rows[i].AnalyzedAt

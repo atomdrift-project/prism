@@ -956,7 +956,13 @@ type feedRow struct {
 	// carries the row's headline trait chips; the ledger shows the top two
 	// only when no LLM rationale exists (FallbackTraits), while the Hot
 	// Particle shows them all as its evidence row.
-	Why       string
+	Why string
+	// LLMGrade is the LLM interpretation pass's own raw verdict for the
+	// sample ("benign"/"suspicious"/"hostile", empty when no pass ran; litmus
+	// `llm.grade`). It is the LLM's opinion alone, before the blend that
+	// produces Classification — the fallout log gates on it so a catch shows
+	// only when the LLM itself agrees the sample looks hostile.
+	LLMGrade  string
 	TopTraits []feedTrait
 	Conf      int
 	// Corroborated marks a sample an external threat feed, scanner, blog, or
@@ -1241,7 +1247,9 @@ type cachedFeedSample struct {
 	// (blended when a rationale exists, ml-pass otherwise); TopTraits the
 	// display-ready headline trait chips; Corroborated is hopper's
 	// samples.corroborated flag (sightings ledger). See feedRow.
-	Why          string
+	Why string
+	// LLMGrade is the LLM pass's own raw verdict; see feedRow.
+	LLMGrade     string
 	TopTraits    []feedTrait
 	Conf         int
 	Corroborated bool
@@ -2808,7 +2816,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 
 		addedAt := sample.CreatedAt
 		suspiciousT, hostileT, mlConf := sampleMLVerdict(sample)
-		why, conf := llmWhy(sample.LLMResult)
+		why, llmGrade, conf := llmWhy(sample.LLMResult)
 		// Keep interpreted and uninterpreted rows consistent: a row without
 		// an LLM rationale still shows a verdict-confidence chip, sourced
 		// from the ml pass instead of the blend.
@@ -2837,6 +2845,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			Why:            why,
 			Conf:           conf,
 			TopTraits:      parseTopTraits(sample.TopTraits),
+			LLMGrade:       llmGrade,
 			Corroborated:   sample.Corroborated,
 			AnalyzedAt:     addedAt,
 			AnalyzedDate:   feedDate(addedAt, now),
@@ -2874,6 +2883,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			Why:            sample.Why,
 			Conf:           sample.Conf,
 			TopTraits:      sample.TopTraits,
+			LLMGrade:       sample.LLMGrade,
 			Corroborated:   sample.Corroborated,
 			AnalyzedAt:     sample.CreatedAt,
 			AnalyzedDate:   feedDate(sample.CreatedAt, now),
@@ -3083,6 +3093,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Why:            row.Why,
 			Conf:           row.Conf,
 			TopTraits:      row.TopTraits,
+			LLMGrade:       row.LLMGrade,
 			Corroborated:   row.Corroborated,
 			CreatedAt:      row.AnalyzedAt,
 		})
@@ -3434,15 +3445,15 @@ func sampleMLVerdict(sample *hopper.Sample) (suspiciousT, hostileT float64, conf
 // bare `llm` envelope object. Both zero when no interpretation pass ran, when
 // the pass failed (carries only `error`), or when the JSON doesn't parse; the
 // feed row then renders without a rationale line, exactly as before.
-func llmWhy(raw []byte) (why string, conf int) {
+func llmWhy(raw []byte) (why, grade string, conf int) {
 	if len(raw) == 0 {
-		return "", 0
+		return "", "", 0
 	}
 	var llm llmInterpretation
 	if err := json.Unmarshal(raw, &llm); err != nil || llm.Interpretation == "" {
-		return "", 0
+		return "", "", 0
 	}
-	return llm.Interpretation, int(llm.Conf*100 + 0.5)
+	return llm.Interpretation, llm.Grade, int(llm.Conf*100 + 0.5)
 }
 
 // feedTrait is one of a row's headline traits, ready for the chip the feed

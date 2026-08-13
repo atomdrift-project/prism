@@ -51,6 +51,9 @@ func uploadTemplateForTest(t *testing.T) *template.Template {
 	return tmpl
 }
 
+// hostileRow builds a row that clears the fallout gate (falloutQualifies): a
+// hostile verdict with an LLM summary and a hostile LLM grade. Tests that
+// probe the gate itself override Why/LLMGrade.
 func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feedRow {
 	return feedRow{
 		SHA256:         sha,
@@ -60,6 +63,8 @@ func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feed
 		Ecosystem:      eco,
 		FileType:       fileType,
 		Formula:        formula,
+		Why:            "exfiltrates credentials on install",
+		LLMGrade:       "hostile",
 		AnalyzedAt:     falloutTestNow.Add(-age),
 	}
 }
@@ -143,6 +148,41 @@ func TestBuildFalloutViewEcosystemFilter(t *testing.T) {
 	// The strip keeps both sectors so the chips stay navigable.
 	if len(view.Sectors) != 2 {
 		t.Errorf("sectors = %d, want 2 (strip is never filtered)", len(view.Sectors))
+	}
+}
+
+// TestBuildFalloutViewQualifies pins the gate: a hostile catch reaches the log
+// only when the LLM ran, left a summary, and graded the sample hostile itself
+// — a blended-hostile verdict the LLM downgraded (or never scored) stays off.
+func TestBuildFalloutViewQualifies(t *testing.T) {
+	tune := func(pkg, why, grade string) feedRow {
+		r := hostileRow(shaN(byte(len(pkg))), "npm", "javascript", "O1(C)", pkg, time.Hour)
+		r.Why, r.LLMGrade = why, grade
+		return r
+	}
+	rows := []feedRow{
+		tune("no-summary", "", "hostile"),               // graded hostile but no LLM summary
+		tune("llm-downgraded", "summary", "suspicious"), // LLM disagrees with the blend
+		tune("no-llm-pass", "summary", ""),              // no LLM verdict at all
+		tune("llm-hostile", "summary", "hostile"),       // LLM agrees — qualifies
+	}
+	view := buildFalloutView(rows, falloutTestNow, "")
+	if view.WeeklyCount != 1 {
+		t.Fatalf("WeeklyCount = %d, want 1 (llm-hostile only)", view.WeeklyCount)
+	}
+	kept := map[string]bool{}
+	for _, day := range view.Days {
+		for _, row := range day.Rows {
+			kept[row.Package] = true
+		}
+	}
+	for _, pkg := range []string{"no-summary", "llm-downgraded", "no-llm-pass"} {
+		if kept[pkg] {
+			t.Errorf("%q should have been gated out of the log", pkg)
+		}
+	}
+	if !kept["llm-hostile"] {
+		t.Error("llm-hostile should have qualified for the log")
 	}
 }
 
