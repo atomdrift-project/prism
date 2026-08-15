@@ -2,6 +2,8 @@ package main
 
 import (
 	"html/template"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +210,77 @@ func TestBuildFalloutViewWindowLabel(t *testing.T) {
 	}
 }
 
+// TestBuildFalloutViewViewerZone pins the reader's-calendar rule at the hour
+// it used to break: 21:51 in New York is already the next day in UTC, so a
+// UTC-grouped log titled the reader's own Friday "YESTERDAY" and split its
+// evening off into a second band.
+func TestBuildFalloutViewViewerZone(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("no zone database: %v", err)
+	}
+	utcNow := time.Date(2026, 8, 15, 1, 51, 0, 0, time.UTC) // Fri 21:51 in New York
+	rows := []feedRow{
+		// Fri 18:00 in New York; Friday in both zones.
+		hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "afternoon", 3*time.Hour+51*time.Minute),
+		// Fri 20:30 in New York, but already Saturday in UTC.
+		hostileRow(testSHABare, "pypi", "python", "O2(CaEu)", "evening", time.Hour+21*time.Minute),
+	}
+	for i := range rows {
+		rows[i].AnalyzedAt = utcNow.Add(rows[i].AnalyzedAt.Sub(falloutTestNow))
+	}
+
+	view := buildFalloutView(rows, utcNow.In(ny), "")
+	if len(view.Days) != 1 {
+		t.Fatalf("bands = %d, want 1: both catches happened on the reader's Friday", len(view.Days))
+	}
+	band := view.Days[0]
+	if band.Label != "TODAY" {
+		t.Errorf("band label = %q, want TODAY: it is still Friday in New York", band.Label)
+	}
+	if !strings.HasPrefix(band.Sub, "Fri Aug 14 ") {
+		t.Errorf("band subtitle = %q, want it to lead with Fri Aug 14", band.Sub)
+	}
+	if len(band.Rows) != 2 {
+		t.Errorf("band rows = %d, want 2 (the 20:30 catch belongs to the reader's Friday)", len(band.Rows))
+	}
+
+	// The same instant read in UTC is what the reader was complaining about.
+	if utc := buildFalloutView(rows, utcNow, ""); len(utc.Days) != 2 || utc.Days[1].Label != "YESTERDAY" {
+		t.Errorf("UTC view = %d bands (second %q), want 2 with YESTERDAY — the behavior this fix replaces",
+			len(utc.Days), utc.Days[len(utc.Days)-1].Label)
+	}
+}
+
+func TestViewerLocation(t *testing.T) {
+	tests := []struct {
+		name   string
+		cookie string // "" means no cookie at all
+		want   string
+	}{
+		{"no cookie", "", "UTC"},
+		{"iana zone", "America/New_York", "America/New_York"},
+		{"utc", "UTC", "UTC"},
+		{"underscored and signed", "Etc/GMT+5", "Etc/GMT+5"},
+		{"empty value", "=", "UTC"},
+		{"server zone refused", "Local", "UTC"},
+		{"unknown zone", "Mars/Olympus_Mons", "UTC"},
+		{"traversal", "../../etc/passwd", "UTC"},
+		{"overlong", strings.Repeat("A", maxTZNameLen+1), "UTC"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/fallout", http.NoBody)
+			if tt.cookie != "" {
+				r.Header.Set("Cookie", tzCookieName+"="+strings.TrimPrefix(tt.cookie, "="))
+			}
+			if got := viewerLocation(r).String(); got != tt.want {
+				t.Errorf("viewerLocation(%q) = %q, want %q", tt.cookie, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSplitWavesSectorQuota(t *testing.T) {
 	// Six distinct npm formulas (no wave) must trim to the per-sector quota.
 	var rows []feedRow
@@ -361,6 +434,7 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		Ribbon:    "biggest blast radius",
 	}}
 	data := falloutPageData{
+		Nonce:       "test-script-nonce",
 		HasHopper:   true,
 		WeeklyCount: 47,
 		WindowLabel: "this week",
@@ -383,6 +457,11 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		"biggest blast radius",
 		"/fallout?ecosystem=npm",
 		"heat-2",
+		// The time-zone probe: nonced so CSP admits it, and naming the cookie
+		// viewerLocation reads back.
+		`<script nonce="test-script-nonce">`,
+		"resolvedOptions().timeZone",
+		"'" + tzCookieName + "=' + zone",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered fallout page missing %q", want)

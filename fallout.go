@@ -5,8 +5,14 @@ package main
 // a pure presentation of the cached hostile snapshot — the same rows the
 // frontpage's hostile filter serves — so rendering it costs no new queries.
 //
+// Day bands are calendar days in the reader's own time zone, not UTC: "TODAY"
+// has to mean the reader's today, and grouping in UTC titles a New Yorker's
+// Friday evening "YESTERDAY" because it is already Saturday in Greenwich. The
+// zone arrives in the tz cookie (see viewerLocation) and reaches every band
+// through the location carried on the now passed to buildFalloutView.
+//
 // Within a day, waves lead (largest first) and singles follow by heat. A wave
-// is an exact-key campaign: same UTC day, ecosystem, file type, and malecule
+// is an exact-key campaign: same day band, ecosystem, file type, and malecule
 // formula, three members or more. Its row is titled by its best exemplar —
 // the top-downloaded member when install counts are known, the hottest
 // otherwise — because 23 typosquats of one drainer kit are one event, not 23.
@@ -106,6 +112,9 @@ const falloutMeterSegs = 6
 
 func handleFallout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The day bands differ by the reader's tz cookie, so the page is not one
+	// shared document.
+	w.Header().Add("Vary", "Cookie")
 	eco := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("ecosystem")))
 	if !validEcosystem(eco) {
 		eco = ""
@@ -129,7 +138,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		} else {
 			diags = append(diags, diag)
 			data.FeedDegraded = diag.Source == "stale"
-			view := buildFalloutView(feedRowsFromSnapshot(snapshot), time.Now().UTC(), eco)
+			view := buildFalloutView(feedRowsFromSnapshot(snapshot), time.Now().In(viewerLocation(r)), eco)
 			data.Days = view.Days
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
@@ -142,6 +151,52 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeQueryDiags(w, diags)
+}
+
+// tzCookieName carries the reader's IANA zone name, written once by the small
+// script at the foot of the fallout page. maxTZNameLen bounds it: the longest
+// name the database actually carries is "America/Argentina/ComodRivadavia" at
+// 32 bytes, so 64 leaves room without letting a cookie grow unbounded.
+const (
+	tzCookieName = "tz"
+	maxTZNameLen = 64
+)
+
+// viewerLocation resolves the reader's time zone from the tz cookie, falling
+// back to UTC whenever the cookie is missing, malformed, or names a zone this
+// binary's database doesn't carry — the log renders in UTC rather than not at
+// all. The value is untrusted: LoadLocation rejects traversal on its own, and
+// validTZName keeps anything that isn't shaped like a zone name away from it.
+func viewerLocation(r *http.Request) *time.Location {
+	c, err := r.Cookie(tzCookieName)
+	if err != nil || !validTZName(c.Value) {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(c.Value)
+	if err != nil {
+		logger.Debug("unknown viewer time zone", "tz", c.Value, "error", err)
+		return time.UTC
+	}
+	return loc
+}
+
+// validTZName reports whether s is shaped like an IANA zone name — "UTC",
+// "America/New_York", "Etc/GMT+5". "Local" is refused by name: LoadLocation
+// would honor it and hand back the server's zone, which is nobody's answer to
+// the question this cookie asks.
+func validTZName(s string) bool {
+	if s == "" || len(s) > maxTZNameLen || s == "Local" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '/', r == '_', r == '-', r == '+':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // weeklyHostileCount is the number behind the Fallout nav pill's badge on the
@@ -195,7 +250,13 @@ type falloutView struct {
 // weekly window, the sector strip, and the day bands with waves first.
 // selectedEco, when set, narrows the day bands to one sector; the strip
 // always shows every sector with damage so the filter chips stay navigable.
+//
+// now carries the reader's zone, and every calendar date the page states —
+// band label, band subtitle, window label, the meter's notion of today — is
+// read in that zone. Instants (the window cutoff, row ages) are absolute and
+// need no conversion.
 func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) falloutView {
+	loc := now.Location()
 	cutoff := now.Add(-falloutWindow)
 	var week []feedRow
 	oldest := now
@@ -217,7 +278,7 @@ func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) fallout
 	// ran out of depth (feedLimit rows) before the window ran out of days —
 	// the log covers less than a week, and the label says exactly how much.
 	if len(week) == len(rows) && len(rows) >= feedLimit {
-		view.WindowLabel = "since " + oldest.Format("Jan 2")
+		view.WindowLabel = "since " + oldest.In(loc).Format("Jan 2")
 	}
 	view.Sectors = falloutSectors(week, selectedEco)
 
@@ -230,7 +291,7 @@ func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) fallout
 	for i := range week {
 		ecoCount[week[i].Ecosystem]++
 		formulaCount[week[i].Formula]++
-		perDay[week[i].AnalyzedAt.Format("2006-01-02")]++
+		perDay[week[i].AnalyzedAt.In(loc).Format("2006-01-02")]++
 	}
 	view.MeterSegs = falloutMeter(perDay[now.Format("2006-01-02")], perDay)
 
@@ -290,12 +351,14 @@ func falloutSectors(week []feedRow, selectedEco string) []falloutSector {
 }
 
 // falloutDays groups the shown rows into day bands, newest day first, each
-// band waves-first then singles by heat.
+// band waves-first then singles by heat. Bands break at midnight in now's
+// zone, so a catch lands in the day the reader saw it happen.
 func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSize int, now time.Time) []falloutDay {
+	loc := now.Location()
 	byDay := make(map[string][]feedRow, 8)
 	var order []string
 	for i := range shown {
-		day := shown[i].AnalyzedAt.Format("2006-01-02")
+		day := shown[i].AnalyzedAt.In(loc).Format("2006-01-02")
 		if _, seen := byDay[day]; !seen {
 			order = append(order, day)
 		}
@@ -314,7 +377,7 @@ func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSiz
 			continue
 		}
 		decorateFalloutRows(bandRows, now)
-		date, err := time.Parse("2006-01-02", day)
+		date, err := time.ParseInLocation("2006-01-02", day, loc)
 		if err != nil {
 			continue // impossible: the key came from Format with this layout
 		}
@@ -512,7 +575,8 @@ func decayClass(age time.Duration) string {
 	}
 }
 
-// falloutDayLabel names a day band relative to now (both UTC).
+// falloutDayLabel names a day band relative to now. Both carry the reader's
+// zone, so the comparison is between wall-clock dates the reader recognizes.
 func falloutDayLabel(day, now time.Time) string {
 	switch day.Format("2006-01-02") {
 	case now.Format("2006-01-02"):

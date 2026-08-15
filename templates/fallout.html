@@ -30,6 +30,29 @@
     <meta name="description" content="This week's malware caught across open-source registries and marketplaces — campaigns collapsed into waves, evidence included." />
     <meta name="twitter:card" content="summary" />
     <link rel="alternate" type="application/atom+xml" title="Fallout — hostile catches" href="/feed.atom" />
+    <script nonce="{{.Nonce}}">
+    // The day bands are the reader's calendar days, and only the browser knows
+    // which zone that is. Hand the server the IANA name once and reload, so the
+    // first paint the reader keeps is already labeled in local time; every later
+    // visit reads the cookie and skips straight through. The reload is gated on
+    // the cookie actually sticking, so a browser refusing cookies does nothing
+    // here rather than looping against the page's meta refresh.
+    (function () {
+        var present = /(?:^|;\s*)tz=/;
+        if (present.test(document.cookie)) return;
+        var zone;
+        try {
+            zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch (e) {
+            return;
+        }
+        // Mirrors the server's validTZName: an IANA name, never "Local".
+        if (!zone || zone === 'Local' || !/^[A-Za-z0-9\/_+-]{1,64}$/.test(zone)) return;
+        document.cookie = 'tz=' + zone + '; path=/; max-age=31536000; SameSite=Lax' +
+            (location.protocol === 'https:' ? '; Secure' : '');
+        if (present.test(document.cookie)) location.reload();
+    })();
+    </script>
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
         :root {

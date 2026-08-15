@@ -37,6 +37,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embeds the IANA database so viewerLocation works on hosts carrying no zoneinfo
 	"unicode"
 	"unicode/utf8"
 
