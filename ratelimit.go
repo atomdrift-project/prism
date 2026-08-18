@@ -76,17 +76,19 @@ func (rl *rateLimiter) allow(key string, now time.Time) (ok bool, retryAfter tim
 }
 
 // limit is the rate-limiting middleware. Requests over the configured rate get a
-// 429 with Retry-After; static assets, health, and metrics are never limited so
-// probes and page chrome stay reachable. A nil receiver is a pass-through, so
-// main can wire it unconditionally whether or not limiting is enabled.
+// 429 with Retry-After. Static assets and page chrome never draw from the
+// budget, so probes and a rendered page's follow-on fetches stay reachable. A
+// nil receiver is a pass-through, so main can wire it unconditionally whether
+// or not limiting is enabled.
 func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 	if rl == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A visitor who already solved the challenge browses unthrottled, and
-		// exempt paths (static, health, and the challenge endpoint itself) are
-		// never limited — the last so a throttled human can always reach it.
+		// exempt paths (static assets, page chrome, health, and the challenge
+		// endpoint) are never limited — the last so a throttled human can
+		// always reach it.
 		if rateLimitExempt(r.URL.Path) || hasValidPass(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -111,13 +113,35 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitExempt reports whether a path bypasses rate limiting: the static,
-// health, and metrics paths (cheap, high-frequency, needed for liveness — the
-// set requestLogger also logs at Debug), plus the challenge endpoint, which a
-// throttled visitor must always be able to reach to solve.
+// rateLimitExempt reports whether a path bypasses rate limiting. The budget is
+// for document requests (HTML pages, feeds, downloads, mutations) — static
+// assets and the cheap chrome a rendered page then fetches must not consume
+// it, or three real page views burn the default burst of 10. Exempt:
+//
+//   - /static/ and /favicon.ico: the page's scripts, fonts, images, and icon.
+//     favicon sits outside /static/ so it does not fall through to the
+//     /{ecosystem} feed route (see handleFavicon).
+//   - /_/stats: masthead counter poll, every 15s on the feed.
+//   - /file/{sha}/members|rum|wait|status: JS hydrations of a page already
+//     counted. Crawlers do not run JS, so these are not a scraper vector.
+//   - /_/health, /_/metrik, /_/challenge: probes and the challenge form.
 func rateLimitExempt(path string) bool {
-	return strings.HasPrefix(path, "/static/") ||
-		path == "/_/health" || path == "/_/metrik" || path == "/_/challenge"
+	switch path {
+	case "/favicon.ico", "/_/health", "/_/metrik", "/_/challenge", "/_/stats":
+		return true
+	}
+	if strings.HasPrefix(path, "/static/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/file/") {
+		if i := strings.LastIndexByte(path, '/'); i >= 0 {
+			switch path[i:] {
+			case "/members", "/rum", "/wait", "/status":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sweepIdle evicts buckets untouched for a full ttl, bounding memory under a

@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,6 +76,66 @@ func TestRateLimiterMiddleware(t *testing.T) {
 	}
 	if got := call("/_/health"); got != http.StatusOK {
 		t.Fatalf("health check should never be limited: got %d, want 200", got)
+	}
+	if got := call("/favicon.ico"); got != http.StatusOK {
+		t.Fatalf("favicon is a static asset and must not count: got %d, want 200", got)
+	}
+	if got := call("/_/stats"); got != http.StatusOK {
+		t.Fatalf("masthead stats poll is page chrome and must not count: got %d, want 200", got)
+	}
+	if got := call("/file/abc/members"); got != http.StatusOK {
+		t.Fatalf("members hydration must not count: got %d, want 200", got)
+	}
+}
+
+func TestRateLimiterIgnoresPageChrome(t *testing.T) {
+	// Default production budget: 10 document requests per 10 minutes.
+	// A realistic three-page browse (feed + two archive samples) used to
+	// trip the challenge because favicon, stats, members, and RUM each
+	// drew from the same burst as the HTML.
+	rl := newRateLimiter(10, 10*time.Minute)
+	h := rl.limit(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	call := func(method, path, accept string) int {
+		r := httptest.NewRequest(method, path, http.NoBody)
+		r.Header.Set("Cf-Connecting-Ip", "8.8.8.8")
+		if accept != "" {
+			r.Header.Set("Accept", accept)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	pageLoad := func(htmlPath, sha string) {
+		t.Helper()
+		if got := call(http.MethodGet, htmlPath, "text/html"); got != http.StatusOK {
+			t.Fatalf("%s: got %d, want 200", htmlPath, got)
+		}
+		if got := call(http.MethodGet, "/favicon.ico", "image/*"); got != http.StatusOK {
+			t.Fatalf("favicon during %s: got %d, want 200", htmlPath, got)
+		}
+		if strings.HasPrefix(htmlPath, "/file/") {
+			if got := call(http.MethodGet, "/file/"+sha+"/members", "application/json"); got != http.StatusOK {
+				t.Fatalf("members during %s: got %d, want 200", htmlPath, got)
+			}
+			if got := call(http.MethodPost, "/file/"+sha+"/rum", "application/json"); got != http.StatusOK {
+				t.Fatalf("rum during %s: got %d, want 200", htmlPath, got)
+			}
+		} else if got := call(http.MethodGet, "/_/stats", "application/json"); got != http.StatusOK {
+			t.Fatalf("stats during %s: got %d, want 200", htmlPath, got)
+		}
+	}
+
+	pageLoad("/", "")
+	pageLoad("/file/aaa", "aaa")
+	pageLoad("/file/bbb", "bbb")
+
+	// The next HTML navigation is the 4th document request and must still
+	// pass; chrome from the three loads must not have spent the burst.
+	if got := call(http.MethodGet, "/file/ccc", "text/html"); got != http.StatusOK {
+		t.Fatalf("4th page view after chrome-heavy loads: got %d, want 200", got)
 	}
 }
 
