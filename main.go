@@ -1155,9 +1155,9 @@ type feedPageData struct {
 	Ecosystems []string
 	Rows       []feedRow
 	// Stats seeds the masthead's live "files indexed" counter with the latest
-	// estimate published by statsPollLoop (nil until the first poll — the
-	// client's /_/stats poll fills it in either way). A lock-free pointer read,
-	// so it never adds a query to the feed's hot path.
+	// estimate published by statsPollLoop, projected to request time (nil until
+	// the first poll — the client's /_/stats poll fills it in either way). A
+	// lock-free pointer read, so it never adds a query to the feed's hot path.
 	Stats *indexStats
 	// Pages holds the per-page links (empty when a single page covers every
 	// row); Page is the 1-indexed current page over the cached snapshot.
@@ -4562,12 +4562,13 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 			paginateFeed(&data, r)
 		}
 	}
-	// Seed the live counter with the latest published estimate if the poller has
-	// produced one — a lock-free pointer read, no query on the feed path. When
-	// cold (before the first poll), the template omits the initial value and the
-	// client's /_/stats poll populates it.
+	// Seed the live counter with the latest published estimate, projected to
+	// this request's clock — a lock-free pointer read, no query on the feed
+	// path. When cold (before the first poll), the template omits the initial
+	// value and the client's /_/stats poll populates it.
 	if s, ok := cachedIndexStats(); ok {
-		data.Stats = &s
+		live := projectIndexStats(s, time.Now().UTC())
+		data.Stats = &live
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",

@@ -338,16 +338,17 @@ if (input && form) {
 
 // --- Live "files indexed" counter ----------------------------------------
 //
-// The masthead shows a live estimate of how many files are in the index. A
-// background poller on the server refreshes the estimate once a minute; the
-// endpoint just serves that cached value, so a client never touches the
-// database. Each response is an anchor {total, rate_per_min, as_of}; we
-// extrapolate the digits between polls (total + rate * elapsed) so the number
-// climbs smoothly, re-anchor every poll — never backward — and cap the
-// extrapolation so a stalled poller can't let the number run away. Each
-// whole-number tick flicks the dot and kicks the peak meter. Progressive
-// enhancement: the server-rendered value shows without JS; a failed poll just
-// coasts on the last anchor. Guarded so it no-ops on pages without the counter.
+// The masthead shows the latest published estimate of how many files are in
+// the index. A background poller on the server refreshes ~every 15s; the
+// endpoint only serves that cached value (projected to the request clock), so
+// a client never touches the database. Each response is an anchor {total,
+// rate_per_min, as_of}; the rate is the exact 2h insert average, and we
+// advance the digits at that speed between polls — capped at 15s so a stalled
+// poller cannot invent more growth than the skew budget. Re-anchors follow
+// the server in both directions (ANALYZE can correct downward). Each whole-
+// number tick flicks the dot and kicks the peak meter. Progressive
+// enhancement: the server-rendered value shows without JS; a failed poll
+// holds after the 15s cap. Guarded so it no-ops on pages without the counter.
 (() => {
   const el = document.getElementById("index-counter");
   if (!el) return;
@@ -355,9 +356,10 @@ if (input && form) {
   const meterEl = document.getElementById("counter-meter");
   const dotEl = document.getElementById("counter-dot");
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  // Cap how far past an anchor we extrapolate (server refreshes ~every 60s), so
-  // if updates stop the counter settles instead of racing off.
-  const STALE_CAP_SEC = 150;
+  // Match statsPollInterval so the client re-anchors as soon as a fresh
+  // snapshot is typically available, and never coasts further than one poll.
+  const POLL_MS = 15000;
+  const STALE_CAP_SEC = 15;
 
   const SEGMENTS = 10;
   const segs = [];
@@ -381,8 +383,8 @@ if (input && form) {
 
   const fmt = (n) => Math.floor(n).toLocaleString("en-US");
 
-  // projected value of an anchor at the current wall clock, capped so a stale
-  // anchor (poller stopped) can't extrapolate without bound.
+  // Projected value of an anchor at the current wall clock, capped at one
+  // poll interval so a stale anchor can't run away.
   const projected = (a) => {
     if (!a) return displayed;
     const elapsed = Math.min(STALE_CAP_SEC, Math.max(0, (Date.now() - a.asOfMs) / 1000));
@@ -396,18 +398,11 @@ if (input && form) {
       asOfMs: Number(d.as_of),
     };
     if (!Number.isFinite(next.total) || !Number.isFinite(next.asOfMs)) return;
-    // Never let a re-anchor move the counter backward: if the fresh anchor
-    // projects below what's already shown (we extrapolated ahead), keep
-    // climbing from the current value under the new rate instead of snapping.
-    if (!started || projected(next) >= displayed) {
-      anchor = next;
-    } else {
-      anchor = { total: displayed, ratePerSec: next.ratePerSec, asOfMs: Date.now() };
-    }
+    anchor = next;
     started = true;
   };
 
-  // Seed from the server-rendered attributes so the counter moves on first
+  // Seed from the server-rendered attributes so the counter is live on first
   // paint, before the first poll returns.
   const seed = {
     total: parseFloat(el.getAttribute("data-total")),
@@ -416,8 +411,6 @@ if (input && form) {
   };
   if (Number.isFinite(seed.total) && Number.isFinite(seed.as_of)) {
     applyAnchor(seed);
-    // Start at the extrapolated value, not the raw anchor, so a reload picks up
-    // where the previous view left off instead of visibly dipping back.
     displayed = projected(anchor);
     lastWhole = Math.floor(displayed);
     if (numEl) numEl.textContent = fmt(displayed);
@@ -430,7 +423,7 @@ if (input && form) {
         if (d && typeof d.total === "number") applyAnchor(d);
       })
       .catch(() => {
-        /* keep extrapolating from the last anchor — the counter just coasts */
+        /* hold after the 15s cap — do not invent further digits */
       });
   };
 
@@ -441,13 +434,15 @@ if (input && form) {
 
     if (started) {
       const target = projected(anchor);
-      if (target > displayed) {
-        displayed += (target - displayed) * Math.min(1, dt * 3);
-        if (target - displayed < 0.5) displayed = target;
+      const delta = target - displayed;
+      if (reduceMotion || Math.abs(delta) < 0.5) {
+        displayed = target;
+      } else {
+        displayed += delta * Math.min(1, dt * 3);
       }
       const whole = Math.floor(displayed);
       if (whole !== lastWhole) {
-        const ticks = whole - lastWhole;
+        const ticks = Math.abs(whole - lastWhole);
         lastWhole = whole;
         if (numEl) numEl.textContent = fmt(displayed);
         if (!reduceMotion) {
@@ -457,6 +452,8 @@ if (input && form) {
             setTimeout(() => dotEl.classList.remove("blip"), 110);
           }
         }
+      } else if (numEl && displayed === target && numEl.textContent !== fmt(displayed)) {
+        numEl.textContent = fmt(displayed);
       }
     }
 
@@ -481,6 +478,6 @@ if (input && form) {
   };
 
   poll();
-  setInterval(poll, 20000);
+  setInterval(poll, POLL_MS);
   requestAnimationFrame(frame);
 })();

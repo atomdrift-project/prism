@@ -805,7 +805,7 @@
                 </div>
                 {{if .HasHopper}}
                 <div class="counter c-meter" id="index-counter" role="img"
-                    aria-label="Live estimate of files in the index"
+                    aria-label="Files in the index"
                     {{with .Stats}}data-total="{{.Total}}" data-rate="{{.RatePerMin}}" data-asof="{{.GeneratedAt.UnixMilli}}"{{end}}>
                     <div class="c-eyebrow"><span class="live-dot" id="counter-dot"></span>Files indexed</div>
                     <div class="meter-row">
