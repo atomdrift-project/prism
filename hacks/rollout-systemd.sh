@@ -29,6 +29,7 @@ HOST_WAS_SET=0
 [ "${HOPPER_DB_HOST+x}" = x ] && HOST_WAS_SET=1
 HOPPER_DB_HOST=${HOPPER_DB_HOST:-hopper-db}
 HOPPER_DB_SSLMODE=${HOPPER_DB_SSLMODE:-disable}
+OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel:9090/api/v1/otlp}
 DB_PASS=${HOPPER_DB_PASS:-}
 unset HOPPER_DB_PASS
 TUNNEL_TOKEN=${CF_TUNNEL_TOKEN:-}
@@ -217,7 +218,9 @@ if ! as_root test -e "$ENV_FILE"; then
             "HOPPER_DSN=postgres://hopper@${HOPPER_DB_HOST}:5432/hopper?sslmode=${HOPPER_DB_SSLMODE}&application_name=prism&default_transaction_read_only=on" \
             'HOPPER_API_ADDR=hopper-api:8081' \
             'LITMUS_ADDR=scan:49999' \
-            'PRISM_UPLOADS=true'
+            'PRISM_UPLOADS=true' \
+            "OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            'OTEL_DEPLOYMENT_ENVIRONMENT=prod'
     } >"$TMP_ENV"
     as_root install -o root -g root -m 0600 "$TMP_ENV" "$ENV_FILE"
 elif [ "$HOST_WAS_SET" -eq 1 ]; then
@@ -229,6 +232,18 @@ elif [ "$HOST_WAS_SET" -eq 1 ]; then
     as_root sed -i "s|^HOPPER_DSN=.*|HOPPER_DSN=$SED_DSN|" "$ENV_FILE"
 else
     log "Keeping the PostgreSQL endpoint persisted in $ENV_FILE"
+fi
+
+# Ensure OTLP points at the self-hosted fleet (host otel). Idempotent on redeploy.
+if as_root grep -q '^OTEL_EXPORTER_OTLP_ENDPOINT=' "$ENV_FILE" 2>/dev/null; then
+    SED_OTEL=$(printf '%s' "$OTEL_EXPORTER_OTLP_ENDPOINT" | sed 's/[&|\\]/\\&/g')
+    as_root sed -i "s|^OTEL_EXPORTER_OTLP_ENDPOINT=.*|OTEL_EXPORTER_OTLP_ENDPOINT=$SED_OTEL|" "$ENV_FILE"
+else
+    printf 'OTEL_EXPORTER_OTLP_ENDPOINT=%s\nOTEL_DEPLOYMENT_ENVIRONMENT=prod\n' \
+        "$OTEL_EXPORTER_OTLP_ENDPOINT" | as_root tee -a "$ENV_FILE" >/dev/null
+fi
+if ! as_root grep -q '^OTEL_DEPLOYMENT_ENVIRONMENT=' "$ENV_FILE" 2>/dev/null; then
+    printf 'OTEL_DEPLOYMENT_ENVIRONMENT=prod\n' | as_root tee -a "$ENV_FILE" >/dev/null
 fi
 
 if ! as_root test -s "$CSRF_FILE"; then
