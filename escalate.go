@@ -44,6 +44,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/atomdrift-project/hopper"
 )
 
 const (
@@ -220,6 +222,7 @@ func fetchSampleBytes(ctx context.Context, sha string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
+	hopper.Authorize(req)
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from the admin-configured hopper-api host and a validated SHA path
 	if err != nil {

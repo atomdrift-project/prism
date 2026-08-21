@@ -2086,7 +2086,16 @@ func main() {
 		"listen_addr", listenAddr,
 		"port", port,
 		"hopper_api_addr", hopperAPIAddr,
+		"hopper_token", hopper.APIToken() != "",
 	)
+	// hopper authenticates every API route but its probes, so a missing
+	// credential leaves /healthz green while uploads, downloads, escalations,
+	// and result publishes all 401 — a failure that reads as "hopper is fine,
+	// prism is broken" unless it is called out here.
+	if hopper.APIToken() == "" {
+		logger.Warn("no hopper API credential found; uploads, downloads, and escalations will be rejected",
+			"looked_in", "$HOPPER_TOKEN, ~/.tok/hopper")
+	}
 
 	// SO_REUSEPORT(_LB) on the listening socket so the deploy rollout
 	// can start the new prism alongside the old one — see
@@ -5646,6 +5655,7 @@ func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart
 			http.Error(w, "failed to prepare download", http.StatusInternalServerError)
 			return nil, nil
 		}
+		hopper.Authorize(req)
 		resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
 		if err != nil {
 			timer.Stop()
@@ -6631,13 +6641,6 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
 }
 
-// uploadTokenKey is the hopper KV key carrying the Bearer token for
-// POST /api/upload. The token is optional: hopper only enforces one when it has
-// provisioned one, so an absent key means the endpoint is open and prism uploads
-// without an Authorization header. Rotations are signalled by hopper returning
-// 401 to a previously-valid token; the next read picks up the new value.
-const uploadTokenKey = "upload_token"
-
 // buildUploadEnvelope encodes the multipart body hopper's /api/upload expects:
 // a "provenance" part (the required sidecar) followed by the "file" part. A
 // browser submission has no package origin, so the provenance is minimal —
@@ -6678,16 +6681,13 @@ func buildUploadEnvelope(buf []byte, sha, filename string) (payload []byte, cont
 }
 
 // uploadToHopper POSTs the provenance+file envelope to hopper /api/upload,
-// optionally bearing a token read from hopper's KV table. The envelope is
-// buffered so the request can be safely retried with backoff (and so the 401
-// rotation path can resend the same bytes). On a 401 (token rotation signal) we
-// re-read the token from KV and retry the upload exactly once.
+// bearing the fleet-wide credential [hopper.Authorize] resolves ($HOPPER_TOKEN,
+// else the first line of ~/.tok/hopper). The envelope is buffered so the request
+// can be safely retried with backoff.
 //
-// The token is best-effort by design: hopper leaves /api/upload unauthenticated
-// unless it has provisioned one, so neither an absent KV row nor an unreachable
-// hopper-db is a reason to skip an upload that would otherwise succeed. Failing
-// here would strand the sample entirely whenever the analysis server is also
-// down, which is exactly when the durable store matters most.
+// A 401 is reported to the caller rather than retried: the credential is read
+// once per process, so a rejected token is rejected until the file is fixed and
+// prism restarts. Replaying the upload would only repeat the rejection.
 func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *slog.Logger) (*hopperUploadResponse, error) {
 	target := hopperUploadURL(filename)
 
@@ -6696,83 +6696,22 @@ func uploadToHopper(ctx context.Context, buf []byte, sha, filename string, log *
 		return nil, err
 	}
 
-	db := hopperDB.Load()
-	token := ""
-	if db == nil {
-		log.Warn("hopper db not connected; uploading without a token",
-			"hopper_db_host", hopperDSNHost(hopperDBDSN))
-	} else if token, err = fetchUploadToken(ctx, db, log); err != nil {
-		return nil, err
-	}
-	resp, err := postUploadWithRetry(ctx, target, body, contentType, token, log)
+	resp, err := postUploadWithRetry(ctx, target, body, contentType, log) //nolint:bodyclose // closed by readUploadResponse below
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close() //nolint:errcheck // best-effort
-		log.Warn("hopper rejected upload token; refetching and retrying once")
-		token, err = fetchUploadToken(ctx, db, log)
-		if err != nil {
-			return nil, err
-		}
-		resp, err = postUploadWithRetry(ctx, target, body, contentType, token, log) //nolint:bodyclose // closed by readUploadResponse below
-		if err != nil {
-			return nil, err
-		}
 	}
 	return readUploadResponse(resp, log)
 }
 
-// fetchUploadToken reads the upload token from hopper's KV with exponential
-// backoff and jitter, returning "" when hopper has not provisioned one. An
-// absent key is a normal, terminal answer rather than a failure: hopper's
-// checkUploadAuth is a no-op until a token is set, so "" means "upload without
-// an Authorization header", not "give up".
-func fetchUploadToken(ctx context.Context, db *hopper.DB, log *slog.Logger) (string, error) {
-	var token string
-	err := retry.Do(
-		func() error {
-			v, err := db.KVGet(ctx, uploadTokenKey)
-			if errors.Is(err, hopper.ErrNotFound) {
-				log.Debug("no hopper upload token provisioned; uploading unauthenticated")
-				token = ""
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			token = v
-			return nil
-		},
-		retry.Context(ctx),
-		// Bound retry budget so a hopper outage doesn't keep an upload
-		// request alive for the full 5-minute context window. 6 attempts
-		// with 200 ms base + backoff caps total wait around 3–4 seconds,
-		// which is fast enough for the user to see a "warming up" page.
-		retry.Attempts(6),
-		retry.Delay(200*time.Millisecond),
-		retry.MaxDelay(10*time.Second),
-		retry.DelayType(retry.CombineDelay(retry.BackOffDelay, retry.RandomDelay)),
-		retry.LastErrorOnly(true),
-		retry.OnRetry(func(n uint, err error) {
-			log.Warn("upload token fetch retry", "attempt", n+1, "error", err)
-		}),
-	)
-	if err != nil {
-		return "", fmt.Errorf("fetch upload token: %w", err)
-	}
-	return token, nil
-}
-
 // postUploadWithRetry POSTs to hopper /api/upload with exponential backoff
 // and jitter. Only transport errors and 5xx responses trigger a retry —
-// 4xx (including 401) is returned to the caller as-is so token-rotation
-// handling stays in uploadToHopper. The retry budget is bounded by ctx.
-func postUploadWithRetry(ctx context.Context, target string, body []byte, contentType, token string, log *slog.Logger) (*http.Response, error) {
+// 4xx (including 401, a credential no retry can fix) is returned to the caller
+// as-is. The retry budget is bounded by ctx.
+func postUploadWithRetry(ctx context.Context, target string, body []byte, contentType string, log *slog.Logger) (*http.Response, error) {
 	var resp *http.Response
 	err := retry.Do(
 		func() error {
-			r, err := postOnce(ctx, target, body, contentType, token)
+			r, err := postOnce(ctx, target, body, contentType)
 			if err != nil {
 				// An open breaker means hopper-api is already known-down;
 				// retrying would only add to the load. Stop immediately.
@@ -6805,10 +6744,9 @@ func postUploadWithRetry(ctx context.Context, target string, body []byte, conten
 	return resp, nil
 }
 
-// postOnce performs a single POST /api/upload with the given Bearer token.
-// The body (the multipart provenance+file envelope) is fully buffered so
-// retries — including the 401 token-rotation replay — can resend it.
-func postOnce(ctx context.Context, target string, body []byte, contentType, token string) (*http.Response, error) {
+// postOnce performs a single authenticated POST /api/upload. The body (the
+// multipart provenance+file envelope) is fully buffered so retries can resend it.
+func postOnce(ctx context.Context, target string, body []byte, contentType string) (*http.Response, error) {
 	if err := apiBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-api", "upload", "rejected", time.Time{})
 		return nil, fmt.Errorf("hopper-api upload: %w", err)
@@ -6819,11 +6757,7 @@ func postOnce(ctx context.Context, target string, body []byte, contentType, toke
 		return nil, fmt.Errorf("build hopper request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
-	// An empty token means hopper has not provisioned one and leaves the
-	// endpoint open; sending "Bearer " would be rejected as malformed.
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	hopper.Authorize(req)
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
 	if err != nil {
@@ -7208,6 +7142,7 @@ func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope,
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	hopper.Authorize(req)
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperResultURL built from admin-configured hopper-api host
 	if err != nil {
@@ -7267,6 +7202,7 @@ func postRescanToHopper(ctx context.Context, sha string) error {
 		// Local build error: hopper was never contacted; don't move the breaker.
 		return fmt.Errorf("build request: %w", err)
 	}
+	hopper.Authorize(req)
 	start := time.Now()
 	resp, err := hopperClient.Do(req) //nolint:gosec // hopperRescanURL built from admin-configured hopper-api host + validated SHA path
 	if err != nil {

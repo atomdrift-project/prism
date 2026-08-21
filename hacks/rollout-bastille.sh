@@ -194,6 +194,30 @@ else
     log "prism .pgpass already has an entry for $HOPPER_DB_HOST"
 fi
 
+# --- Hopper API token ---
+# hopper authenticates every route of its work API but the probes, so prism
+# needs the fleet bearer token to fetch sample bytes, upload submissions,
+# escalate, and publish results. It goes where every other client looks for it,
+# ~prism/.tok/hopper — the same file hopper's own deploy installs on the master
+# — as a 0600 file rather than an rc.conf or environment entry, matching how
+# the database password is handled above.
+#
+# Sourced from the deploying operator's ~/.tok/hopper (override with
+# HOPPER_TOKEN_SRC). Rewritten on every deploy: the token is small, the write is
+# idempotent, and that keeps a rotation from needing its own ceremony.
+HOPPER_TOKEN_SRC=${HOPPER_TOKEN_SRC:-${HOME:-}/.tok/hopper}
+if [ -s "$HOPPER_TOKEN_SRC" ]; then
+    log "Installing hopper API token from ${HOPPER_TOKEN_SRC}"
+    set +x
+    _tok=$(head -n 1 "$HOPPER_TOKEN_SRC")
+    doas bastille cmd "$RUN" su -l prism -c \
+        "umask 077; mkdir -p ~/.tok && printf '%s\n' '$_tok' > ~/.tok/hopper && chmod 600 ~/.tok/hopper"
+    unset _tok
+    set -x
+elif ! doas bastille cmd "$RUN" test -s /home/prism/.tok/hopper; then
+    log "WARNING: no hopper API token at ${HOPPER_TOKEN_SRC}; hopper answers 401 to every prism fetch, upload, and escalation until one lands at /home/prism/.tok/hopper"
+fi
+
 # --- CSRF signing key ---
 # A stable HMAC key for prism's CSRF tokens, persisted in the run jail via
 # sysrc (like cloudflared_token) and injected into prism's environment below.
