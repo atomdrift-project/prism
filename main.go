@@ -1982,7 +1982,7 @@ func main() {
 	// shouldn't have to restart prism to recover.
 	if dbDSN != "" {
 		hopperDBDSN = dbDSN
-		db, err := hopper.Open(context.Background(), dbDSN)
+		db, err := hopper.Open(context.Background(), dbDSN, "prism")
 		if err != nil {
 			logger.Error("failed to connect to hopper",
 				"error", err,
@@ -5935,7 +5935,7 @@ func connectHopperWithRetry(ctx context.Context) {
 	retryErr := retry.Do(
 		func() error {
 			attempt++
-			db, err := hopper.Open(ctx, hopperDBDSN)
+			db, err := hopper.Open(ctx, hopperDBDSN, "prism")
 			if err != nil {
 				logger.Warn("hopper reconnect attempt failed",
 					"hopper_db_host", host,
