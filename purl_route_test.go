@@ -46,6 +46,7 @@ func TestPURLIndexURL(t *testing.T) {
 	}{
 		{"pkg:npm/lodash", "/npm/lodash"},
 		{"pkg:npm/@scope/pkg", "/npm/@scope/pkg"},
+		{"pkg:npm/%40scope/pkg", "/npm/@scope/pkg"},
 		{"pkg:golang/github.com/user/repo", "/golang/github.com/user/repo"},
 		{
 			"pkg:vscode-extension/pub/name?repository_url=https://open-vsx.org",
@@ -57,6 +58,22 @@ func TestPURLIndexURL(t *testing.T) {
 	for _, tt := range tests {
 		if got := purlIndexURL(tt.base); got != tt.want {
 			t.Errorf("purlIndexURL(%q) = %q, want %q", tt.base, got, tt.want)
+		}
+	}
+}
+
+func TestPURLDisplayString(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"pkg:npm/%40scope/pkg@1.0.0", "pkg:npm/@scope/pkg@1.0.0"},
+		{"pkg:npm/%40scope/pkg", "pkg:npm/@scope/pkg"},
+		{"pkg:npm/lodash@4.17.21", "pkg:npm/lodash@4.17.21"},
+		{"pkg:pypi/%40scope/pkg", "pkg:pypi/%40scope/pkg"},
+	}
+	for _, tt := range tests {
+		if got := purlDisplayString(tt.in); got != tt.want {
+			t.Errorf("purlDisplayString(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

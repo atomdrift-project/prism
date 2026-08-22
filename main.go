@@ -771,10 +771,11 @@ type resultData struct {
 	// EcosystemURL is the in-app feed link for this ecosystem (e.g.
 	// "/npm/"). Empty when Ecosystem is empty.
 	EcosystemURL string
-	// PURL is the full versioned canonical Package URL shown in the hero
-	// (e.g. "pkg:npm/lodash@4.17.21") — hopper's version-less PURLBase with
-	// the version appended. Empty for uploads and ecosystems without a PURL
-	// type; the template hides the meta row when empty.
+	// PURL is the full versioned Package URL shown in the hero, using the
+	// human-readable UI spelling for npm scopes (e.g. "pkg:npm/@scope/pkg") —
+	// hopper's version-less PURLBase with the version appended. Empty for
+	// uploads and ecosystems without a PURL type; the template hides the meta
+	// row when empty.
 	PURL string
 	// PURLIndexURL makes the hero's Package row a link to the package's
 	// version index — normally the coordinate's rooted path (/npm/lodash),
@@ -3729,15 +3730,35 @@ type ProvenanceGroup struct {
 	Rows  []ProvenanceRow
 }
 
+// purlDisplayString converts an internal canonical PURL to the form shown in
+// the UI. Hopper stores npm scope sigils escaped as %40 so they cannot be
+// confused with the version separator; people should see the familiar
+//
+//	@scope	spelling instead. Keep this transformation limited to the npm path,
+//
+// so an encoded @ in a qualifier or another ecosystem is not rewritten.
+func purlDisplayString(purl string) string {
+	rest, ok := strings.CutPrefix(purl, "pkg:")
+	if !ok {
+		return purl
+	}
+	typ, path, ok := strings.Cut(rest, "/")
+	if !ok || !strings.EqualFold(typ, "npm") || len(path) < 3 || !strings.EqualFold(path[:3], "%40") {
+		return purl
+	}
+	return "pkg:" + typ + "/@" + path[3:]
+}
+
 // purlDisplay renders the full versioned Package URL for the result page:
 // hopper's version-less PURLBase with "@"+Version appended when a version is
-// known. Empty when the sample has no PURLBase (uploads, ecosystems without a
-// defined PURL type), so callers can hide the row.
+// known, converted to the UI spelling by purlDisplayString. Empty when the
+// sample has no PURLBase (uploads, ecosystems without a defined PURL type), so
+// callers can hide the row.
 func purlDisplay(res *storedResult) string {
 	if res.PURLBase == "" || res.Version == "" {
-		return res.PURLBase
+		return purlDisplayString(res.PURLBase)
 	}
-	return res.PURLBase + "@" + res.Version
+	return purlDisplayString(res.PURLBase) + "@" + res.Version
 }
 
 // purlIndexURL is the version-index link behind the hero's Package row: the
@@ -3755,7 +3776,7 @@ func purlIndexURL(base string) string {
 	if strings.ContainsAny(rest, "?#") {
 		return "/?purl=" + url.QueryEscape(base)
 	}
-	return "/" + rest
+	return "/" + strings.TrimPrefix(purlDisplayString(base), "pkg:")
 }
 
 // Citation is one external source that has cited this sample, shown as a chip
@@ -4516,7 +4537,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
-		critToken, data.SelectedPURL, data.SelectedEco, data.SelectedDomain,
+		critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
@@ -4525,7 +4546,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	// A package path (/npm/lodash) titles its tab by the coordinate; the
 	// ?purl= query form stays a plain search, matching the box it came from.
 	if purl != "" && purlCanonical != "" {
-		data.Title = purlCanonical
+		data.Title = purlDisplayString(purlCanonical)
 	}
 
 	var diags []queryDiag

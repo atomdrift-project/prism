@@ -94,6 +94,7 @@ func TestNormalizePURL(t *testing.T) {
 		{"full purl", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
 		{"scheme optional", "npm/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
 		{"scheme and type case-folded", "PKG:NPM/lodash@4.17.21", "pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"},
+		{"npm scope stays escaped internally", "pkg:npm/@scope/pkg@1.0.0", "pkg:npm/%40scope/pkg@1.0.0", "pkg:npm/%40scope/pkg", "1.0.0"},
 		{"versionless keeps every release", "pkg:npm/lodash", "pkg:npm/lodash", "pkg:npm/lodash", ""},
 		{"pypi name lowercased", "pkg:pypi/Django@4.2", "pkg:pypi/django@4.2", "pkg:pypi/django", "4.2"},
 		{"golang namespaced path", "pkg:golang/github.com/gorilla/mux@1.8.0", "pkg:golang/github.com/gorilla/mux@1.8.0", "pkg:golang/github.com/gorilla/mux", "1.8.0"},
