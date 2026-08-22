@@ -96,10 +96,8 @@ func TestPackageVersionIndex(t *testing.T) {
 		{"/npm/lodash", "purl:pkg:npm/lodash"},
 		{"/npm/lodash/", "purl:pkg:npm/lodash"},
 		{"/NPM/lodash@4.17.21", "purl:pkg:npm/lodash@4.17.21"},
-		// A scoped npm package canonicalizes onto the escaped "%40scope"
-		// spelling, so a pasted coordinate and one prism composed itself are
-		// the same key (hopper pkgparse.CanonicalizePURL).
-		{"/npm/@scope/pkg@1.0.0", "purl:pkg:npm/%40scope/pkg@1.0.0"},
+		// CanonicalizePURL stores npm scope as %40; the search box shows @.
+		{"/npm/@scope/pkg@1.0.0", "purl:pkg:npm/@scope/pkg@1.0.0"},
 		{"/golang/github.com/user/repo@v1.0.0", "purl:pkg:golang/github.com/user/repo@v1.0.0"},
 	}
 	for _, tt := range tests {
