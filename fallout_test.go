@@ -153,6 +153,51 @@ func TestBuildFalloutViewEcosystemFilter(t *testing.T) {
 	}
 }
 
+func TestFalloutVerificationFilter(t *testing.T) {
+	uncorroborated := hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "fresh", time.Hour)
+	corroborated := hostileRow(testSHABare, "pypi", "python", "O2(CaEu)", "known", 2*time.Hour)
+	corroborated.Corroborated = true
+	rows := []feedRow{uncorroborated, corroborated}
+
+	if got := falloutRowsInWindow(rows, falloutTestNow, falloutAny); len(got) != 2 {
+		t.Fatalf("all rows = %d, want 2", len(got))
+	}
+	if got := falloutRowsInWindow(rows, falloutTestNow, falloutUncorroborated); len(got) != 1 || got[0].SHA256 != testSHAHero {
+		t.Fatalf("uncorroborated rows = %+v, want only the fresh catch", got)
+	}
+	if got := falloutRowsInWindow(rows, falloutTestNow, falloutCorroborated); len(got) != 1 || got[0].SHA256 != testSHABare {
+		t.Fatalf("corroborated rows = %+v, want only the known catch", got)
+	}
+
+	for _, value := range []string{"", "0", "1"} {
+		if _, err := parseFalloutVerification(value); err != nil {
+			t.Errorf("verified=%q: unexpected error: %v", value, err)
+		}
+	}
+	if _, err := parseFalloutVerification("maybe"); err == nil {
+		t.Error("invalid verified value was accepted")
+	}
+}
+
+func TestFalloutJSONRowsKeepFullPURL(t *testing.T) {
+	row := hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "@scope/pkg", time.Hour)
+	row.PURLBase = "pkg:npm/%40scope/pkg"
+	row.Version = "1.2.3"
+	got := falloutJSONRows([]feedRow{row})
+	if len(got) != 1 {
+		t.Fatalf("got %d JSON rows, want 1", len(got))
+	}
+	if got[0].SHA256 != testSHAHero {
+		t.Errorf("sha256 = %q, want %q", got[0].SHA256, testSHAHero)
+	}
+	if got[0].PURL != "pkg:npm/@scope/pkg@1.2.3" {
+		t.Errorf("purl = %q, want full display PURL", got[0].PURL)
+	}
+	if got[0].Corroborated {
+		t.Error("uncorroborated row marked corroborated")
+	}
+}
+
 // TestBuildFalloutViewQualifies pins the gate: a hostile catch reaches the log
 // only when the LLM ran, left a summary, and graded the sample hostile itself
 // — a blended-hostile verdict the LLM downgraded (or never scored) stays off.

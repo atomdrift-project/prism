@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"html/template"
@@ -43,6 +44,41 @@ const (
 	// exists to surface. Waves are exempt: they already collapse volume.
 	falloutSinglesPerSector = 3
 )
+
+type falloutVerificationFilter uint8
+
+const (
+	falloutAny falloutVerificationFilter = iota
+	falloutUncorroborated
+	falloutCorroborated
+)
+
+// parseFalloutVerification keeps verification as a presentation filter. It
+// must not become a feedQueryArgs field: verified=0 and the regular fallout
+// page intentionally consume the same hostile snapshot cache entry.
+func parseFalloutVerification(raw string) (falloutVerificationFilter, error) {
+	switch raw {
+	case "":
+		return falloutAny, nil
+	case "0":
+		return falloutUncorroborated, nil
+	case "1":
+		return falloutCorroborated, nil
+	default:
+		return falloutAny, errors.New("verified must be 0 or 1")
+	}
+}
+
+func (f falloutVerificationFilter) matches(corroborated bool) bool {
+	switch f {
+	case falloutUncorroborated:
+		return !corroborated
+	case falloutCorroborated:
+		return corroborated
+	default:
+		return true
+	}
+}
 
 // falloutRow is one line of the log: a single catch, or a wave of them
 // represented by its exemplar. The embedded feedRow is the exemplar itself,
@@ -96,6 +132,7 @@ type falloutPageData struct {
 	StyleNonce  string
 	BuildCommit string
 	SelectedEco string
+	Verified    string
 	// WindowLabel mirrors falloutView; MeterSegs are the peak-meter segments
 	// (lit = today's share of the window's busiest day).
 	WindowLabel  string
@@ -119,12 +156,20 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 	if !validEcosystem(eco) {
 		eco = ""
 	}
+	verifiedRaw := r.URL.Query().Get("verified")
+	verified, verifiedErr := parseFalloutVerification(verifiedRaw)
+	if verifiedErr != nil {
+		// The HTML page has historically ignored unknown filter values. Keep
+		// that forgiving behavior; the JSON endpoint reports a bad parameter.
+		verified, verifiedRaw = falloutAny, ""
+	}
 	data := falloutPageData{
 		Nonce:       nonceFor(r),
 		StyleNonce:  styleNonceFor(r),
 		BuildCommit: buildCommit,
 		SelectedEco: eco,
-		Filtered:    eco != "",
+		Verified:    verifiedRaw,
+		Filtered:    eco != "" || verified != falloutAny,
 		HasHopper:   hopperDB.Load() != nil,
 	}
 	var diags []queryDiag
@@ -138,7 +183,9 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		} else {
 			diags = append(diags, diag)
 			data.FeedDegraded = diag.Source == "stale"
-			view := buildFalloutView(feedRowsFromSnapshot(snapshot), time.Now().In(viewerLocation(r)), eco)
+			view := buildFalloutViewFiltered(
+				feedRowsFromSnapshot(snapshot), time.Now().In(viewerLocation(r)), eco, verified,
+			)
 			data.Days = view.Days
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
@@ -256,17 +303,18 @@ type falloutView struct {
 // read in that zone. Instants (the window cutoff, row ages) are absolute and
 // need no conversion.
 func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) falloutView {
+	return buildFalloutViewFiltered(rows, now, selectedEco, falloutAny)
+}
+
+func buildFalloutViewFiltered(
+	rows []feedRow, now time.Time, selectedEco string, verified falloutVerificationFilter,
+) falloutView {
 	loc := now.Location()
-	cutoff := now.Add(-falloutWindow)
-	var week []feedRow
+	week := falloutRowsInWindow(rows, now, verified)
 	oldest := now
-	for i := range rows {
-		if rows[i].Classification == "hostile" && rows[i].AnalyzedAt.After(cutoff) &&
-			falloutQualifies(rows[i].Why, rows[i].LLMGrade) {
-			week = append(week, rows[i])
-			if rows[i].AnalyzedAt.Before(oldest) {
-				oldest = rows[i].AnalyzedAt
-			}
+	for i := range week {
+		if week[i].AnalyzedAt.Before(oldest) {
+			oldest = week[i].AnalyzedAt
 		}
 	}
 
@@ -303,6 +351,22 @@ func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) fallout
 	}
 	view.Days = falloutDays(shown, ecoCount, formulaCount, len(week), now)
 	return view
+}
+
+// falloutRowsInWindow is the uncollapsed fallout set. The HTML view groups
+// this set into waves and caps singles; JSON keeps every row so a triage client
+// receives every exact SHA-256/PURL pair. Both views use the same gates.
+func falloutRowsInWindow(rows []feedRow, now time.Time, verified falloutVerificationFilter) []feedRow {
+	cutoff := now.Add(-falloutWindow)
+	week := make([]feedRow, 0, len(rows))
+	for i := range rows {
+		row := rows[i]
+		if row.Classification == "hostile" && row.AnalyzedAt.After(cutoff) &&
+			falloutQualifies(row.Why, row.LLMGrade) && verified.matches(row.Corroborated) {
+			week = append(week, row)
+		}
+	}
+	return week
 }
 
 // falloutMeter lights today's share of the week's busiest day across the

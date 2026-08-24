@@ -603,10 +603,10 @@
 
         {{if .Sectors}}
         <nav class="eco-strip" aria-label="Filter by ecosystem">
-            {{if .Filtered}}<a class="strip-chip" href="/fallout">all sectors</a>{{end}}
+            {{if .Filtered}}<a class="strip-chip" href="/fallout{{if .Verified}}?verified={{.Verified}}{{end}}">all sectors</a>{{end}}
             {{range .Sectors}}
             <a class="strip-chip{{if .Active}} active{{end}}"
-               href="{{if .Active}}/fallout{{else}}/fallout?ecosystem={{.Ecosystem}}{{end}}">
+               href="{{if .Active}}/fallout{{if $.Verified}}?verified={{$.Verified}}{{end}}{{else}}/fallout?ecosystem={{.Ecosystem}}{{if $.Verified}}&amp;verified={{$.Verified}}{{end}}{{end}}">
                 <span class="eco-badge eco-{{.Color}}">{{.Ecosystem}}</span>
                 <span class="n">{{.Count}}</span>
             </a>

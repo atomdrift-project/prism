@@ -941,6 +941,10 @@ type feedRow struct {
 	// template reads them through Headline and SubID.
 	Package string
 	Version string
+	// PURLBase is hopper's version-less canonical Package URL. It is carried
+	// through the feed snapshot so machine consumers can recover the full PURL
+	// without issuing a detail-page query.
+	PURLBase string
 	// RegistryTitle is the marketplace display title from the provenance
 	// sidecar's registry record (e.g. a Chrome extension's store listing
 	// name) and Desc its short description; both empty when the collector
@@ -1238,8 +1242,9 @@ type cachedFeedSample struct {
 	Ecosystem      string
 	// Package/Version are hopper's registry attribution; Headline and SubID
 	// derive from them at render time (feedRowsFromSnapshot).
-	Package string
-	Version string
+	Package  string
+	Version  string
+	PURLBase string
 	// RegistryTitle/Desc/Downloads mirror the provenance registry record's
 	// marketplace title, capped short description, and install count (see
 	// feedRow; Downloads sits below with the other numerics).
@@ -2159,6 +2164,8 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
 	mux.HandleFunc("GET /{$}", handleIndex)
 	mux.HandleFunc("GET /fallout", handleFallout)
+	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
+	mux.HandleFunc("GET /api/fallout", handleFalloutJSON)
 	mux.HandleFunc("GET /feed.atom", handleAtomFeed)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
@@ -2526,7 +2533,7 @@ func feedCacheKey(a feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v10:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v11:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
 		":cn=" + a.claimName + ":cs=" + a.claimSigner
@@ -2849,6 +2856,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
 			Version:        sample.Version,
+			PURLBase:       res.PURLBase,
 			RegistryTitle:  sample.RegistryTitle,
 			Desc:           truncDesc(sample.RegistryDescription),
 			Users:          formatCount(sample.RegistryDownloads),
@@ -2887,6 +2895,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
 			Version:        sample.Version,
+			PURLBase:       sample.PURLBase,
 			RegistryTitle:  sample.RegistryTitle,
 			Desc:           sample.Desc,
 			Users:          formatCount(sample.Downloads),
@@ -3098,6 +3107,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Ecosystem:      row.Ecosystem,
 			Package:        row.Package,
 			Version:        row.Version,
+			PURLBase:       row.PURLBase,
 			RegistryTitle:  row.RegistryTitle,
 			Desc:           row.Desc,
 			Downloads:      row.Downloads,
@@ -3828,7 +3838,9 @@ func detectedBy(ctx context.Context, sha, purlBase string) (named []Citation, mo
 	seen := make(map[string]bool)
 	unnamed := 0
 	for _, subj := range subjects {
-		for _, s := range m[subj] {
+		sightings := m[subj]
+		for i := range sightings {
+			s := &sightings[i]
 			if seen[s.Source] {
 				continue
 			}

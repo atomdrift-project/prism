@@ -46,6 +46,13 @@ HOPPER_API_ADDR='localhost:8081' \
 Open <http://127.0.0.1:8080/>. Leave uploads disabled until a scan service and
 CSRF key are configured.
 
+The Fallout log is also available as JSON at `/fallout.json` (or
+`/api/fallout`). It returns every qualifying catch with the full `sha256` and
+PURL for triage; `?verified=0` keeps only uncorroborated catches and
+`?verified=1` keeps only corroborated ones. Verification filtering happens
+after the same cached hostile snapshot used by `/fallout`, so it does not
+create a separate feed query or cache entry.
+
 `make dev` uses the production hopper endpoints defined by the Makefile. Read
 those settings before running it: browsing is read-only, but rescan and upload
 actions can change production state.
