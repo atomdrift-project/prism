@@ -8,6 +8,8 @@ github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtn
 github.com/andybalholm/brotli v1.2.2/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/atomdrift-project/hopper v0.0.0-20260821232124-af4ae8d0a6d0 h1:wjHeznbdtOqKTzTXl3EZPPMJq1ks1kS+FFEn1ln47hk=
 github.com/atomdrift-project/hopper v0.0.0-20260821232124-af4ae8d0a6d0/go.mod h1:V2qb7gYx+m34zoKELkr3+s+JGw/7tfWA4p3poILltfs=
+github.com/atomdrift-project/hopper v0.0.0-20260824110633-ec8877d85cf8 h1:41RZK1Kfl9I8ee7d3c8yHfv7qxeLHh92mpOqfUwzwGk=
+github.com/atomdrift-project/hopper v0.0.0-20260824110633-ec8877d85cf8/go.mod h1:V2qb7gYx+m34zoKELkr3+s+JGw/7tfWA4p3poILltfs=
 github.com/atomdrift-project/obs v0.0.0-20260819141836-f9e00a0e1174 h1:wHU2OZLm25uOfuhczNK9eCtLFbaL0w1r0l8jTrXVYQg=
 github.com/atomdrift-project/obs v0.0.0-20260819141836-f9e00a0e1174/go.mod h1:9k/ifvPZ6fqp+qG/02fKMxCnA5C1SbUytmygMFHomBw=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
