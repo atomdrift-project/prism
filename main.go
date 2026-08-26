@@ -1160,7 +1160,7 @@ type feedPageData struct {
 	Ecosystems []string
 	Rows       []feedRow
 	// Stats seeds the masthead's live "files indexed" counter with the latest
-	// estimate published by statsPollLoop, projected to request time (nil until
+	// exact snapshot published by statsPollLoop, projected to request time (nil until
 	// the first poll — the client's /_/stats poll fills it in either way). A
 	// lock-free pointer read, so it never adds a query to the feed's hot path.
 	Stats *indexStats
@@ -2004,9 +2004,9 @@ func main() {
 		}
 	}
 
-	// Publish the live index-size estimate for the masthead counter. Runs for
-	// the life of ctx independent of the hopper connection — it retries every
-	// statsPollInterval and starts succeeding once hopper connects — so it needs
+	// Publish the live exact index-size snapshot for the masthead counter. Runs for
+	// the life of ctx independent of the hopper connection — it retries on its
+	// exact/rate schedules and starts succeeding once hopper connects — so it needs
 	// no hookup to the connect/reconnect callbacks. This background poll is the
 	// counter's entire database cost; the endpoint only ever reads its result.
 	go statsPollLoop(ctx)
@@ -4604,7 +4604,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 			paginateFeed(&data, r)
 		}
 	}
-	// Seed the live counter with the latest published estimate, projected to
+	// Seed the live counter with the latest exact published snapshot, projected to
 	// this request's clock — a lock-free pointer read, no query on the feed
 	// path. When cold (before the first poll), the template omits the initial
 	// value and the client's /_/stats poll populates it.

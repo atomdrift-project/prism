@@ -143,12 +143,12 @@ func registerReliabilityGauges(m metric.Meter) {
 	)
 	indexSamples := igauge(
 		"prism.index.samples",
-		"Planner estimate of rows in samples (pg_class.reltuples), same number as the masthead counter.",
+		"Exact rows in samples, same number as the masthead counter.",
 		"{sample}",
 	)
 	indexRate := fgauge(
 		"prism.index.rate",
-		"Estimated samples inserted per minute over the trailing stats window.",
+		"Samples inserted per minute over the trailing stats window.",
 		"{sample}/min",
 	)
 	indexAge := fgauge(

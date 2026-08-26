@@ -35,7 +35,7 @@ func TestCommaInt(t *testing.T) {
 	}
 }
 
-// TestHandleStatsCold verifies that before the poller has published an estimate
+// TestHandleStatsCold verifies that before the poller has published a snapshot
 // the endpoint responds fast with {"ready":false} and the JSON + no-store
 // headers — never a hang or a 5xx — so a polling client just keeps trying.
 func TestHandleStatsCold(t *testing.T) {
@@ -68,7 +68,7 @@ func TestHandleStatsCold(t *testing.T) {
 }
 
 // TestHandleStatsWarm verifies the JSON shape once the poller has published an
-// estimate: total, rate rounded to one decimal, and as_of in unix millis.
+// exact snapshot: total, rate rounded to one decimal, and as_of in unix millis.
 // GeneratedAt is "now" so projectIndexStats does not add a poll-gap delta.
 func TestHandleStatsWarm(t *testing.T) {
 	old := statsLatest.Load()
@@ -104,9 +104,9 @@ func TestHandleStatsWarm(t *testing.T) {
 	}
 }
 
-// TestProjectIndexStats checks the between-poll projection: advance at the
-// measured rate, never go backwards in time, and never invent more than one
-// statsPollInterval of growth.
+// TestProjectIndexStats checks the presentation-only between-poll projection:
+// advance at the measured rate, never go backwards in time, and never invent
+// more than one statsRateInterval of growth.
 func TestProjectIndexStats(t *testing.T) {
 	t.Parallel()
 	base := time.Unix(1_700_000_000, 0).UTC()
@@ -131,14 +131,14 @@ func TestProjectIndexStats(t *testing.T) {
 	}
 
 	got = projectIndexStats(snap, base.Add(time.Hour))
-	want := 1000 + int64(60*statsPollInterval.Minutes()) // 15s → +15
+	want := 1000 + int64(60*statsRateInterval.Minutes()) // one rate interval
 	if got.Total != want {
 		t.Errorf("stale cap: total=%d, want %d (one poll interval)", got.Total, want)
 	}
 }
 
 // TestHandleStatsProjectsPollGap verifies that /_/stats advances the published
-// total by the 2h rate across a gap shorter than statsPollInterval, so a page
+// total by the 2h rate across a gap shorter than statsRateInterval, so a page
 // load a few seconds after the poll is still live.
 func TestHandleStatsProjectsPollGap(t *testing.T) {
 	old := statsLatest.Load()

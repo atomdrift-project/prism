@@ -338,17 +338,18 @@ if (input && form) {
 
 // --- Live "files indexed" counter ----------------------------------------
 //
-// The masthead shows the latest published estimate of how many files are in
-// the index. A background poller on the server refreshes ~every 15s; the
-// endpoint only serves that cached value (projected to the request clock), so
+// The masthead shows the latest exact published count of files in
+// the index. A background poller refreshes the exact baseline daily and the
+// indexed rate every 15m. The endpoint only serves that cached value
+// (projected to the request clock), so
 // a client never touches the database. Each response is an anchor {total,
 // rate_per_min, as_of}; the rate is the exact 2h insert average, and we
-// advance the digits at that speed between polls — capped at 15s so a stalled
+// advance the digits at that speed between polls — capped at 15m so a stalled
 // poller cannot invent more growth than the skew budget. Re-anchors follow
-// the server in both directions (ANALYZE can correct downward). Each whole-
+// the server in both directions when the real row count changes. Each whole-
 // number tick flicks the dot and kicks the peak meter. Progressive
 // enhancement: the server-rendered value shows without JS; a failed poll
-// holds after the 15s cap. Guarded so it no-ops on pages without the counter.
+// holds after the 15m cap. Guarded so it no-ops on pages without the counter.
 (() => {
   const el = document.getElementById("index-counter");
   if (!el) return;
@@ -356,10 +357,11 @@ if (input && form) {
   const meterEl = document.getElementById("counter-meter");
   const dotEl = document.getElementById("counter-dot");
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  // Match statsPollInterval so the client re-anchors as soon as a fresh
-  // snapshot is typically available, and never coasts further than one poll.
+  // Poll more frequently than the server refreshes so a fresh rate is picked
+  // up promptly. The cap matches the server refresh cadence, so a
+  // failed poll cannot invent growth indefinitely.
   const POLL_MS = 15000;
-  const STALE_CAP_SEC = 15;
+  const STALE_CAP_SEC = 900;
 
   const SEGMENTS = 10;
   const segs = [];
@@ -384,7 +386,7 @@ if (input && form) {
   const fmt = (n) => Math.floor(n).toLocaleString("en-US");
 
   // Projected value of an anchor at the current wall clock, capped at one
-  // poll interval so a stale anchor can't run away.
+  // server refresh interval so a stale anchor can't run away.
   const projected = (a) => {
     if (!a) return displayed;
     const elapsed = Math.min(STALE_CAP_SEC, Math.max(0, (Date.now() - a.asOfMs) / 1000));
@@ -423,7 +425,7 @@ if (input && form) {
         if (d && typeof d.total === "number") applyAnchor(d);
       })
       .catch(() => {
-        /* hold after the 15s cap — do not invent further digits */
+        /* hold after the 15m cap — do not invent further digits */
       });
   };
 
