@@ -1,7 +1,8 @@
 package main
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strings"
 )
 
@@ -99,11 +100,8 @@ func flaggedDeps(files []cleaveFile) (flagged []flaggedDep, dropped int) {
 		deps = append(deps, dep)
 	}
 
-	sort.SliceStable(deps, func(a, b int) bool {
-		if deps[a].critN != deps[b].critN {
-			return deps[a].critN > deps[b].critN
-		}
-		return deps[a].Label < deps[b].Label
+	slices.SortStableFunc(deps, func(a, b flaggedDep) int {
+		return cmp.Or(cmp.Compare(b.critN, a.critN), cmp.Compare(a.Label, b.Label))
 	})
 	if len(deps) > maxFlaggedDeps {
 		return deps[:maxFlaggedDeps], len(deps) - maxFlaggedDeps

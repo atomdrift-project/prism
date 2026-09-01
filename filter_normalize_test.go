@@ -209,7 +209,7 @@ func TestFeedCacheKeyCrossChannelConsistency(t *testing.T) {
 	if a != b {
 		t.Fatalf("args diverged across channels:\n A=%+v\n B=%+v", a, b)
 	}
-	if feedCacheKey(a) != feedCacheKey(b) {
-		t.Errorf("cache keys diverged:\n A=%q\n B=%q", feedCacheKey(a), feedCacheKey(b))
+	if feedCacheKey(&a) != feedCacheKey(&b) {
+		t.Errorf("cache keys diverged:\n A=%q\n B=%q", feedCacheKey(&a), feedCacheKey(&b))
 	}
 }

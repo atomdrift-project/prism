@@ -1,8 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -223,11 +224,8 @@ func finalizeNode(n *treeNode, visited map[*treeNode]bool) int {
 // sortNodes orders siblings severity-first, then by name, so the riskiest members
 // float to the top of each level while staying stable within a tier.
 func sortNodes(ns []*treeNode) {
-	sort.SliceStable(ns, func(a, b int) bool {
-		if ns[a].critN != ns[b].critN {
-			return ns[a].critN > ns[b].critN
-		}
-		return ns[a].Name < ns[b].Name
+	slices.SortStableFunc(ns, func(a, b *treeNode) int {
+		return cmp.Or(cmp.Compare(b.critN, a.critN), cmp.Compare(a.Name, b.Name))
 	})
 }
 

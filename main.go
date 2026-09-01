@@ -149,6 +149,12 @@ const (
 	// the fallback must outlive a multi-hour hopper outage so the index page can
 	// keep serving slightly-stale rows the whole time instead of a 500.
 	feedStaleTTL = 24 * time.Hour
+	// feedArchiveTTL is the lifetime of a snapshot of a closed window — a
+	// fallout week that has already ended. Its rows cannot change, so the only
+	// reason to rebuild it is memory: long enough that browsing the archive
+	// (or a crawler walking it) re-queries nothing, short enough that a week
+	// nobody has looked at since breakfast does not hold its rows all day.
+	feedArchiveTTL = 6 * time.Hour
 	// feedDropdownTTL bounds how long the cached ecosystem/domain filter
 	// options are reused before a rebuild re-queries them. They are identical
 	// for every feed filter and change slowly (a new ecosystem or domain shows
@@ -275,6 +281,7 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) *http.Request {
 		return r
 	}
 	val := base64.RawURLEncoding.EncodeToString(buf[:])
+	//nolint:gosec // G124: HttpOnly and SameSite are set; Secure is conditional only so plaintext local dev works.
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    val,
@@ -1220,6 +1227,10 @@ type cachedFeedSnapshot struct {
 	// per-request diagnostics can report payload size without re-marshaling
 	// on a cache hit.
 	Bytes int
+	// Truncated reports that a windowed read stopped at its page cap with
+	// window left unread, so a view rendering a period can say how much of it
+	// this snapshot actually covers instead of claiming the whole period.
+	Truncated bool
 }
 
 // feedDropdowns holds the ecosystem and domain filter options rendered on the
@@ -2481,6 +2492,17 @@ const (
 	feedLimit    = feedPageSize * feedPages
 )
 
+// feedWindowPageSize / feedWindowPages bound a windowed read (see
+// feedSamplesInWindow). The page size is hopper's own per-query ceiling, so a
+// period costs as few round trips as it can; the page count puts a ceiling on
+// the whole read — at the 2026 hostile rate a week is around eight pages, so
+// sixteen leaves room for a doubling before a view has to admit it is showing
+// less than the period it names.
+const (
+	feedWindowPageSize = 1000
+	feedWindowPages    = 16
+)
+
 // feedEcosystemWindow bounds the ecosystem dropdown to ecosystems seen
 // recently. Hopper emits the occasional non-canonical ecosystem (file
 // extensions, OS version strings); gating on recency keeps the dropdown to
@@ -2491,6 +2513,15 @@ const feedEcosystemWindow = 72 * time.Hour
 // pipeline. Bundling avoids a long parameter pile and keeps the cache
 // key + handler in step when a new dimension is added.
 type feedQueryArgs struct {
+	// since / until bound the query to a half-open created_at window,
+	// [since, until). The fallout log's calendar weeks are the only caller:
+	// its page is a period rather than a page of rows, so it pages the whole
+	// window in (see loadFeedRowsFromHopper) instead of letting feedLimit
+	// decide how far back the page reaches. Zero means unbounded, which every
+	// other view is.
+	since time.Time
+	until time.Time
+
 	ecosystem   string
 	domain      string
 	criticality string
@@ -2528,15 +2559,38 @@ type feedQueryArgs struct {
 // dimensions. Stable across reorderings (so swapping field order can't
 // silently fragment the cache) and never empty. Version-prefixed so the
 // next schema change can invalidate the whole on-disk set.
-func feedCacheKey(a feedQueryArgs) string {
+func feedCacheKey(a *feedQueryArgs) string {
 	feeds := "0"
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v11:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v12:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
-		":cn=" + a.claimName + ":cs=" + a.claimSigner
+		":cn=" + a.claimName + ":cs=" + a.claimSigner +
+		":from=" + timeKey(a.since) + ":to=" + timeKey(a.until)
+}
+
+// timeKey renders a window bound for a cache key: a fixed RFC3339 instant in
+// UTC, and the empty string for an unset bound so an unwindowed key keeps the
+// shape it always had.
+func timeKey(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// feedCacheTTLFor is how long a snapshot of this query stays cached. A closed
+// window — a period that ended before now — can never gain a row, so re-asking
+// hopper for it on the working TTL is pure waste; it is held for
+// feedArchiveTTL instead. Everything else, the period still in progress
+// included, keeps the working TTL.
+func feedCacheTTLFor(a *feedQueryArgs) time.Duration {
+	if !a.until.IsZero() && a.until.Before(time.Now()) {
+		return feedArchiveTTL
+	}
+	return feedCacheTTL
 }
 
 // loadFeedSnapshot fetches a feed page, caching every query for feedCacheTTL.
@@ -2546,7 +2600,7 @@ func feedCacheKey(a feedQueryArgs) string {
 // hit a cold loader on the request path. The returned queryDiag reports
 // whether the data came from cache, how long the fetch took, the snapshot's
 // age, and its row/byte counts.
-func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logger, bypass bool) (cachedFeedSnapshot, queryDiag, error) {
+func loadFeedSnapshot(ctx context.Context, a *feedQueryArgs, reqLogger *slog.Logger, bypass bool) (cachedFeedSnapshot, queryDiag, error) {
 	feedPopular.record(a) // learn which views to keep hot
 	start := time.Now()
 	diag := queryDiag{Name: "index", Source: "postgres", Params: feedDiagParams(a)}
@@ -2563,7 +2617,7 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 			}
 		}
 		fromCache := true
-		snapshot, err = feedCache.FetchTTL(ctx, feedCacheKey(a), feedCacheTTL, func(lctx context.Context) (cachedFeedSnapshot, error) {
+		snapshot, err = feedCache.FetchTTL(ctx, feedCacheKey(a), feedCacheTTLFor(a), func(lctx context.Context) (cachedFeedSnapshot, error) {
 			fromCache = false
 			// Detach the shared rebuild from the caller's request context.
 			// FetchTTL coalesces concurrent callers onto one loader, and lctx
@@ -2610,7 +2664,7 @@ func loadFeedSnapshot(ctx context.Context, a feedQueryArgs, reqLogger *slog.Logg
 // feedDiagParams renders the cache-key dimensions of a feed query into a
 // compact comma-separated string for the diagnostics comment. Empty ecosystem
 // and criticality read as "any"; the rarer filters appear only when set.
-func feedDiagParams(a feedQueryArgs) string {
+func feedDiagParams(a *feedQueryArgs) string {
 	parts := []string{
 		"ecosystem=" + firstNonEmpty(diagSafe(a.ecosystem), "any"),
 		"crit=" + firstNonEmpty(diagSafe(a.criticality), "any"),
@@ -2636,6 +2690,9 @@ func feedDiagParams(a feedQueryArgs) string {
 	if a.feedsOnly {
 		parts = append(parts, "feeds=1")
 	}
+	if !a.since.IsZero() || !a.until.IsZero() {
+		parts = append(parts, "window="+timeKey(a.since)+".."+timeKey(a.until))
+	}
 	return strings.Join(parts, ",")
 }
 
@@ -2656,16 +2713,17 @@ func diagSafe(s string) string {
 // buildFeedSnapshot runs the live hopper queries and packages the result
 // into a cache-friendly snapshot (stable raw fields, no rendered relative-
 // time strings — those re-derive at request time from CreatedAt).
-func buildFeedSnapshot(ctx context.Context, a feedQueryArgs) (cachedFeedSnapshot, error) {
-	rows, ecosystems, domains, err := loadFeedRowsFromHopper(ctx, a)
+func buildFeedSnapshot(ctx context.Context, a *feedQueryArgs) (cachedFeedSnapshot, error) {
+	fetch, err := loadFeedRowsFromHopper(ctx, a)
 	if err != nil {
 		return cachedFeedSnapshot{}, err
 	}
 	snap := cachedFeedSnapshot{
 		GeneratedAt: time.Now(),
-		Rows:        cachedFeedSamplesFromRows(rows),
-		Ecosystems:  ecosystems,
-		Domains:     domains,
+		Rows:        cachedFeedSamplesFromRows(fetch.rows),
+		Ecosystems:  fetch.ecosystems,
+		Domains:     fetch.domains,
+		Truncated:   fetch.truncated,
 	}
 	if encoded, err := json.Marshal(snap); err == nil {
 		snap.Bytes = len(encoded)
@@ -2710,10 +2768,22 @@ func feedDropdownOptions(ctx context.Context) (feedDropdowns, error) {
 	})
 }
 
-func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []feedRow, ecosystems, domains []string, err error) {
+// feedFetch is one hopper feed read: the rows it produced, the filter options
+// rendered beside them, and whether a windowed read gave up at its page cap
+// before reaching the window's far edge — the one thing a caller cannot infer
+// from the rows, and the difference between "a quiet Monday" and "more than
+// this page can hold".
+type feedFetch struct {
+	rows       []feedRow
+	ecosystems []string
+	domains    []string
+	truncated  bool
+}
+
+func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return nil, nil, nil, errors.New("hopper not connected")
+		return feedFetch{}, errors.New("hopper not connected")
 	}
 	// Gate the feed behind the shared hopper-db breaker so a degraded
 	// hopper sheds these queries fast instead of every request queueing a
@@ -2721,7 +2791,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	// guards the per-sample lookups in fetchFromHopper.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "feed", "rejected", time.Time{})
-		return nil, nil, nil, fmt.Errorf("hopper-db feed: %w", berr)
+		return feedFetch{}, fmt.Errorf("hopper-db feed: %w", berr)
 	}
 	// Bound the DB-query phase independently of the caller: a slow hopper
 	// round-trip must not pin a request goroutine (or precache tick), and a
@@ -2740,9 +2810,8 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 	dropdowns, err := feedDropdownOptions(ctx)
 	if err != nil {
 		fail()
-		return nil, nil, nil, err
+		return feedFetch{}, err
 	}
-	ecosystems, domains = dropdowns.Ecosystems, dropdowns.Domains
 
 	// Source="" spans every Source value (legacy "harvest" rows from before
 	// the rename, new "forager" rows, manual "upload"s) so the result set
@@ -2783,15 +2852,21 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		q.Corroborated = true
 	}
 
-	samples, err := db.FeedSamples(ctx, &q)
+	q.Since, q.Until = args.since, args.until
+	samples, truncated, err := feedSamplesInWindow(ctx, db, &q)
 	if err != nil {
 		fail()
-		return nil, nil, nil, err
+		return feedFetch{}, err
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "feed", "ok", feedStart)
 
-	rows = make([]feedRow, 0, len(samples))
+	out := feedFetch{
+		rows:       make([]feedRow, 0, len(samples)),
+		ecosystems: dropdowns.Ecosystems,
+		domains:    dropdowns.Domains,
+		truncated:  truncated,
+	}
 	now := time.Now()
 	for _, sample := range samples {
 		// Build the row straight from the sample hopper already returned.
@@ -2841,7 +2916,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		if why == "" {
 			conf = mlConf
 		}
-		rows = append(rows, feedRow{
+		out.rows = append(out.rows, feedRow{
 			SHA256:         sample.SHA256,
 			SHA256Short:    shortSHA(sample.SHA256),
 			Filename:       firstNonEmpty(res.Filename, sample.Filename, filepath.Base(sample.Path)),
@@ -2872,7 +2947,46 @@ func loadFeedRowsFromHopper(ctx context.Context, args feedQueryArgs) (rows []fee
 		})
 	}
 
-	return rows, ecosystems, domains, nil
+	return out, nil
+}
+
+// feedSamplesInWindow reads a feed query, paging when it carries a created_at
+// window. An unwindowed query is one page: the row cap is the whole point of
+// the index feed, which shows the newest rows and pages in memory. A windowed
+// one is a period the caller means to see all of, so it walks the window down
+// — each page asking for what is left below the oldest row it has seen —
+// until the window empties, the page cap is reached, or a page adds nothing
+// new. Ties on the boundary instant are why the next bound is inclusive of the
+// last row (created_at has microsecond resolution) and why rows are deduped by
+// sha256: re-reading one row beats losing the ones beside it.
+func feedSamplesInWindow(ctx context.Context, db *hopper.DB, q *hopper.FeedQuery) ([]*hopper.Sample, bool, error) {
+	if q.Since.IsZero() && q.Until.IsZero() {
+		samples, err := db.FeedSamples(ctx, q)
+		return samples, false, err
+	}
+	q.Limit = feedWindowPageSize
+	var out []*hopper.Sample
+	seen := make(map[string]bool, feedWindowPageSize)
+	for range feedWindowPages {
+		page, err := db.FeedSamples(ctx, q)
+		if err != nil {
+			return nil, false, err
+		}
+		added := 0
+		for _, sample := range page {
+			if seen[sample.SHA256] {
+				continue
+			}
+			seen[sample.SHA256] = true
+			out = append(out, sample)
+			added++
+		}
+		if len(page) < q.Limit || added == 0 {
+			return out, false, nil
+		}
+		q.Until = page[len(page)-1].CreatedAt.Add(time.Microsecond)
+	}
+	return out, true, nil
 }
 
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
@@ -2962,9 +3076,19 @@ func feedStaticPrecacheLoop(ctx context.Context) {
 	sweep := func() {
 		for i := range feedPrecacheVariants {
 			v := &feedPrecacheVariants[i]
-			if err := refreshFeedCacheEntry(ctx, *v, feedStaticPrecacheInterval); err != nil {
-				logger.Warn("feed static pre-cache refresh failed", "key", feedCacheKey(*v), "error", err)
+			if err := refreshFeedCacheEntry(ctx, v, feedStaticPrecacheInterval); err != nil {
+				logger.Warn("feed static pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
 			}
+		}
+		// The fallout log's current week. It cannot live in the static list:
+		// the week it names moves every Monday. Warming it here is what lets
+		// the index page's badge read the count out of cache instead of
+		// building a week of rows on the request path — and what keeps the
+		// first visitor to the log off a cold loader.
+		now := time.Now().UTC()
+		current := falloutWeekOf(now, now).snapshotArgs()
+		if err := refreshFeedCacheEntry(ctx, &current, feedStaticPrecacheInterval); err != nil {
+			logger.Warn("fallout week pre-cache refresh failed", "key", feedCacheKey(&current), "error", err)
 		}
 	}
 	sweep()
@@ -2995,8 +3119,8 @@ func feedHotPrecacheLoop(ctx context.Context) {
 			hot := feedPopular.top(feedHotPrecacheCount)
 			for i := range hot {
 				v := &hot[i]
-				if err := refreshFeedCacheEntry(ctx, *v, feedHotPrecacheInterval); err != nil {
-					logger.Warn("feed hot pre-cache refresh failed", "key", feedCacheKey(*v), "error", err)
+				if err := refreshFeedCacheEntry(ctx, v, feedHotPrecacheInterval); err != nil {
+					logger.Warn("feed hot pre-cache refresh failed", "key", feedCacheKey(v), "error", err)
 				}
 			}
 		}
@@ -3009,7 +3133,7 @@ func feedHotPrecacheLoop(ctx context.Context) {
 // fresh snapshot. On-demand requests for the same key may race this loader
 // through their own fido.Fetch path; both produce consistent snapshots, so the
 // rare duplicate hopper query is benign.
-func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Duration) error {
+func refreshFeedCacheEntry(ctx context.Context, a *feedQueryArgs, maxAge time.Duration) error {
 	key := feedCacheKey(a)
 	if snapshot, found, err := feedCache.Get(ctx, key); err == nil && found {
 		if time.Since(snapshot.GeneratedAt) <= maxAge {
@@ -3020,7 +3144,7 @@ func refreshFeedCacheEntry(ctx context.Context, a feedQueryArgs, maxAge time.Dur
 	if err != nil {
 		return err
 	}
-	if err := feedCache.SetTTL(ctx, key, snapshot, feedCacheTTL); err != nil {
+	if err := feedCache.SetTTL(ctx, key, snapshot, feedCacheTTLFor(a)); err != nil {
 		return err
 	}
 	logger.Debug("feed pre-cache refreshed", "key", key, "rows", len(snapshot.Rows))
@@ -3047,7 +3171,7 @@ var feedPopular = &feedPopularity{counts: make(map[feedQueryArgs]uint64)}
 
 // record bumps the visit count for the structured form of a, ignoring free-text
 // and domain dimensions. A no-op for search/formula queries.
-func (p *feedPopularity) record(a feedQueryArgs) {
+func (p *feedPopularity) record(a *feedQueryArgs) {
 	if a.search != "" || a.formula != "" {
 		return
 	}
@@ -3078,7 +3202,7 @@ func (p *feedPopularity) top(n int) []feedQueryArgs {
 		if entries[i].count != entries[j].count {
 			return entries[i].count > entries[j].count
 		}
-		return feedCacheKey(entries[i].args) < feedCacheKey(entries[j].args)
+		return feedCacheKey(&entries[i].args) < feedCacheKey(&entries[j].args)
 	})
 	if len(entries) > n {
 		entries = entries[:n]
@@ -4351,6 +4475,7 @@ func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
 	}
 	if version != "" {
 		if sha := soleSampleByPURL(r.Context(), base, version); sha != "" {
+			//nolint:gosec // G710: sha is a DB-sourced hex digest behind a literal "/file/" prefix, so the target stays same-origin.
 			http.Redirect(w, r, "/file/"+sha, http.StatusFound)
 			return
 		}
@@ -4409,6 +4534,7 @@ func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
+	//nolint:gosec // G710: validEcosystem rejects slash, backslash and control bytes, so "/"+eco+"/" cannot become "//host".
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
@@ -4486,6 +4612,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	// a no-JS client still gets the redirect. Run it on the raw value;
 	// shaFromSearchQuery trims and lowercases internally.
 	if sha, ok := shaFromSearchQuery(r.URL.Query().Get("q")); ok {
+		//nolint:gosec // G710: shaFromSearchQuery returns only validSHA256 hex, behind a literal "/file/" prefix.
 		http.Redirect(w, r, "/file/"+sha, http.StatusFound)
 		return
 	}
@@ -4532,7 +4659,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	}
 	data := feedPageData{
 		CSRFToken:       csrfToken(r, "upload"),
-		WeeklyHostile:   weeklyHostileCount(r.Context()),
+		WeeklyHostile:   weeklyHostileCount(r.Context(), viewerLocation(r)),
 		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
 		FeedsOnly:       parseBoolQuery(r.URL.Query().Get("feeds")),
 		Nonce:           nonceFor(r),
@@ -4565,7 +4692,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	if hopperDB.Load() != nil {
 		snapshot, diag, err := loadFeedSnapshot(
 			r.Context(),
-			feedQueryArgs{
+			&feedQueryArgs{
 				ecosystem:   data.SelectedEco,
 				domain:      data.SelectedDomain,
 				criticality: data.SelectedCrit,
@@ -4631,7 +4758,7 @@ func writeQueryDiags(w io.Writer, diags []queryDiag) {
 		// alphanumerics by diagSafe, so it cannot break out of the
 		// surrounding HTML comment; gosec's taint analysis can't see the
 		// custom sanitizer.
-		if _, err := fmt.Fprintf(w, "\n<!-- %s source:%s duration:%s age:%s params:%s rows=%d bytes=%d -->", //nolint:gosec // params sanitized by diagSafe
+		if _, err := fmt.Fprintf(w, "\n<!-- %s source:%s duration:%s age:%s params:%s rows=%d bytes=%d -->",
 			d.Name, d.Source, d.Duration, d.Age, d.Params, d.Rows, d.Bytes); err != nil {
 			return
 		}
@@ -4741,16 +4868,14 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	lookupSpan.End()
 	lookupDur := time.Since(lookupStart)
 	if err != nil {
-		var pend *pendingAnalysisError
-		if errors.As(err, &pend) {
+		if pend, ok := errors.AsType[*pendingAnalysisError](err); ok {
 			reqLogger.Info("rendering pending state", "filename", pend.Filename)
 			renderPending(w, r, sha, pend.Filename)
 			return
 		}
 		// Ingestion ran and gave up. Say so plainly: a 404 here would tell the
 		// user to re-upload, which cannot help until the backends recover.
-		var failed *uploadFailedError
-		if errors.As(err, &failed) {
+		if failed, ok := errors.AsType[*uploadFailedError](err); ok {
 			reqLogger.Warn("rendering upload-failure state", "filename", failed.Filename)
 			renderError(w, r, http.StatusServiceUnavailable, errorData{
 				Icon:    "⚠",
@@ -5223,8 +5348,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 			if st, isState := v.(uploadState); isState {
 				switch {
 				case st.FailedAt.IsZero():
-					var pend *pendingAnalysisError
-					if !errors.As(err, &pend) {
+					if _, ok := errors.AsType[*pendingAnalysisError](err); !ok {
 						return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: st.Filename}
 					}
 				case time.Since(st.FailedAt) <= uploadFailureTTL:
@@ -5689,7 +5813,7 @@ func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart
 			return nil, nil
 		}
 		hopper.Authorize(req)
-		resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from admin-configured hopper-api host + validated SHA path; no user-controlled URL
+		resp, err := hopperClient.Do(req)
 		if err != nil {
 			timer.Stop()
 			cancel()
@@ -6304,8 +6428,7 @@ func uploadViewState(ctx context.Context, sha string) (state, filename string) {
 	if err == nil {
 		return "ready", ""
 	}
-	var pend *pendingAnalysisError
-	if errors.As(err, &pend) {
+	if pend, ok := errors.AsType[*pendingAnalysisError](err); ok {
 		return "pending", pend.Filename
 	}
 	return "missing", ""
@@ -6552,8 +6675,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 				renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 					Icon:  "⚖",
@@ -6636,8 +6758,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	buf, rerr := io.ReadAll(io.LimitReader(part, maxUploadSize))
 	_ = part.Close() //nolint:errcheck // best-effort
 	if rerr != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(rerr, &maxErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](rerr); ok {
 			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 				Icon:  "⚖",
@@ -6792,7 +6913,7 @@ func postOnce(ctx context.Context, target string, body []byte, contentType strin
 	req.Header.Set("Content-Type", contentType)
 	hopper.Authorize(req)
 	start := time.Now()
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperUploadURL builds from admin-configured hopper-api host; filename is URL-encoded
+	resp, err := hopperClient.Do(req)
 	if err != nil {
 		apiBreaker.failure()
 		recordDep(ctx, "hopper-api", "upload", "error", start)
@@ -7092,7 +7213,7 @@ func analyzeWithLitmus(ctx context.Context, target string, buf []byte, filename 
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	start := time.Now()
-	resp, err := litmusClient.Do(req) //nolint:gosec // target built from admin-configured litmus host, not user input
+	resp, err := litmusClient.Do(req)
 	if err != nil {
 		recordDep(ctx, "litmus", "analyze", "error", start)
 		return nil, fmt.Errorf("litmus request: %w", err)
@@ -7177,7 +7298,7 @@ func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope,
 	req.Header.Set("Content-Type", "application/json")
 	hopper.Authorize(req)
 	start := time.Now()
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperResultURL built from admin-configured hopper-api host
+	resp, err := hopperClient.Do(req)
 	if err != nil {
 		apiBreaker.failure()
 		recordDep(ctx, "hopper-api", "result", "error", start)
@@ -7237,7 +7358,7 @@ func postRescanToHopper(ctx context.Context, sha string) error {
 	}
 	hopper.Authorize(req)
 	start := time.Now()
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperRescanURL built from admin-configured hopper-api host + validated SHA path
+	resp, err := hopperClient.Do(req)
 	if err != nil {
 		apiBreaker.failure()
 		recordDep(ctx, "hopper-api", "rescan", "error", start)

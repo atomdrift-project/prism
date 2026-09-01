@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -1061,13 +1063,11 @@ func BuildGalaxy(files []FileFindings) GalaxyData { //nolint:funlen,revive // ga
 	// Sort files within each level by risk (hostile first) for consistent ordering
 	riskOrder := map[string]int{"hostile": 0, "suspicious": 1, "notable": 2, "": 3}
 	for d := range levels {
-		sort.Slice(levels[d], func(i, j int) bool {
-			ri := riskOrder[files[levels[d][i]].Risk]
-			rj := riskOrder[files[levels[d][j]].Risk]
-			if ri != rj {
-				return ri < rj
-			}
-			return files[levels[d][i]].Path < files[levels[d][j]].Path
+		slices.SortFunc(levels[d], func(a, b int) int {
+			return cmp.Or(
+				cmp.Compare(riskOrder[files[a].Risk], riskOrder[files[b].Risk]),
+				cmp.Compare(files[a].Path, files[b].Path),
+			)
 		})
 	}
 

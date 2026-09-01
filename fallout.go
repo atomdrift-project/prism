@@ -1,9 +1,16 @@
 package main
 
-// The Fallout log is the damage feed at /fallout: every hostile catch of the
-// rolling week, grouped into day bands, campaigns collapsed into waves. It is
-// a pure presentation of the cached hostile snapshot — the same rows the
-// frontpage's hostile filter serves — so rendering it costs no new queries.
+// The Fallout log is the damage feed at /fallout: every hostile catch of one
+// calendar week, grouped into day bands, campaigns collapsed into waves.
+// /fallout is the week in progress; /fallout?week=2026-08-24 is the week that
+// Monday began, back to falloutArchiveWeeks. A dated URL names the same
+// catches forever, which is what makes a week citable in a writeup.
+//
+// The log asks hopper for a period, not for a page of rows: its snapshot is
+// the created_at window the week covers, paged in whole (see
+// feedSamplesInWindow). Reading the shared feed page instead is what once
+// capped the "week" at whatever the newest 500 hostile rows spanned — twelve
+// hours, at the 2026 catch rate, under a masthead that still said "this week".
 //
 // Day bands are calendar days in the reader's own time zone, not UTC: "TODAY"
 // has to mean the reader's today, and grouping in UTC titles a New Yorker's
@@ -18,6 +25,7 @@ package main
 // otherwise — because 23 typosquats of one drainer kit are one event, not 23.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -25,16 +33,30 @@ import (
 	"html/template"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 )
 
 const (
-	// falloutWindow is the log's rolling window. A calendar week would empty
-	// the page every Monday morning; rolling keeps it continuously alive.
-	falloutWindow = 7 * 24 * time.Hour
+	// falloutArchiveWeeks is how far back ?week= reaches. It bounds the log's
+	// history to something a reader plausibly wants and, more to the point,
+	// bounds the set of week snapshots a visitor can ask the cache to hold:
+	// each is a week of hostile rows, and without a floor a crawler walking
+	// ?week= backwards would mint them forever.
+	falloutArchiveWeeks = 12
+	// falloutZonePad widens the window prism asks hopper for so one snapshot
+	// serves every reader. A week is cut at midnight in the *reader's* zone,
+	// which lands anywhere from 12 hours before to 14 hours after midnight UTC
+	// on the same date; padding both ends by 14 hours makes the fetched window
+	// a superset of every zone's version of that week, so the snapshot — and
+	// its cache key — depend only on the week's date, and the reader's own
+	// boundaries are applied to the rows in memory.
+	falloutZonePad = 14 * time.Hour
+	// falloutWeekLayout is how a week is spelled in a URL and a cache key: the
+	// date of the Monday it starts on.
+	falloutWeekLayout = "2006-01-02"
 	// waveMinSize is the smallest campaign worth collapsing: below three
 	// members, showing the rows individually reads better than a wave row.
 	waveMinSize = 3
@@ -44,6 +66,141 @@ const (
 	// exists to surface. Waves are exempt: they already collapse volume.
 	falloutSinglesPerSector = 3
 )
+
+// falloutWeek is one page of the log: the calendar week [Start, End) in the
+// reader's own zone, and the Monday date that names it in a URL and in the
+// cache. Start/End are instants — a reader in Auckland and one in Los Angeles
+// asking for the same Date get different instants, which is correct: each sees
+// their own week.
+type falloutWeek struct {
+	Start time.Time
+	End   time.Time
+	// Date is the Monday, "2006-01-02". It is the same string for every
+	// reader, so it addresses one snapshot rather than one per zone.
+	Date string
+	// Prev/Next are the Dates the older/newer links point at, empty when
+	// there is nowhere to go: Prev at the archive floor, Next on the current
+	// week. Next is empty rather than a future date so the log never offers a
+	// week that cannot have happened yet.
+	Prev string
+	Next string
+	// Current marks the week in progress — the one /fallout shows with no
+	// ?week=, still filling, and the only one whose snapshot goes stale.
+	Current bool
+}
+
+// falloutWeekStart returns the midnight that begins t's calendar week, in t's
+// own location. Weeks start on Monday: Go's Weekday counts from Sunday, so the
+// shift by 6 rotates Sunday to the end of the week rather than the start of it.
+func falloutWeekStart(t time.Time) time.Time {
+	y, m, d := t.Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+	return midnight.AddDate(0, 0, -((int(midnight.Weekday()) + 6) % 7))
+}
+
+// falloutWeekOf builds the week containing t, in t's location. Boundaries move
+// by calendar days rather than by 168 hours so a week spanning a DST change is
+// still seven midnights.
+func falloutWeekOf(t, now time.Time) falloutWeek {
+	start := falloutWeekStart(t)
+	current := falloutWeekStart(now)
+	w := falloutWeek{
+		Start:   start,
+		End:     start.AddDate(0, 0, 7),
+		Date:    start.Format(falloutWeekLayout),
+		Current: start.Equal(current),
+	}
+	if !w.Current {
+		w.Next = start.AddDate(0, 0, 7).Format(falloutWeekLayout)
+	}
+	if prev := start.AddDate(0, 0, -7); !prev.Before(current.AddDate(0, 0, -7*falloutArchiveWeeks)) {
+		w.Prev = prev.Format(falloutWeekLayout)
+	}
+	return w
+}
+
+// parseFalloutWeek resolves ?week= to the week it names, read in now's zone.
+// Empty selects the week in progress. Any date inside a week resolves to that
+// week, so a hand-shortened or mid-week date still lands somewhere real. A
+// future week, or one older than the archive reaches, is an error: those are
+// the values that would otherwise mint an unbounded set of cache keys.
+func parseFalloutWeek(raw string, now time.Time) (falloutWeek, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return falloutWeekOf(now, now), nil
+	}
+	day, err := time.ParseInLocation(falloutWeekLayout, raw, now.Location())
+	if err != nil {
+		return falloutWeek{}, errors.New("week must be a date, YYYY-MM-DD")
+	}
+	week := falloutWeekOf(day, now)
+	current := falloutWeekStart(now)
+	switch {
+	case week.Start.After(current):
+		return falloutWeek{}, errors.New("week is in the future")
+	case week.Start.Before(current.AddDate(0, 0, -7*falloutArchiveWeeks)):
+		return falloutWeek{}, fmt.Errorf("week is older than the log keeps (%d weeks)", falloutArchiveWeeks)
+	}
+	return week, nil
+}
+
+// snapshotArgs is the hopper query behind the week: every hostile catch in the
+// window, padded so the one snapshot covers the week as any zone cuts it. The
+// padding is why the window is derived from the Date read in UTC rather than
+// from Start/End, which are the reader's own instants.
+func (w falloutWeek) snapshotArgs() feedQueryArgs {
+	day, err := time.ParseInLocation(falloutWeekLayout, w.Date, time.UTC)
+	if err != nil {
+		// Unreachable: Date is always written by Format with this layout.
+		day = w.Start.UTC()
+	}
+	return feedQueryArgs{
+		criticality: "hostile",
+		since:       day.Add(-falloutZonePad),
+		until:       day.AddDate(0, 0, 7).Add(falloutZonePad),
+	}
+}
+
+// param is how the week is spelled in a link: empty for the week in progress,
+// which lives at the bare /fallout, so the log's front door never carries a
+// date that goes stale the moment the week turns over.
+func (w falloutWeek) param() string {
+	if w.Current {
+		return ""
+	}
+	return w.Date
+}
+
+// label names the period the masthead and the survey rule state. The week in
+// progress is "this week" — it is still happening, and a date range would read
+// as though it had already closed.
+func (w falloutWeek) label() string {
+	if w.Current {
+		return "this week"
+	}
+	return w.Start.Format("Jan 2") + " – " + w.End.AddDate(0, 0, -1).Format("Jan 2")
+}
+
+// falloutURL is the log's canonical link: the current week is bare /fallout,
+// every other week carries its date, and the reader's sector and verification
+// filters ride along so a link out of the strip or the week nav keeps the view
+// they are looking at.
+func falloutURL(week, eco, verified string) string {
+	q := make(url.Values, 3)
+	if week != "" {
+		q.Set("week", week)
+	}
+	if eco != "" {
+		q.Set("ecosystem", eco)
+	}
+	if verified != "" {
+		q.Set("verified", verified)
+	}
+	if len(q) == 0 {
+		return "/fallout"
+	}
+	return "/fallout?" + q.Encode()
+}
 
 type falloutVerificationFilter uint8
 
@@ -123,8 +280,12 @@ type falloutDay struct {
 type falloutSector struct {
 	Ecosystem string
 	Color     string
-	Count     int
-	Active    bool
+	// URL is where the chip goes: into the sector, or back out of it when it
+	// is the active one. Built in Go rather than in the template because it
+	// has to carry the week and the verification filter with it.
+	URL    string
+	Count  int
+	Active bool
 }
 
 type falloutPageData struct {
@@ -134,15 +295,24 @@ type falloutPageData struct {
 	SelectedEco string
 	Verified    string
 	// WindowLabel mirrors falloutView; MeterSegs are the peak-meter segments
-	// (lit = today's share of the window's busiest day).
-	WindowLabel  string
-	Sectors      []falloutSector
-	Days         []falloutDay
-	MeterSegs    []bool
-	WeeklyCount  int
-	HasHopper    bool
-	FeedDegraded bool
-	Filtered     bool
+	// (lit = the newest day in view, against the window's busiest day).
+	WindowLabel string
+	// AllSectorsURL clears the sector filter without leaving the week;
+	// OlderURL/NewerURL step the week nav, empty where there is nowhere to
+	// go. CurrentWeek is false whenever the reader is looking at the archive,
+	// which is what the "back to this week" affordance keys off.
+	AllSectorsURL string
+	OlderURL      string
+	NewerURL      string
+	CurrentURL    string
+	Sectors       []falloutSector
+	Days          []falloutDay
+	MeterSegs     []bool
+	WeeklyCount   int
+	HasHopper     bool
+	CurrentWeek   bool
+	FeedDegraded  bool
+	Filtered      bool
 }
 
 const falloutMeterSegs = 6
@@ -163,6 +333,13 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		// that forgiving behavior; the JSON endpoint reports a bad parameter.
 		verified, verifiedRaw = falloutAny, ""
 	}
+	now := time.Now().In(viewerLocation(r))
+	week, weekErr := parseFalloutWeek(r.URL.Query().Get("week"), now)
+	if weekErr != nil {
+		// Same forgiveness as the filters above: an unreadable or out-of-range
+		// week shows the week in progress rather than an error page.
+		week = falloutWeekOf(now, now)
+	}
 	data := falloutPageData{
 		Nonce:       nonceFor(r),
 		StyleNonce:  styleNonceFor(r),
@@ -171,11 +348,30 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		Verified:    verifiedRaw,
 		Filtered:    eco != "" || verified != falloutAny,
 		HasHopper:   hopperDB.Load() != nil,
+		CurrentWeek: week.Current,
+		// The period the page names is a property of the URL, not of the
+		// query: a degraded or hopper-less page still says which week the
+		// reader is looking at. A snapshot that fell short of the window
+		// narrows this in buildFalloutView.
+		WindowLabel:   week.label(),
+		AllSectorsURL: falloutURL(week.param(), "", verifiedRaw),
+		CurrentURL:    falloutURL("", eco, verifiedRaw),
+	}
+	if week.Prev != "" {
+		data.OlderURL = falloutURL(week.Prev, eco, verifiedRaw)
+	}
+	if week.Next != "" {
+		next := week.Next
+		if next == falloutWeekStart(now).Format(falloutWeekLayout) {
+			next = "" // the week in progress lives at the bare /fallout
+		}
+		data.NewerURL = falloutURL(next, eco, verifiedRaw)
 	}
 	var diags []queryDiag
 	if data.HasHopper {
+		args := week.snapshotArgs()
 		snapshot, diag, err := loadFeedSnapshot(
-			r.Context(), feedQueryArgs{criticality: "hostile"}, logger, isHardRefresh(r),
+			r.Context(), &args, logger, isHardRefresh(r),
 		)
 		if err != nil {
 			logger.Warn("failed to load fallout rows", "error", err)
@@ -183,14 +379,22 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		} else {
 			diags = append(diags, diag)
 			data.FeedDegraded = diag.Source == "stale"
-			view := buildFalloutViewFiltered(
-				feedRowsFromSnapshot(snapshot), time.Now().In(viewerLocation(r)), eco, verified,
+			view := buildFalloutView(
+				feedRowsFromSnapshot(snapshot), snapshot.Truncated, now, week, eco, verified,
 			)
 			data.Days = view.Days
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
 			data.MeterSegs = view.MeterSegs
 			data.WindowLabel = view.WindowLabel
+			for i := range data.Sectors {
+				chip := &data.Sectors[i]
+				target := chip.Ecosystem
+				if chip.Active {
+					target = ""
+				}
+				chip.URL = falloutURL(week.param(), target, verifiedRaw)
+			}
 		}
 	}
 	if err := falloutTemplate.Execute(w, data); err != nil {
@@ -246,23 +450,41 @@ func validTZName(s string) bool {
 	return true
 }
 
+// falloutCurrentWeek reads the week in progress out of the cache, in loc's
+// zone. It never builds: a miss means the week's snapshot is not warm yet, and
+// the callers — the index page's badge and the reliability gauges — must not
+// be the ones to pay for a week of hopper queries on the request path. The
+// pre-cache loop keeps this entry warm (see feedStaticPrecacheLoop), and the
+// first visitor to the log builds it if it isn't.
+func falloutCurrentWeek(ctx context.Context, loc *time.Location) (cachedFeedSnapshot, falloutWeek, bool) {
+	now := time.Now().In(loc)
+	week := falloutWeekOf(now, now)
+	if hopperDB.Load() == nil || feedCache == nil {
+		return cachedFeedSnapshot{}, week, false
+	}
+	args := week.snapshotArgs()
+	snapshot, found, err := feedCache.Get(ctx, feedCacheKey(&args))
+	if err != nil || !found {
+		return cachedFeedSnapshot{}, week, false
+	}
+	return snapshot, week, true
+}
+
 // weeklyHostileCount is the number behind the Fallout nav pill's badge on the
-// index page: hostile catches inside the log's window, read from the same
-// cached hostile snapshot the log itself renders from. A cold or failing
+// index page: hostile catches in the reader's current week, counted off the
+// same snapshot the log itself renders from and gated by the same bar, so the
+// badge can never disagree with the page it links to. A cold or failing
 // snapshot degrades to zero, which simply hides the badge.
-func weeklyHostileCount(ctx context.Context) int {
-	if hopperDB.Load() == nil {
+func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
+	snapshot, week, ok := falloutCurrentWeek(ctx, loc)
+	if !ok {
 		return 0
 	}
-	snapshot, _, err := loadFeedSnapshot(ctx, feedQueryArgs{criticality: "hostile"}, logger, false)
-	if err != nil {
-		return 0
-	}
-	cutoff := time.Now().UTC().Add(-falloutWindow)
 	n := 0
 	for i := range snapshot.Rows {
 		row := &snapshot.Rows[i]
-		if row.Classification == "hostile" && row.CreatedAt.After(cutoff) &&
+		if row.Classification == "hostile" &&
+			!row.CreatedAt.Before(week.Start) && row.CreatedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) {
 			n++
 		}
@@ -293,80 +515,94 @@ type falloutView struct {
 	WeeklyCount int
 }
 
-// buildFalloutView assembles the log from the hostile snapshot rows: the
-// weekly window, the sector strip, and the day bands with waves first.
-// selectedEco, when set, narrows the day bands to one sector; the strip
-// always shows every sector with damage so the filter chips stay navigable.
+// buildFalloutView assembles the log from the week's snapshot rows: the
+// window, the sector strip, and the day bands with waves first. selectedEco,
+// when set, narrows the day bands to one sector; the strip always shows every
+// sector with damage so the filter chips stay navigable.
 //
 // now carries the reader's zone, and every calendar date the page states —
-// band label, band subtitle, window label, the meter's notion of today — is
-// read in that zone. Instants (the window cutoff, row ages) are absolute and
-// need no conversion.
-func buildFalloutView(rows []feedRow, now time.Time, selectedEco string) falloutView {
-	return buildFalloutViewFiltered(rows, now, selectedEco, falloutAny)
-}
-
-func buildFalloutViewFiltered(
-	rows []feedRow, now time.Time, selectedEco string, verified falloutVerificationFilter,
+// band label, band subtitle, window label, the meter's notion of the newest
+// day — is read in that zone, as are the week's own boundaries. Instants (the
+// window edges, row ages) are absolute and need no conversion.
+//
+// truncated is the snapshot's own report that it stopped short of the window
+// (see feedSamplesInWindow). It is the only way to tell a quiet Monday from a
+// week too big to page in, and without it the label would claim a whole week
+// it cannot show.
+func buildFalloutView(
+	rows []feedRow, truncated bool, now time.Time, week falloutWeek,
+	selectedEco string, verified falloutVerificationFilter,
 ) falloutView {
 	loc := now.Location()
-	week := falloutRowsInWindow(rows, now, verified)
-	oldest := now
-	for i := range week {
-		if week[i].AnalyzedAt.Before(oldest) {
-			oldest = week[i].AnalyzedAt
+	shown := falloutRowsInWindow(rows, week, verified)
+	oldest := week.End
+	for i := range shown {
+		if shown[i].AnalyzedAt.Before(oldest) {
+			oldest = shown[i].AnalyzedAt
 		}
 	}
 
 	view := falloutView{
-		WeeklyCount: len(week),
-		WindowLabel: "this week",
+		WeeklyCount: len(shown),
+		WindowLabel: week.label(),
 	}
-	// When a full snapshot lands entirely inside the window, the snapshot
-	// ran out of depth (feedLimit rows) before the window ran out of days —
-	// the log covers less than a week, and the label says exactly how much.
-	if len(week) == len(rows) && len(rows) >= feedLimit {
+	// A truncated snapshot reached its page cap before the far edge of the
+	// window, so the log covers less than the week it names — the label says
+	// exactly how much rather than overstating the period.
+	if truncated && len(shown) > 0 {
 		view.WindowLabel = "since " + oldest.In(loc).Format("Jan 2")
 	}
-	view.Sectors = falloutSectors(week, selectedEco)
+	view.Sectors = falloutSectors(shown, selectedEco)
 
 	// Heat needs distribution counts over the whole weekly pool — not the
 	// filtered one — so a wave of common typosquats dilutes its own formula
 	// even when the reader is looking at one sector.
 	ecoCount := make(map[string]int, 16)
-	formulaCount := make(map[string]int, len(week))
+	formulaCount := make(map[string]int, len(shown))
 	perDay := make(map[string]int, 8)
-	for i := range week {
-		ecoCount[week[i].Ecosystem]++
-		formulaCount[week[i].Formula]++
-		perDay[week[i].AnalyzedAt.In(loc).Format("2006-01-02")]++
+	newest := ""
+	for i := range shown {
+		day := shown[i].AnalyzedAt.In(loc).Format("2006-01-02")
+		ecoCount[shown[i].Ecosystem]++
+		formulaCount[shown[i].Formula]++
+		perDay[day]++
+		if day > newest {
+			newest = day
+		}
 	}
-	view.MeterSegs = falloutMeter(perDay[now.Format("2006-01-02")], perDay)
+	// The meter reads the newest day in view against the week's busiest — for
+	// the week in progress that is today, and for an archive week the day it
+	// finished on, so one rule covers both.
+	view.MeterSegs = falloutMeter(perDay[newest], perDay)
 
-	shown := week
+	banded := shown
 	if selectedEco != "" {
-		shown = slices.DeleteFunc(slices.Clone(week), func(r feedRow) bool {
+		banded = slices.DeleteFunc(slices.Clone(shown), func(r feedRow) bool {
 			return r.Ecosystem != selectedEco
 		})
 	}
-	view.Days = falloutDays(shown, ecoCount, formulaCount, len(week), now)
+	view.Days = falloutDays(banded, ecoCount, formulaCount, len(shown), now)
 	return view
 }
 
-// falloutRowsInWindow is the uncollapsed fallout set. The HTML view groups
-// this set into waves and caps singles; JSON keeps every row so a triage client
+// falloutRowsInWindow is the uncollapsed fallout set: the snapshot's rows
+// narrowed to the reader's own week. The snapshot spans a padded window (see
+// falloutZonePad), so this is where a shared set of rows becomes one zone's
+// week — half-open, [Start, End), so a catch at midnight belongs to the day
+// that is starting and to exactly one week. The HTML view groups the result
+// into waves and caps singles; JSON keeps every row so a triage client
 // receives every exact SHA-256/PURL pair. Both views use the same gates.
-func falloutRowsInWindow(rows []feedRow, now time.Time, verified falloutVerificationFilter) []feedRow {
-	cutoff := now.Add(-falloutWindow)
-	week := make([]feedRow, 0, len(rows))
+func falloutRowsInWindow(rows []feedRow, week falloutWeek, verified falloutVerificationFilter) []feedRow {
+	out := make([]feedRow, 0, len(rows))
 	for i := range rows {
 		row := rows[i]
-		if row.Classification == "hostile" && row.AnalyzedAt.After(cutoff) &&
+		if row.Classification == "hostile" &&
+			!row.AnalyzedAt.Before(week.Start) && row.AnalyzedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) && verified.matches(row.Corroborated) {
-			week = append(week, row)
+			out = append(out, row)
 		}
 	}
-	return week
+	return out
 }
 
 // falloutMeter lights today's share of the week's busiest day across the
@@ -387,13 +623,13 @@ func falloutMeter(today int, perDay map[string]int) []bool {
 	return segs
 }
 
-// falloutSectors builds the strip: every sector with damage in the window,
+// falloutSectors builds the strip: every sector with damage in the week,
 // count-descending. Sectors with nothing to report get no chip.
-func falloutSectors(week []feedRow, selectedEco string) []falloutSector {
+func falloutSectors(rows []feedRow, selectedEco string) []falloutSector {
 	counts := make(map[string]int, 16)
-	for i := range week {
-		if week[i].Ecosystem != "" {
-			counts[week[i].Ecosystem]++
+	for i := range rows {
+		if rows[i].Ecosystem != "" {
+			counts[rows[i].Ecosystem]++
 		}
 	}
 	sectors := make([]falloutSector, 0, len(counts))
@@ -405,11 +641,8 @@ func falloutSectors(week []feedRow, selectedEco string) []falloutSector {
 			Active:    eco == selectedEco,
 		})
 	}
-	sort.Slice(sectors, func(i, j int) bool {
-		if sectors[i].Count != sectors[j].Count {
-			return sectors[i].Count > sectors[j].Count
-		}
-		return sectors[i].Ecosystem < sectors[j].Ecosystem
+	slices.SortFunc(sectors, func(a, b falloutSector) int {
+		return cmp.Or(cmp.Compare(b.Count, a.Count), cmp.Compare(a.Ecosystem, b.Ecosystem))
 	})
 	return sectors
 }
@@ -428,7 +661,7 @@ func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSiz
 		}
 		byDay[day] = append(byDay[day], shown[i])
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(order)))
+	slices.SortFunc(order, func(a, b string) int { return cmp.Compare(b, a) })
 
 	days := make([]falloutDay, 0, len(order))
 	for _, day := range order {
@@ -486,13 +719,12 @@ func splitWaves(rows []feedRow, ecoCount, formulaCount map[string]int, poolSize 
 			singles = append(singles, falloutRow{feedRow: members[i]})
 		}
 	}
-	sort.Slice(waves, func(i, j int) bool { return waves[i].WaveSize > waves[j].WaveSize })
-	sort.Slice(singles, func(i, j int) bool {
-		hi, hj := heat(&singles[i].feedRow), heat(&singles[j].feedRow)
-		if hi != hj {
-			return hi > hj
-		}
-		return singles[i].AnalyzedAt.After(singles[j].AnalyzedAt)
+	slices.SortFunc(waves, func(a, b falloutRow) int { return cmp.Compare(b.WaveSize, a.WaveSize) })
+	slices.SortFunc(singles, func(a, b falloutRow) int {
+		return cmp.Or(
+			cmp.Compare(heat(&b.feedRow), heat(&a.feedRow)),
+			b.AnalyzedAt.Compare(a.AnalyzedAt),
+		)
 	})
 	// The per-sector quota trims the heat-sorted tail, so what survives is
 	// each sector's most interesting; rare sectors always fit.
@@ -795,8 +1027,8 @@ func traitSeverityBySymbol(traits []feedTrait) map[string]string {
 // frame either way so rows stay aligned.
 func skeletalSVG(formula string, traits []feedTrait) template.HTML {
 	groups := parseFormulaGroups(formula)
-	sort.SliceStable(groups, func(i, j int) bool {
-		return molGroupPriority(groups[i].Lead) < molGroupPriority(groups[j].Lead)
+	slices.SortStableFunc(groups, func(a, b molGroup) int {
+		return cmp.Compare(molGroupPriority(a.Lead), molGroupPriority(b.Lead))
 	})
 	var ring, chain []string
 	if len(groups) > 0 {
@@ -872,7 +1104,6 @@ func skeletalSVG(formula string, traits []feedTrait) template.HTML {
 		if crit == "hostile" {
 			class = "e-h"
 		}
-		//nolint:gosec // sym is HTML-escaped; class and coordinates are program values
 		fmt.Fprintf(&svg, `<text class="%s" x="%.0f" y="%.0f">%s</text>`,
 			class, p.x, p.y+3, template.HTMLEscapeString(sym))
 	}

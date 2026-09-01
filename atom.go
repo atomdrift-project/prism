@@ -118,7 +118,7 @@ func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	snapshot, _, err := loadFeedSnapshot(r.Context(), feedQueryArgs{criticality: "hostile"}, logger, false)
+	snapshot, _, err := loadFeedSnapshot(r.Context(), &feedQueryArgs{criticality: "hostile"}, logger, false)
 	if err != nil {
 		logger.Warn("atom feed: hostile snapshot unavailable", "error", err)
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
@@ -133,7 +133,7 @@ func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	body := append([]byte(xml.Header), out...)
-	if _, err := w.Write(body); err != nil { //nolint:gosec // encoding/xml escaped every row value
+	if _, err := w.Write(body); err != nil {
 		logger.Debug("atom feed: write failed", "error", err)
 	}
 }

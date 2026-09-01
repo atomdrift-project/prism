@@ -44,6 +44,7 @@ func passMAC(ip string, exp int64) string {
 // the visitor was trying to reach.
 func issuePass(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().Add(passMaxAge).Unix()
+	//nolint:gosec // G124: HttpOnly and SameSite are set; Secure is conditional only so plaintext local dev works.
 	http.SetCookie(w, &http.Cookie{
 		Name:     passCookieName,
 		Value:    strconv.FormatInt(exp, 10) + "." + passMAC(clientIP(r), exp),

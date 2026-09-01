@@ -224,7 +224,7 @@ func fetchSampleBytes(ctx context.Context, sha string) ([]byte, error) {
 	}
 	hopper.Authorize(req)
 	start := time.Now()
-	resp, err := hopperClient.Do(req) //nolint:gosec // hopperFileURL builds from the admin-configured hopper-api host and a validated SHA path
+	resp, err := hopperClient.Do(req)
 	if err != nil {
 		apiBreaker.failure()
 		recordDep(ctx, "hopper-api", "escalate", "error", start)

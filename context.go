@@ -2,9 +2,10 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -245,14 +246,12 @@ func topDescByID(findings map[string]*finding, n int) map[string]string {
 		// the short trait id for their label, so they must be in the set.
 		items = append(items, ranked{id: id, desc: f.Desc, crit: f.Crit, conf: f.Conf})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].crit != items[j].crit {
-			return items[i].crit > items[j].crit
-		}
-		if items[i].conf != items[j].conf {
-			return items[i].conf > items[j].conf
-		}
-		return items[i].id < items[j].id
+	slices.SortFunc(items, func(a, b ranked) int {
+		return cmp.Or(
+			cmp.Compare(b.crit, a.crit),
+			cmp.Compare(b.conf, a.conf),
+			cmp.Compare(a.id, b.id),
+		)
 	})
 	if len(items) > n {
 		items = items[:n]
@@ -304,11 +303,8 @@ func windowNotes(group []contextWindow, findings map[string]*finding) []ctxNoteR
 	for _, id := range order {
 		refs = append(refs, *byID[id])
 	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].Crit != refs[j].Crit {
-			return refs[i].Crit > refs[j].Crit
-		}
-		return refs[i].ID < refs[j].ID
+	slices.SortFunc(refs, func(a, b ctxNoteRef) int {
+		return cmp.Or(cmp.Compare(b.Crit, a.Crit), cmp.Compare(a.ID, b.ID))
 	})
 	return refs
 }

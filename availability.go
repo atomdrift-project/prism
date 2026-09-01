@@ -112,7 +112,7 @@ func (p *backendProbe) refresh(ctx context.Context, client *http.Client) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, http.NoBody)
 		if err == nil {
 			start := time.Now()
-			resp, doErr := client.Do(req) //nolint:gosec // URL is operator configuration, never request input
+			resp, doErr := client.Do(req)
 			if doErr == nil {
 				healthy = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)) //nolint:errcheck // keep-alive drain

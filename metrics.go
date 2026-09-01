@@ -158,12 +158,12 @@ func registerReliabilityGauges(m metric.Meter) {
 	)
 	falloutEntries := igauge(
 		"prism.fallout.entries",
-		"Hostile catches in the fallout log's rolling window (same count as the nav badge).",
+		"Hostile catches in the fallout log's current week (same count as the nav badge). Zero while the week's snapshot is cold.",
 		"{sample}",
 	)
 	falloutTruncated := igauge(
 		"prism.fallout.truncated",
-		"1 when fallout entries sit at the feed snapshot depth cap — the window is deeper than the snapshot can show.",
+		"1 when the current week's snapshot stopped at its page cap — the week holds more catches than the log can show.",
 		"",
 	)
 	if firstErr != nil || len(all) == 0 {
@@ -207,10 +207,11 @@ func registerReliabilityGauges(m metric.Meter) {
 			o.ObserveFloat64(indexAge, -1) // never polled successfully
 		}
 
-		entries := weeklyHostileCount(ctx)
-		o.ObserveInt64(falloutEntries, int64(entries))
+		// UTC: the gauges have no reader whose zone to borrow, and the log's
+		// week is only cut per-reader for display.
+		o.ObserveInt64(falloutEntries, int64(weeklyHostileCount(ctx, time.UTC)))
 		var trunc int64
-		if entries >= feedLimit {
+		if snapshot, _, ok := falloutCurrentWeek(ctx, time.UTC); ok && snapshot.Truncated {
 			trunc = 1
 		}
 		o.ObserveInt64(falloutTruncated, trunc)

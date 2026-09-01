@@ -83,15 +83,25 @@ func handleFalloutJSON(w http.ResponseWriter, r *http.Request) {
 		writeFalloutJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Unlike the HTML page, which forgives an unusable parameter and shows the
+	// week in progress, a triage client is told its window was not the one it
+	// asked for.
+	week, err := parseFalloutWeek(r.URL.Query().Get("week"), time.Now().In(viewerLocation(r)))
+	if err != nil {
+		writeFalloutJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if hopperDB.Load() == nil {
 		writeFalloutJSONError(w, http.StatusServiceUnavailable, "fallout unavailable")
 		return
 	}
 
-	// Keep this query identical to handleFallout. `verified` is applied after
-	// the shared snapshot read, so it never creates a second cache entry.
+	// Keep this query identical to handleFallout — same week, same snapshot.
+	// `verified` is applied after the read, so it never creates a second cache
+	// entry.
+	args := week.snapshotArgs()
 	snapshot, _, err := loadFeedSnapshot(
-		r.Context(), feedQueryArgs{criticality: "hostile"}, logger, isHardRefresh(r),
+		r.Context(), &args, logger, isHardRefresh(r),
 	)
 	if err != nil {
 		logger.Warn("fallout JSON: hostile snapshot unavailable", "error", err)
@@ -99,7 +109,7 @@ func handleFalloutJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows := falloutRowsInWindow(feedRowsFromSnapshot(snapshot), time.Now(), verified)
+	rows := falloutRowsInWindow(feedRowsFromSnapshot(snapshot), week, verified)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

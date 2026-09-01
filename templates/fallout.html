@@ -21,7 +21,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <meta http-equiv="refresh" content="300">
+    {{if .CurrentWeek}}<meta http-equiv="refresh" content="300">{{end}}
     <title>{{if isPublic}}atomdrift lab{{else}}litmus{{end}} - Fallout</title>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
@@ -241,7 +241,37 @@
         }
         .survey-eyebrow .fallout-symbol { width: 16px; height: 16px; }
         .survey-window { font-size: 12px; color: var(--slate); }
+        .week-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .week-step {
+            font-family: "Oxanium", monospace;
+            font-size: 11.5px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            text-decoration: none;
+            color: var(--graphite);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 3px 9px;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .week-step:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        .week-step[aria-disabled="true"] {
+            color: var(--iron);
+            border-color: var(--border);
+            opacity: 0.55;
+        }
         .survey-rule .search-help { margin-left: auto; align-self: center; }
+        .survey-rule .week-latest { margin-left: auto; align-self: center; }
+        .survey-rule .week-latest + .search-help { margin-left: 8px; }
         .search-help {
             font-size: 12px;
             color: var(--slate);
@@ -581,7 +611,7 @@
             </div>
             {{if .HasHopper}}
             <div class="counter" role="img" aria-label="{{.WeeklyCount}} hostile catches {{.WindowLabel}}">
-                <div class="c-eyebrow"><span class="live-dot"></span>Hostile catches · {{.WindowLabel}}</div>
+                <div class="c-eyebrow">{{if .CurrentWeek}}<span class="live-dot"></span>{{end}}Hostile catches · {{.WindowLabel}}</div>
                 <div class="meter-row">
                     <div class="meter-num">{{.WeeklyCount}}</div>
                     <div class="peak-meter" aria-hidden="true">
@@ -597,16 +627,22 @@
                 {{template "trefoil"}}
                 SECTOR SURVEY
             </span>
-            <span class="survey-window">{{.WindowLabel}}</span>
+            <nav class="week-nav" aria-label="Week">
+                {{if .OlderURL}}<a class="week-step" href="{{.OlderURL}}" rel="prev" title="The week before">‹ older</a>
+                {{else}}<span class="week-step" aria-disabled="true" title="The archive reaches no further back">‹ older</span>{{end}}
+                <span class="survey-window">{{.WindowLabel}}</span>
+                {{if .NewerURL}}<a class="week-step" href="{{.NewerURL}}" rel="next" title="The week after">newer ›</a>
+                {{else}}<span class="week-step" aria-disabled="true" title="This is the week in progress">newer ›</span>{{end}}
+            </nav>
+            {{if not .CurrentWeek}}<a class="search-help week-latest" href="{{.CurrentURL}}">↩ this week</a>{{end}}
             <a class="search-help" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
         </div>
 
         {{if .Sectors}}
         <nav class="eco-strip" aria-label="Filter by ecosystem">
-            {{if .Filtered}}<a class="strip-chip" href="/fallout{{if .Verified}}?verified={{.Verified}}{{end}}">all sectors</a>{{end}}
+            {{if .Filtered}}<a class="strip-chip" href="{{.AllSectorsURL}}">all sectors</a>{{end}}
             {{range .Sectors}}
-            <a class="strip-chip{{if .Active}} active{{end}}"
-               href="{{if .Active}}/fallout{{if $.Verified}}?verified={{$.Verified}}{{end}}{{else}}/fallout?ecosystem={{.Ecosystem}}{{if $.Verified}}&amp;verified={{$.Verified}}{{end}}{{end}}">
+            <a class="strip-chip{{if .Active}} active{{end}}" href="{{.URL}}">
                 <span class="eco-badge eco-{{.Color}}">{{.Ecosystem}}</span>
                 <span class="n">{{.Count}}</span>
             </a>
@@ -619,7 +655,7 @@
         <div class="feed-degraded" role="status">The live feed is temporarily unavailable{{if .Days}}; showing the most recent cached results{{end}}.</div>
         {{end}}
         {{if .Days}}
-        <section class="table-wrap" aria-label="This week's hostile catches">
+        <section class="table-wrap" aria-label="Hostile catches {{.WindowLabel}}">
             {{range .Days}}
             <div class="day-head">
                 <span class="d-name">{{.Label}}</span>
@@ -656,8 +692,8 @@
         </section>
         {{else if not .FeedDegraded}}
         <div class="empty">
-            {{if .Filtered}}Nothing hostile from {{.SelectedEco}} this week — a quiet sector is a good sector. <a href="/fallout">Every sector →</a>
-            {{else}}Nothing hostile this week — the quietest kind of week. <a href="/?criticality=hostile">Browse the full index →</a>{{end}}
+            {{if .Filtered}}Nothing hostile from {{.SelectedEco}} {{.WindowLabel}} — a quiet sector is a good sector. <a href="{{.AllSectorsURL}}">Every sector →</a>
+            {{else}}Nothing hostile {{.WindowLabel}} — the quietest kind of week. <a href="/?criticality=hostile">Browse the full index →</a>{{end}}
         </div>
         {{end}}
         {{else}}

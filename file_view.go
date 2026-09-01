@@ -1,7 +1,8 @@
 package main
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -162,7 +163,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		return nil, nil, contentOmitted{}
 	}
 
-	sort.SliceStable(datas, func(a, b int) bool { return datas[a].maxCrit > datas[b].maxCrit })
+	slices.SortStableFunc(datas, func(a, b fileData) int { return cmp.Compare(b.maxCrit, a.maxCrit) })
 
 	// Show the top maxFilesShown files (by criticality); the rest are omitted
 	// with a note tallying the files and the results (windows + composites) they
@@ -266,11 +267,8 @@ func headlineTraits(files []cleaveFile) []topCand {
 	for _, s := range best {
 		all = append(all, s)
 	}
-	sort.SliceStable(all, func(a, b int) bool {
-		if all[a].score != all[b].score {
-			return all[a].score > all[b].score
-		}
-		return all[a].desc < all[b].desc
+	slices.SortStableFunc(all, func(a, b scored) int {
+		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.desc, b.desc))
 	})
 	if len(all) > maxTopTraits {
 		all = all[:maxTopTraits]
@@ -394,9 +392,9 @@ func capWindows(lws []labeledWindow) []labeledWindow {
 	if len(lws) <= maxWindowsPerFile {
 		return lws
 	}
-	sort.SliceStable(lws, func(i, j int) bool { return lws[i].Crit > lws[j].Crit })
+	slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(b.Crit, a.Crit) })
 	lws = lws[:maxWindowsPerFile]
-	sort.SliceStable(lws, func(i, j int) bool { return lws[i].Start < lws[j].Start })
+	slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(a.Start, b.Start) })
 	return lws
 }
 
