@@ -91,7 +91,7 @@
         :focus-visible { outline: 3px solid var(--fu); outline-offset: 3px; border-radius: 4px; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 {{template "chromestyle" .}}
-        .shell { display: grid; grid-template-columns: 220px minmax(0, 820px); gap: 56px; padding: 32px 64px 40px; }
+        .shell { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 48px; padding: 32px 64px 40px; max-width: 1440px; margin: 0 auto; }
         .rail { position: sticky; top: 24px; align-self: start; display: flex; flex-direction: column; gap: 14px; }
         .rail-block { border-top: 1px solid var(--rule); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
         .rail-title { font-family: var(--display); font-size: 13px; font-weight: 700; color: var(--ink); }
@@ -118,7 +118,8 @@
         main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
         .head { display: flex; flex-direction: column; gap: 12px; }
         .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .verdict { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 3px; color: #fff; background: var(--ink-light); cursor: default; text-transform: lowercase; }
+        .verdict { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--display); font-size: 15px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; padding: 4px 12px; border-radius: 5px; color: #fff; background: var(--ink-light); cursor: default; }
+        .verdict sup { font-size: 10px; opacity: 0.9; }
         .verdict.hostile { background: var(--hostile); }
         .verdict.suspicious { background: var(--suspicious); }
         .verdict.benign { background: #16a34a; }
@@ -138,12 +139,10 @@
         .rescan-btn.is-done { color: #16a34a; border-color: #16a34a; }
         .rescan-btn.is-error { color: var(--hostile); border-color: var(--hostile); }
         h1 { margin: 0; font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.7px; line-height: 1.1; color: var(--ink); word-break: break-word; }
-        .summary { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-mid); max-width: 60ch; }
+        .summary { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-mid); max-width: 72ch; }
         .badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
-        .badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px 7px 10px; border-radius: 6px; font-size: 14px; font-weight: 500; color: var(--ink); border: 1px solid var(--ink-light); background: var(--mist); }
-        .badge.hostile { border-color: var(--hostile); background: var(--hostile-bg); }
-        .badge.suspicious { border-color: var(--suspicious); background: var(--suspicious-bg); }
-        .crit-dot { width: 9px; height: 9px; border-radius: 2px; background: var(--ink-light); flex: none; }
+        .badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 9px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink); border: 1px solid var(--rule); background: var(--paper); }
+        .crit-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-light); flex: none; }
         .crit-dot.hostile { background: var(--hostile); }
         .crit-dot.suspicious { background: var(--suspicious); }
         .crit-dot.notable { background: var(--notable); }
@@ -156,7 +155,10 @@
         .cites a { color: var(--fu-deep); font-weight: 600; }
         h2 { margin: 8px 0 0; padding-bottom: 8px; border-bottom: 2px solid var(--fu); font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--ink); }
         .evidence { display: flex; flex-direction: column; gap: 20px; }
-        .region { display: flex; flex-direction: column; gap: 8px; }
+        .region { position: relative; display: flex; flex-direction: column; gap: 8px; padding-left: 18px; }
+        .region::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--rule); transition: background 0.15s; }
+        .region:hover::before { background: var(--fu); }
+        .id-line.formula { display: none; }
         .region-head { display: flex; align-items: baseline; gap: 10px; }
         .region-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--ink); }
         .region-loc { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-light); white-space: nowrap; }
@@ -187,9 +189,29 @@
         .note { margin: 0; font-size: 13px; color: var(--ink-mid); }
         .note a { color: var(--fu-deep); font-weight: 600; }
         @media (max-width: 960px) {
-            .shell { grid-template-columns: 1fr; gap: 24px; padding: 20px 20px 32px; }
+            body { font-size: 15px; }
+            .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
             .rail { position: static; }
-            .actions { margin-left: 0; }
+            /* No drawing and no controls on a phone: the formula reads as text
+               under the URL, and download/rescan are desk work. */
+            .compound, .actions { display: none; }
+            .id-line.formula { display: flex; }
+            h1 { font-size: 22px; }
+            .summary { font-size: 15px; }
+            .badges { flex-direction: column; align-items: stretch; gap: 6px; }
+            .badge { border: 0; padding: 4px 0; font-size: 14px; border-radius: 0; }
+            .ids { gap: 8px; padding: 10px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+            .id-line { flex-direction: column; gap: 2px; }
+            .id-line .k { width: auto; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+            .id-line .v { white-space: normal; overflow-wrap: anywhere; }
+            .region { padding-left: 12px; }
+            .region-head { flex-wrap: wrap; gap: 4px 10px; }
+            .region-head .region-title { flex: 1 1 0; min-width: 0; }
+            .region-loc { margin-left: 0; width: 100%; font-size: 11px; }
+            .code { overflow-x: auto; }
+            .line { grid-template-columns: 36px minmax(0, 1fr); gap: 8px; padding: 2px 8px; font-size: 12px; }
+            .hex .line { grid-template-columns: 60px minmax(0, 1fr); }
+            .hex .ascii { display: none; }
         }
     </style>
 </head>
@@ -205,6 +227,48 @@
         </div>
     </nav>
     <div class="shell">
+        <main id="main">
+            <div class="head">
+                <div class="meta">
+                    <span class="verdict {{.RiskLevel}}" title="{{.VerdictTip}}">{{.RiskLabel}}{{if gt .LevelConfidence 0}} <sup>{{.LevelConfidence}}%</sup>{{end}}</span>
+                    {{if .Ecosystem}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{end}}
+                    {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
+                    <span class="actions">
+                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
+                        {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Rescan</button>{{end}}
+                    </span>
+                </div>
+                <h1>{{.Headline}}</h1>
+                {{with .Summary}}<p class="summary">{{.}}</p>{{end}}
+                {{with .RegistryDesc}}<p class="registry-desc">“{{.}}”</p>{{end}}
+                {{template "findingsbody" .}}
+                <div class="ids">
+                    <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
+                    {{if .SourceURL}}<div class="id-line"><span class="k">URL</span><a class="v" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceURL}}</a></div>{{end}}
+                    {{if .MaleculeSVG}}<div class="id-line formula"><span class="k">Compound</span><a class="v" href="{{.CompoundURL}}">{{.Formula}}</a></div>{{end}}
+                </div>
+                {{if .DetectedBy}}<p class="cites">Also flagged by {{range $i, $c := .DetectedBy}}{{if $i}}, {{end}}{{if $c.URL}}<a href="{{$c.URL}}" target="_blank" rel="noopener noreferrer">{{$c.Source}}</a>{{else}}{{$c.Source}}{{end}}{{with $c.Note}} ({{.}}){{end}}{{end}}{{with .MoreSources}} {{.}}{{end}}.</p>{{end}}
+            </div>
+            <h2>Evidence</h2>
+            <div class="evidence" id="evidence">
+                {{if .DeferredMembers}}<p class="note" id="members-loading" aria-live="polite">Loading the archive's members…</p>{{end}}
+                {{template "contentBody" .}}
+                {{if .Findings}}
+                {{- /* The stand-in for a file whose traits carry no byte spans.
+                       An archive replaces it with real regions once the member
+                       fetch lands, so it also carries an id the script removes. */ -}}
+                <section class="region" id="findings-fallback">
+                    <header class="region-head">
+                        <span class="region-title">Findings</span>
+                    </header>
+                    <div class="finding-list">
+                        {{range .Findings}}<div class="finding-row"><span class="crit-dot {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span><span class="finding-desc">{{.Desc}}</span>{{with .File}}<span class="finding-file" title="{{.}}">{{.}}</span>{{end}}</div>{{end}}
+                    </div>
+                    {{if .FindingsHidden}}<p class="note">{{.FindingsHidden}} more, in the <a href="/file/{{.SHA256}}.json">raw result</a>.</p>{{end}}
+                </section>
+                {{else if and (not .FileViews) (not .DeferredMembers)}}<p class="note">The scanner recorded no findings for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
+            </div>
+        </main>
         <aside class="rail">
             {{if .MaleculeSVG}}
             <div class="compound">
@@ -233,47 +297,6 @@
             </div>
             {{end}}
         </aside>
-        <main id="main">
-            <div class="head">
-                <div class="meta">
-                    <span class="verdict {{.RiskLevel}}" title="{{.VerdictTip}}">{{.RiskLabel}}{{if gt .LevelConfidence 0}} {{.LevelConfidence}}%{{end}}</span>
-                    {{if .Ecosystem}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{end}}
-                    {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
-                    <span class="actions">
-                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
-                        {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Rescan</button>{{end}}
-                    </span>
-                </div>
-                <h1>{{.Headline}}</h1>
-                {{with .Summary}}<p class="summary">{{.}}</p>{{end}}
-                {{with .RegistryDesc}}<p class="registry-desc">“{{.}}”</p>{{end}}
-                {{template "findingsbody" .}}
-                <div class="ids">
-                    <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
-                    {{if .SourceURL}}<div class="id-line"><span class="k">URL</span><a class="v" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceURL}}</a></div>{{end}}
-                </div>
-                {{if .DetectedBy}}<p class="cites">Also flagged by {{range $i, $c := .DetectedBy}}{{if $i}}, {{end}}{{if $c.URL}}<a href="{{$c.URL}}" target="_blank" rel="noopener noreferrer">{{$c.Source}}</a>{{else}}{{$c.Source}}{{end}}{{with $c.Note}} ({{.}}){{end}}{{end}}{{with .MoreSources}} {{.}}{{end}}.</p>{{end}}
-            </div>
-            <h2>Evidence</h2>
-            <div class="evidence" id="evidence">
-                {{if .DeferredMembers}}<p class="note" id="members-loading" aria-live="polite">Loading the archive's members…</p>{{end}}
-                {{template "contentBody" .}}
-                {{if .Findings}}
-                {{- /* The stand-in for a file whose traits carry no byte spans.
-                       An archive replaces it with real regions once the member
-                       fetch lands, so it also carries an id the script removes. */ -}}
-                <section class="region" id="findings-fallback">
-                    <header class="region-head">
-                        <span class="region-title">Findings</span>
-                    </header>
-                    <div class="finding-list">
-                        {{range .Findings}}<div class="finding-row"><span class="crit-dot {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span><span class="finding-desc">{{.Desc}}</span>{{with .File}}<span class="finding-file" title="{{.}}">{{.}}</span>{{end}}</div>{{end}}
-                    </div>
-                    {{if .FindingsHidden}}<p class="note">{{.FindingsHidden}} more, in the <a href="/file/{{.SHA256}}.json">raw result</a>.</p>{{end}}
-                </section>
-                {{else if and (not .FileViews) (not .DeferredMembers)}}<p class="note">The scanner recorded no findings for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
-            </div>
-        </main>
     </div>
     {{template "footer" .}}
     <div id="a11y-live" class="sr-only" aria-live="polite"></div>

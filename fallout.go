@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -270,6 +271,22 @@ type falloutRow struct {
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r falloutRow) IsWave() bool { return r.WaveSize >= waveMinSize }
 
+// TimeAgoShort is the row's age as a phone-width column reads it: "4m", "2h",
+// "3d". Value receiver for the same reason as IsWave.
+//
+//nolint:gocritic // see IsWave — a pointer receiver breaks template rendering
+func (r falloutRow) TimeAgoShort() string {
+	d := time.Since(r.AnalyzedAt)
+	switch {
+	case d < time.Hour:
+		return strconv.Itoa(max(int(d.Minutes()), 1)) + "m"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h"
+	default:
+		return strconv.Itoa(int(d.Hours()/24)) + "d"
+	}
+}
+
 // elideMiddle keeps a long name's head and tail and drops its middle, so what
 // follows it — "and 22 siblings" — is never the thing pushed off the end. A
 // 64-hex filename is unreadable either way, and its first and last bytes are
@@ -294,6 +311,35 @@ func (r falloutRow) DisplayName() string {
 		limit = 34 // leave room for "and N siblings"
 	}
 	return elideMiddle(r.Headline(), limit)
+}
+
+// falloutSpark is one bar of the count card's sparkline: a day's catches as a
+// percentage of the week's busiest day, which is the one drawn in full colour.
+type falloutSpark struct {
+	Height int
+	Y      int // 100 - Height: where the bar starts in a 100-unit viewBox
+	Peak   bool
+}
+
+// sparkline turns the rail's newest-first day bands into oldest-first bars.
+// A single day draws no bar: a chart of one point says nothing.
+func sparkline(days []falloutDay) []falloutSpark {
+	if len(days) < 2 {
+		return nil
+	}
+	peak := 0
+	for i := range days {
+		peak = max(peak, days[i].Count)
+	}
+	if peak == 0 {
+		return nil
+	}
+	out := make([]falloutSpark, 0, len(days))
+	for _, d := range slices.Backward(days) {
+		h := max(d.Count*100/peak, 2) // a quiet day still draws a sliver
+		out = append(out, falloutSpark{Height: h, Y: 100 - h, Peak: d.Count == peak})
+	}
+	return out
 }
 
 // falloutDay is one day band of the log.
@@ -340,12 +386,16 @@ type falloutPageData struct {
 	CurrentURL    string
 	Sectors       []falloutSector
 	Days          []falloutDay
-	MeterSegs     []bool
-	WeeklyCount   int
-	HasHopper     bool
-	CurrentWeek   bool
-	FeedDegraded  bool
-	Filtered      bool
+	// Spark is the week's daily counts as bar heights, oldest first, for the
+	// count card's sparkline. Days runs newest-first for the rail, so this is
+	// its own slice rather than a template trick.
+	Spark        []falloutSpark
+	MeterSegs    []bool
+	WeeklyCount  int
+	HasHopper    bool
+	CurrentWeek  bool
+	FeedDegraded bool
+	Filtered     bool
 }
 
 const falloutMeterSegs = 6
@@ -416,6 +466,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 				feedRowsFromSnapshot(snapshot), snapshot.Truncated, now, week, eco, verified,
 			)
 			data.Days = view.Days
+			data.Spark = sparkline(view.Days)
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
 			data.MeterSegs = view.MeterSegs
