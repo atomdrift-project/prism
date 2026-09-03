@@ -18,17 +18,11 @@ font-style: normal; font-weight: 700; font-display: swap; src:
 url(/static/fonts/oxanium-latin.woff2) format('woff2'); unicode-range:
 U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
 U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}atom<span
-    class="logo-accent"
-    >drift</span
->
-lab<span class="beta-tag">BETA</span>{{else}}lit<span class="logo-accent"
-    >mus</span
-><span class="beta-tag">BETA</span>{{end}}{{end}} {{define
+U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}isotope<sup class="logo-sup">13</sup><span class="logo-sub">labs</span>{{else}}lit<span class="logo-accent">mus</span>{{end}}{{end}} {{define
 "tagline"}}Open-source atomic malware analysis{{end}} {{define "favicon"}}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/static/favicon.svg" />{{end}} {{define "banner"}}{{end}} {{define "footer"}}
 <footer>
-    <span>&copy; 2026 <a href="https://atomdrift.org/">The Atomdrift Project</a> - Powered by <a href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank">prism {{buildCommitShort}}</a></span>
+    <span>&copy; 2026 <a href="https://isotope13.ai/">isotope¹³</a> · built on <a href="https://atomdrift.org/">atomdrift</a> · powered by <a href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank">prism {{buildCommitShort}}</a></span>
 </footer>
 {{end}}

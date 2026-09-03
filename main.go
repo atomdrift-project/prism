@@ -841,6 +841,14 @@ type resultData struct {
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
 	Provenance []ProvenanceGroup
+	// Badges are the findings the header names outright; Summary is the line
+	// under the title; ShortProv is the rail's provenance; BackboneSVG is the
+	// compound drawing; CompoundURL finds other samples with this formula.
+	Badges      []topTrait
+	Summary     string
+	ShortProv   []ProvenanceRow
+	BackboneSVG template.HTML
+	CompoundURL string
 	// Parents lists archives that contain this file (extracted or unpacked
 	// members). Populated only on standalone child pages (non-archive views)
 	// so the user can navigate up to the archive context the file came from.
@@ -1820,7 +1828,7 @@ func main() {
 	var port string
 	cli := flag.NewFlagSet("prism", flag.ExitOnError)
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
-	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: atomdrift lab branding and Secure cookies")
+	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: isotope13 labs branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
 	cli.BoolVar(&noEscalateScan, "no-escalate-scan", noEscalateScan, "when someone waits on an unanalyzed sample, only promote it in hopper's queue instead of also analyzing it on the litmus server (also reads PRISM_NO_ESCALATE_SCAN env, set to 1/true to disable the local scan)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
@@ -1945,9 +1953,11 @@ func main() {
 			}
 			return *p
 		},
-		"ecoColor":  ecosystemColor,
-		"chromaCSS": func() template.CSS { return chromaStylesheet },
-		"commaInt":  commaInt,
+		"ecoColor":     ecosystemColor,
+		"chromaCSS":    func() template.CSS { return chromaStylesheet },
+		"commaInt":     commaInt,
+		"formulaTiers": formulaTiers,
+		"tierName":     tierName,
 	}
 	var tmplErr error
 	uploadTemplate, tmplErr = template.New("upload.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/upload.html")
@@ -2173,7 +2183,8 @@ func newMux() *http.ServeMux {
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
-	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("GET /{$}", handleFallout)
+	mux.HandleFunc("GET /index", handleIndex)
 	mux.HandleFunc("GET /fallout", handleFallout)
 	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
 	mux.HandleFunc("GET /api/fallout", handleFalloutJSON)
@@ -3764,7 +3775,7 @@ func traitChipID(id string) string {
 	if len(parts) < 2 {
 		return id
 	}
-	return parts[len(parts)-2] + "." + parts[len(parts)-1]
+	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
 }
 
 func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
@@ -4672,7 +4683,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
-		Title:           "Search",
+		Title:           "Index",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
@@ -4680,7 +4691,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
-		data.Title = ecosystem + " · Search"
+		data.Title = ecosystem + " · Index"
 	}
 	// A package path (/npm/lodash) titles its tab by the coordinate; the
 	// ?purl= query form stays a plain search, matching the box it came from.
@@ -7754,6 +7765,27 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 	data.Formula = template.HTML(html.EscapeString(formula)) //nolint:gosec // html.EscapeString sanitizes the input before conversion
 	data.FormulaQuery = desubscriptFormula(formula)
+	data.CompoundURL = "/index?m=" + url.QueryEscape(data.FormulaQuery)
+	data.Badges = resultBadges(data.TopTraits)
+	data.ShortProv = shortProvenance(data.Provenance)
+	data.BackboneSVG = backboneSVG(findings)
+	data.Summary = data.LLMInterpretation
+	if data.Summary == "" {
+		counted := report.Files[0].Findings
+		for i := range report.Files {
+			if report.Files[i].Depth == 0 {
+				counted = report.Files[i].Findings
+				break
+			}
+		}
+		members := 0
+		for i := range report.Files {
+			if report.Files[i].Depth > 0 {
+				members++
+			}
+		}
+		data.Summary = summaryLine(countFindings(counted), members, data.RiskLabel, data.LevelConfidence)
+	}
 
 	// Generate molecule/galaxy data for 3D visualization
 	// For archives with multiple files, build a galaxy

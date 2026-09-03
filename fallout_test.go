@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +44,11 @@ func templateFuncsForTest() template.FuncMap {
 			}
 			return *p
 		},
-		"ecoColor":  func(string) string { return "slate" },
-		"chromaCSS": func() template.CSS { return "" },
-		"commaInt":  commaInt,
+		"ecoColor":     func(string) string { return "slate" },
+		"chromaCSS":    func() template.CSS { return "" },
+		"commaInt":     commaInt,
+		"formulaTiers": formulaTiers,
+		"tierName":     tierName,
 	}
 }
 
@@ -434,48 +437,6 @@ func TestParseFormulaGroups(t *testing.T) {
 	}
 }
 
-func TestSkeletalSVGRingPriority(t *testing.T) {
-	// A real-shaped formula leads with provenance (K) and metadata groups;
-	// the ring must still come from the objectives group, where the hostile
-	// structure lives.
-	traits := []feedTrait{
-		{ID: "exec", Full: "objectives/execution/hta", Crit: "hostile"},
-	}
-	svg := string(skeletalSVG("K3(Am3Li15)O2(XeEr)Md12(Bi12Pa16)", traits))
-	if !strings.Contains(svg, ">Xe</text>") {
-		t.Errorf("objectives members must draw (and Xe label via the execution trait), got %q", svg)
-	}
-	if strings.Contains(svg, ">Li</text>") || strings.Contains(svg, ">Pa</text>") {
-		t.Errorf("metadata/provenance members must not outrank objectives, got %q", svg)
-	}
-}
-
-func TestSkeletalSVG(t *testing.T) {
-	traits := []feedTrait{
-		{ID: "cred.wallet-keys", Full: "objectives/credential-access/wallet-keys", Crit: "hostile"},
-	}
-	svg := string(skeletalSVG("O3(CCa2)", traits))
-	if !strings.Contains(svg, "<svg") || !strings.Contains(svg, "</svg>") {
-		t.Fatalf("not an svg: %q", svg)
-	}
-	// The credential-access trait colors the Ca atoms hostile.
-	if !strings.Contains(svg, `class="e-h"`) || !strings.Contains(svg, ">Ca</text>") {
-		t.Errorf("expected hostile Ca labels, got %q", svg)
-	}
-	// Untouched symbols stay bare vertices — no C label without a c2 trait.
-	if strings.Contains(svg, ">C</text>") {
-		t.Errorf("C must stay an unlabeled vertex, got %q", svg)
-	}
-	// Determinism: the same inputs draw the same bytes.
-	if again := string(skeletalSVG("O3(CCa2)", traits)); again != svg {
-		t.Error("thumbnail must be deterministic")
-	}
-	// A hostile symbol embedded in a formula never escapes into markup.
-	if hostile := string(skeletalSVG(`O1(<b>)`, nil)); strings.Contains(hostile, "<b>") {
-		t.Errorf("unescaped markup in %q", hostile)
-	}
-}
-
 func TestFalloutTemplateRenders(t *testing.T) {
 	tmpl, err := template.New("fallout.html").Funcs(templateFuncsForTest()).
 		ParseFS(templatesFS, "templates/base.html", "templates/fallout.html")
@@ -489,7 +450,6 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		WaveSize:  23,
 		Siblings:  22,
 		HeatClass: "heat-2",
-		MolSVG:    skeletalSVG(wave.Formula, nil),
 		Ribbon:    "biggest blast radius",
 	}}
 	data := falloutPageData{
@@ -505,25 +465,33 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		Sectors: []falloutSector{
 			{Ecosystem: "npm", Color: "red", Count: 24, URL: "/fallout?ecosystem=npm"},
 		},
-		Days: []falloutDay{{Label: "TODAY", Sub: "Mon Aug 4 · 24 catches · 1 wave · 0 singles", Rows: rows}},
+		CiteURL: "/fallout?week=2026-08-03",
+		Days:    []falloutDay{{Label: "TODAY", Sub: "Mon Aug 4 · 24 catches · 1 wave · 0 singles", ID: "day-2026-08-04", Date: "Tue 4 Aug", Count: 24, Rows: rows}},
 	}
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, data); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	html := sb.String()
+	if out := os.Getenv("PRISM_RENDER_OUT"); out != "" {
+		if err := os.WriteFile(out, []byte(html), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, want := range []string{
-		"🌊",
-		"and 22 siblings",
+		"and <b>22</b> siblings",
 		"/file/" + testSHAHero,
-		"SECTOR SURVEY",
-		"biggest blast radius",
 		"/fallout?ecosystem=npm",
+		// The formula as tiles: the O tier, a Ca tile carrying its count.
+		`<span class="tier-sym tier-O" title="objectives">O</span>`,
+		`title="credential-access">Ca<sub>2</sub></span>`,
+		// The rail: the day anchor and the citable week.
+		`href="#day-2026-08-04"`,
+		`href="/fallout?week=2026-08-03"`,
 		// The week nav: a link back through the archive, and no forward link
 		// on the week in progress.
 		`href="/fallout?week=2026-07-27" rel="prev"`,
 		`aria-disabled="true" title="This is the week in progress"`,
-		"heat-2",
 		// The time-zone probe: nonced so CSP admits it, and naming the cookie
 		// viewerLocation reads back.
 		`<script nonce="test-script-nonce">`,
@@ -800,5 +768,26 @@ func TestHandleFalloutWeekParam(t *testing.T) {
 		if page := get("/fallout" + bad); !strings.Contains(page, "this week") {
 			t.Errorf("GET /fallout%s did not fall back to the week in progress", bad)
 		}
+	}
+}
+
+// TestFormulaTiers pins the tile rendering of a formula: tiers in formula
+// order, atoms folded back to a count, and names resolved for the tiles.
+func TestFormulaTiers(t *testing.T) {
+	tiers := formulaTiers("O₄(AlEu₂CaDy)H₅(CmCrDb₅Os₄Po)Md(Pa)")
+	if len(tiers) != 3 || tiers[0].Tier != "O" || tiers[1].Tier != "H" || tiers[2].Tier != "Md" {
+		t.Fatalf("tiers = %+v, want O, H, Md", tiers)
+	}
+	if got := tiers[0].Atoms; len(got) != 4 || got[1].Symbol != "Eu" || got[1].Count != 2 || got[1].Name != "exfiltration" {
+		t.Errorf("objective atoms = %+v, want Al, Eu₂ (exfiltration), Ca, Dy", got)
+	}
+	if got := tiers[1].Atoms[2]; got.Symbol != "Db" || got.Count != 5 {
+		t.Errorf("behaviour Db = %+v, want count 5", got)
+	}
+	if got := formulaTiers("O1(C)H2"); len(got) != 2 || got[1].Tier != "" || got[1].Atoms[0].Count != 2 {
+		t.Errorf("standalone atoms = %+v, want a tierless row with H₂", got)
+	}
+	if got := formulaTiers(""); got != nil {
+		t.Errorf("empty formula = %+v, want nil", got)
 	}
 }

@@ -68,6 +68,11 @@ type fileView struct {
 // Blocks always holds exactly one block (a slice so the shared ctxblocks
 // template renders it).
 type fileWindow struct {
+	// Title names the region by its strongest finding; Crit is that
+	// finding's severity class; Range is the lines the region covers.
+	Title  string
+	Crit   string
+	Range  string
 	Blocks []contextBlock
 }
 
@@ -196,7 +201,15 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 			Crit:     critIntToString(fd.maxCrit),
 		}
 		for _, lw := range fd.lws {
-			view.Windows = append(view.Windows, fileWindow{Blocks: []contextBlock{lw.Block}})
+			w := fileWindow{Blocks: []contextBlock{foldContext(lw.Block)}, Range: windowRange(lw.Block)}
+			if len(lw.Notes) > 0 {
+				w.Title = lw.Notes[0].Desc
+				if w.Title == "" {
+					w.Title = traitChipID(lw.Notes[0].ID)
+				}
+				w.Crit = critIntToString(lw.Notes[0].Crit)
+			}
+			view.Windows = append(view.Windows, w)
 		}
 		views = append(views, view)
 	}

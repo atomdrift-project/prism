@@ -25,8 +25,10 @@ func resultTemplateForTest(t *testing.T) *template.Template {
 			}
 			return *p
 		},
-		"ecoColor":  func(string) string { return "slate" },
-		"chromaCSS": func() template.CSS { return "" },
+		"ecoColor":     func(string) string { return "slate" },
+		"chromaCSS":    func() template.CSS { return "" },
+		"formulaTiers": formulaTiers,
+		"tierName":     tierName,
 	}
 	tmpl, err := template.New("result.html").Funcs(funcs).ParseFS(templatesFS,
 		"templates/base.html", "templates/result.html")
@@ -37,93 +39,62 @@ func resultTemplateForTest(t *testing.T) *template.Template {
 }
 
 // TestResultTemplateParses ensures the result template parses and renders the
-// expected structure for the main page states.
+// expected structure for the main page states: the brief's header, the
+// findings badges, the evidence regions and the rail.
 func TestResultTemplateParses(t *testing.T) {
 	tmpl := resultTemplateForTest(t)
-
 	cases := []struct {
 		name     string
 		want     []string
 		dontWant []string
 		data     resultData
 	}{
-		// No FileViews: the Content tab is omitted entirely and Traits is the
-		// default, so the two tabs can't render identical evidence.
+		// A benign single file: no badges, the rail's provenance, no evidence.
 		{
 			name: "single_file", data: singleFileData(),
-			dontWant: []string{"verdict-level", "tabbtn-content", `id="tab-content"`}, // benign: badge hidden; no Content tab
+			dontWant: []string{`class="badge `},
 			want: []string{
-				"tab-provenance", "Provenance", "lodash", "registry.npmjs.org", `id="tabbtn-traits" data-tab="traits" aria-selected="true"`,
-				`href="/npm/lodash"`, "All analyzed versions of this package",
+				"Provenance", "registry.npmjs.org", "No line-level context",
+				`class="verdict "`, `<h1>x.exe</h1>`,
 			},
 		},
-		// Archive without per-line context: same — Traits-only, no Content tab.
-		// Confidence badge plus a full trait match row (filename — location — evidence).
+		// A hostile archive without per-line context: the verdict carries its
+		// confidence, the summary line renders, the download link is gated on size.
 		{
 			name: "archive_with_children", data: archiveData(),
-			dontWant: []string{"tabbtn-content"},
-			want:     []string{"87%", "postinstall.js", "0x40", "finding-match-evidence chroma"},
+			want: []string{`class="verdict hostile"`, "87%", "No line-level context"},
 		},
-		// File tab: Content tab present and default, per-file card, lit context
-		// span, and a linkable composite trail.
+		// Per-line context: a region titled by its strongest finding, the matched
+		// line lit whole with its descriptions in the title, and the badge.
 		{name: "file_view", data: fileViewData(), want: []string{
-			`id="tabbtn-content" data-tab="content" aria-selected="true"`,
-			"tab-content", "file-card", "ctx-hit hostile", "composite-trail",
-			`href="#file-cafe"`, "loader.js",
-			"win-section", "ctx-anno", `anno hostile`, "spawns a child process",
-			`top-trait hostile`, "beacons to a remote host",
+			`class="region file-card"`, "postinstall.js", "lines 12–12", "line hit hit-hostile",
+			`title="spawns a child process"`, `class="badge hostile"`, "beacons to a remote host",
+		}, dontWant: []string{"lines 12–12 ·"}},
+		// A compacted archive before its members load: the loading note and the
+		// fetch that fills it in.
+		{name: "deferred_archive", data: deferredArchiveData(), want: []string{
+			`id="members-loading"`, "/members",
 		}},
-		// Deferred archive: the compacted-envelope page renders the Content tab
-		// as a loading placeholder plus the client hook; the member file cards
-		// are injected later from /file/{sha}/members.
-		{
-			name: "deferred_archive", data: deferredArchiveData(),
-			want: []string{`id="tabbtn-content"`, "data-defer-members=", "Loading file contents", "Loading traits"},
-		},
-		// Backlink panels: a contained member renders under "Found in", a
-		// fetched payload under "Referenced by" with its edge-type chip —
-		// prism must never claim containment for content the parent merely
-		// references (it was retrieved from a URL the parent declares).
-		{
-			name: "parents_vs_referrers", data: parentsAndReferrersData(),
-			want: []string{
-				"Found in 1 archive", "inner.zip",
-				"Referenced by 1 sample", "dropper.elf",
-				`class="parents-rel"`, ">fetched</span>",
-				`#file=` + strings.Repeat("a", 64),
-			},
-		},
-		// "Also detected by" chips: open databases and blogs are named (a
-		// linked source renders an anchor, one without a URL a plain chip);
-		// vendor sources show only as the anonymous count chip.
-		{
-			name: "detected_by", data: detectedByData(),
-			want: []string{
-				"Also detected by", "feed-chip",
-				// html/template renders the count chip's "+" as "&#43;", so
-				// match past it.
-				`href="https://osv.dev/x"`, "osv", "bleepingcomputer", "2 more",
-			},
-			dontWant: []string{"socket", "aikido"},
-		},
+		// A file found inside an archive lists the archive in the rail.
+		{name: "parents", data: parentsAndReferrersData(), want: []string{"Found inside", "inner.zip"}, dontWant: []string{"dropper.elf"}},
+		// External citations read as one sentence.
+		{name: "detected_by", data: detectedByData(), want: []string{"Also flagged by", "bleepingcomputer", `href="https://osv.dev/x"`, "2 more."}},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			if err := tmpl.Execute(&buf, c.data); err != nil {
+			if err := tmpl.Execute(&buf, tc.data); err != nil {
 				t.Fatalf("execute: %v", err)
 			}
-			if buf.Len() < 1000 {
-				t.Errorf("rendered output suspiciously short: %d bytes", buf.Len())
-			}
-			for _, w := range c.want {
-				if !strings.Contains(buf.String(), w) {
-					t.Errorf("rendered output missing %q", w)
+			out := buf.String()
+			for _, w := range tc.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("missing %q", w)
 				}
 			}
-			for _, dw := range c.dontWant {
-				if strings.Contains(buf.String(), dw) {
-					t.Errorf("rendered output unexpectedly contains %q", dw)
+			for _, d := range tc.dontWant {
+				if strings.Contains(out, d) {
+					t.Errorf("unexpected %q", d)
 				}
 			}
 		})
@@ -199,6 +170,9 @@ func TestResultMemberPartials(t *testing.T) {
 	if !strings.Contains(content.String(), "file-card") {
 		t.Errorf("contentBody missing file-card; got %q", content.String())
 	}
+	if !strings.Contains(content.String(), "spawns a child process") {
+		t.Errorf("contentBody missing the row's finding description; got %q", content.String())
+	}
 
 	var traits bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&traits, "findingsbody", archiveData()); err != nil {
@@ -219,10 +193,12 @@ func fileViewData() resultData {
 		Desc: "beacons to a remote host", Crit: "hostile",
 		Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "3"}},
 	}}
+	d.Badges = resultBadges(d.TopTraits)
 	d.FileViews = []fileView{{
 		Path: "package/postinstall.js", Filename: "postinstall.js", FileType: "JS",
 		SHA256: "deadbeef", Anchor: "file-deadbeef", Crit: "hostile",
 		Windows: []fileWindow{{
+			Title: "beacons to a remote host", Crit: "hostile", Range: "lines 12–12",
 			Blocks: []contextBlock{{Rows: []contextRow{{
 				Loc:   "12",
 				Crit:  "hostile",
@@ -250,6 +226,7 @@ func detectedByData() resultData {
 func singleFileData() resultData {
 	return resultData{
 		Filename:        "x.exe",
+		Headline:        "x.exe",
 		SHA256:          strings.Repeat("a", 64),
 		SHA256Short:     strings.Repeat("a", 12) + "...",
 		Verdict:         "BENIGN",
@@ -269,6 +246,9 @@ func singleFileData() resultData {
 		PURL:            "pkg:npm/lodash@4.17.21",
 		PURLIndexURL:    "/npm/lodash",
 		Level:           new(-1), // benign sentinel: badge must be hidden, not crash
+		ShortProv: []ProvenanceRow{
+			{Label: "Source", Value: "registry.npmjs.org", Href: "https://registry.npmjs.org/lodash", Mono: true, External: true},
+		},
 		Provenance: []ProvenanceGroup{
 			{Title: "Identity", Rows: []ProvenanceRow{
 				{Label: "SHA-256", Value: strings.Repeat("a", 64), Mono: true},
@@ -288,9 +268,12 @@ func archiveData() resultData {
 	}
 	return resultData{
 		Filename:        "archive.tgz",
+		Headline:        "archive.tgz",
 		SHA256:          mkSHA('a'),
 		SHA256Short:     strings.Repeat("a", 12) + "...",
 		Verdict:         "HOSTILE",
+		RiskLevel:       "hostile",
+		RiskLabel:       "Hostile",
 		Formula:         template.HTML("Os"),
 		FileType:        "TAR.GZ",
 		Size:            "1.6 KB",

@@ -44,7 +44,7 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 	initDependencyMetrics()
 
 	rec := httptest.NewRecorder()
-	obs.MetricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_/metrik", nil))
+	obs.MetricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_/metrik", http.NoBody))
 	body := rec.Body.String()
 	for _, want := range []string{
 		`prism_backend_up{dependency="hopper-api"`,

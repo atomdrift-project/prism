@@ -97,8 +97,8 @@ func TestParseTopTraits(t *testing.T) {
 	}
 	got := parseTopTraits(`[{"id":"objectives/exfil/dns-tunnel","crit":5},{"id":"objectives/exfil/dns-tunnel::variant-b","crit":4},{"id":"micro-behaviors/net/beacon","crit":4}]`)
 	want := []feedTrait{
-		{ID: "exfil.dns-tunnel", Full: "objectives/exfil/dns-tunnel", Crit: "hostile"},
-		{ID: "net.beacon", Full: "micro-behaviors/net/beacon", Crit: "suspicious"},
+		{ID: "exfil/dns-tunnel", Full: "objectives/exfil/dns-tunnel", Crit: "hostile"},
+		{ID: "net/beacon", Full: "micro-behaviors/net/beacon", Crit: "suspicious"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("chips = %v, want %v", got, want)
@@ -112,11 +112,11 @@ func TestParseTopTraits(t *testing.T) {
 
 func TestTraitChipID(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"objectives/exfil/dns-tunnel", "exfil.dns-tunnel"},
-		{"micro-behaviors/net/beacon/hardcoded-c2", "beacon.hardcoded-c2"},
-		{"exfil/dns", "exfil.dns"},
+		{"objectives/exfil/dns-tunnel", "exfil/dns-tunnel"},
+		{"micro-behaviors/net/beacon/hardcoded-c2", "beacon/hardcoded-c2"},
+		{"exfil/dns", "exfil/dns"},
 		{"standalone", "standalone"},
-		{"objectives/cred/brute-force/iot-creds::mirai-credential-busybox-stager", "brute-force.iot-creds"},
+		{"objectives/cred/brute-force/iot-creds::mirai-credential-busybox-stager", "brute-force/iot-creds"},
 		{"standalone::named", "standalone"},
 	}
 	for _, tc := range cases {
@@ -147,8 +147,7 @@ func TestResultTemplateIdentity(t *testing.T) {
 		`property="og:description" content="posts every visited URL to a hardcoded endpoint"`,
 		`>Volume Max 5.2.1</h1>`,
 		"“Boost your volume up to 600%.”",
-		">Installs<",
-		">412,033<",
+		">412,033 installs<",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("result page missing %q", want)

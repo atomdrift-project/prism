@@ -5,22 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {{template "favicon"}}
     <meta name="build" content="{{.BuildCommit}}" />
-    <title>Analyzing {{.Filename}} — {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <title>Analyzing {{.Filename}} — {{if isPublic}}isotope13 labs{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
         :root {
-            --carbon: #0a0a0a;
-            --graphite: #404040;
-            --iron: #52525b;
-            --slate: #6b7280;
-            --mist: #f5f5f5;
+            --carbon: #0D0008;
+            --graphite: #4A2040;
+            --iron: #4A2040;
+            --slate: #8A6080;
+            --mist: #fdf5fc;
             --white: #ffffff;
-            --cream: #fafaf9;
-            --border: #e8e8e8;
-            --toxic: #d0ff00;
-            --toxic-muted: #9abe25;
-            --toxic-dark: #4a6b0f;
-            --toxic-dim: rgba(208, 255, 0, 0.14);
+            --cream: #ffffff;
+            --border: #efe3ec;
+            --toxic: #FF00CC;
+            --toxic-muted: #CC0077;
+            --toxic-dark: #CC0077;
+            --toxic-dim: #FFEDFB;
             --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,6 +54,8 @@
             margin-bottom: 24px;
         }
         .logo-accent { color: var(--toxic-muted); }
+        .logo-sup { font-size: 11px; color: var(--toxic); margin-left: 1px; }
+        .logo-sub { color: var(--slate); margin-left: 6px; }
         .status {
             display: inline-flex;
             align-items: center;

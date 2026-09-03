@@ -1,0 +1,842 @@
+{
+  "ml": {
+    "v": "7",
+    "prob": 0.998475,
+    "lvl": 0,
+    "conf": 100,
+    "mods": [
+      { "rte": "az", "prob": 0.99894047, "raw": 0.99894047, "cls": 2 },
+      { "rte": "az/npm", "prob": 0.998475, "raw": 0.998475, "cls": 2 }
+    ],
+    "version": "v18.18",
+    "eng": "2.8.0",
+    "analyzed_at": "2026-09-02T23:57:59Z",
+    "files": [
+      { "id": 0, "type": "npm", "prob": 0.9984750151634216, "lvl": 0, "conf": 100 },
+      { "id": 1, "type": "javascript", "prob": 0.9900000095367432, "lvl": 25, "conf": 92 },
+      { "id": 2, "type": "package.json", "prob": 0.000012596447959367651, "lvl": -1, "conf": 0 }
+    ]
+  },
+  "raw": {
+    "v": "8",
+    "files": [
+      {
+        "id": 0,
+        "path": "/Users/t/Downloads/paysafe-kyc-1.0.2.tgz",
+        "type": "npm",
+        "sha": "df02dfed9a7504c2024c915a1dc59e6038664e806504b34d151b769c563c1546",
+        "size": 1968,
+        "risk": 286,
+        "mol": "O₄(AlEu₂CaDy)H₅(CmCrDb₅Os₄Po)Md(Pa)",
+        "ident": {
+          "name": { "value": "paysafe-kyc", "source": "file.basename", "verified": false },
+          "version": { "value": "1.0.2", "source": "file.basename", "verified": false },
+          "trust": "unsigned"
+        },
+        "traits": [
+          {
+            "id": "micro-behaviors/crypto/symmetric/xor/loop::js-byte-array-xor-modulo-key-loop",
+            "crit": 3,
+            "desc": "JavaScript XOR loop uses repeating key",
+            "conf": 0.96,
+            "mbc": "B0032",
+            "atk": "T1027",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/serialize/object-schema::json-stringify-env-field",
+            "crit": 1,
+            "desc": "JSON serialization includes an env field",
+            "conf": 0.88,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/encode/char-code::fromcharcode-call",
+            "crit": 3,
+            "desc": "Builds characters with String.fromCharCode",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-check-obfuscated",
+            "crit": 4,
+            "desc": "Low-CPU check in XOR-obfuscated JavaScript",
+            "conf": 0.9,
+            "mbc": "B0007",
+            "atk": "T1497",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::multiple-node-base64-decodes",
+            "crit": 3,
+            "desc": "Multiple Node.js Base64 decodes",
+            "conf": 0.8,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/module/load::cjs-require-in-try-fallback",
+            "crit": 3,
+            "desc": "CommonJS require inside try fallback",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/module/dynamic-load::node-dynamic-require-call",
+            "crit": 3,
+            "desc": "Requires a module named by a call",
+            "conf": 0.82,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/process/user/query::node-os-alias-userinfo-call",
+            "crit": 3,
+            "desc": "Node os-alias user identity query",
+            "conf": 0.8,
+            "atk": "T1033",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::base64-decode-call-text",
+            "crit": 3,
+            "desc": "JavaScript invokes a Base64 decoder",
+            "conf": 0.86,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "supply-chain/missing-author",
+            "crit": 3,
+            "desc": "Package has empty or missing author field",
+            "conf": 0.5
+          },
+          {
+            "id": "metadata/package/manifest/repository::repo-url-git-host",
+            "crit": 3,
+            "desc": "Repository identifies major Git host",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/communications/http/request/configuration::node-http-request-configured",
+            "crit": 3,
+            "desc": "Node HTTP request has hostname and port",
+            "conf": 0.8,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/env/access::js-filtered-env-copy",
+            "crit": 3,
+            "desc": "Filters and copies process.env values",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "metadata/package/manifest/repository::has-repository-url",
+            "crit": 2,
+            "desc": "package.json declares a repository URL",
+            "conf": 0.85
+          },
+          {
+            "id": "micro-behaviors/data/buffer::javascript-write-then-end-stream",
+            "crit": 3,
+            "desc": "JavaScript writes then ends a stream",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/exfiltration/sensitive-data::js-sensitive-env-source",
+            "crit": 1,
+            "desc": "Sensitive environment secret access (JS)",
+            "conf": 0.9,
+            "mbc": "B0030",
+            "atk": "T1041",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-cpu-count-sandbox-check",
+            "crit": 3,
+            "desc": "os.cpus() low-count sandbox check",
+            "conf": 0.75,
+            "mbc": "B0007",
+            "atk": "T1497",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-gated-env-http-exfil",
+            "crit": 5,
+            "desc": "Sandbox check gates environment exfiltration",
+            "conf": 0.99,
+            "mbc": "B0007,E1041",
+            "atk": "T1497.001,T1552.001,T1041",
+            "from": [{ "file": 1, "line": 33, "off": 1290 }]
+          },
+          {
+            "id": "micro-behaviors/data/serialize/json::json-stringify-call",
+            "crit": 2,
+            "desc": "Calls JSON.stringify()",
+            "conf": 0.5,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::buffer-from-base64",
+            "crit": 3,
+            "desc": "Base64 decoding via Buffer.from (JS)",
+            "conf": 0.8,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "metadata/package/manifest/repository::has-repository-field",
+            "crit": 2,
+            "desc": "package.json declares repository metadata",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/data/decode/custom::fromcharcode-arrow-map",
+            "crit": 3,
+            "desc": "Arrow-maps character codes to a string",
+            "conf": 0.85,
+            "atk": "T1140",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/exfiltration/stealer/host-profile/http::javascript-xor-host-profile-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates host and user",
+            "conf": 0.99,
+            "atk": "T1041",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::node-host-identified-env-harvest",
+            "crit": 4,
+            "desc": "Copies filtered environment with host identity",
+            "conf": 0.94,
+            "atk": "T1552.001",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/module/dynamic-load::node-variable-require-call",
+            "crit": 3,
+            "desc": "Requires a module named by a variable",
+            "conf": 0.88,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/exfiltration/stealer/credential/env::javascript-xor-env-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates filtered environment",
+            "conf": 0.99,
+            "mbc": "E1041",
+            "atk": "T1552.001,T1041",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::env-filter-method",
+            "crit": 1,
+            "desc": "process.env adjacent to filter or match",
+            "conf": 0.82,
+            "atk": "T1552.001",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/discovery/system/fingerprint/user::node-host-user-query-pair",
+            "crit": 3,
+            "desc": "Node queries hostname and username",
+            "conf": 0.9,
+            "atk": "T1033",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/sysinfo/hostname::node-os-alias-hostname-call",
+            "crit": 3,
+            "desc": "Node os-alias hostname query",
+            "conf": 0.8,
+            "atk": "T1082",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/crypto/symmetric/xor/loop::xor-modulo-key-loop",
+            "crit": 3,
+            "desc": "XOR loop uses repeating-key modulo indexing",
+            "conf": 0.8,
+            "mbc": "B0032",
+            "atk": "T1027",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/encode/charcode::charcodeat-arithmetic",
+            "crit": 3,
+            "desc": "Arithmetic applied to first character code",
+            "conf": 0.75,
+            "from": [{ "file": 1 }]
+          }
+        ],
+        "ctx": [
+          {
+            "ln": 0,
+            "b": "abZy8000000@}T&yJFh<8QvJ&<uGQc(%HvNhKuV}J>pHdzS%Z#Q?MrgdnbQKw5PlAL58m]u:.64pDA#ln0TQK^b1q!*C#>VEe%8RjBeVbu=-=!^(2cwms+Su+01ORfapO7(A}L.mO^dV3Fqs0!b"
+          }
+        ],
+        "facts": {
+          "metrics": {
+            "binary": { "peak_region_bytes": 1968, "peak_region_entropy": 7.78 },
+            "file": { "entropy": 7.89, "size": 1968 },
+            "parse": { "error_count": 1 }
+          }
+        }
+      },
+      {
+        "id": 1,
+        "path": "/Users/t/Downloads/paysafe-kyc-1.0.2.tgz!!package/index.js",
+        "type": "javascript",
+        "sha": "f7d9865ea3874d2b135eeee0aa0d12fc108d89e1dd706e4e40eb7605b76d35ca",
+        "size": 3378,
+        "risk": 285,
+        "depth": 1,
+        "pid": 0,
+        "mol": "O₄(AlEu₂CaDy)H₅(CmCrDb₅Os₄Po)",
+        "traits": [
+          {
+            "id": "micro-behaviors/communications/http/request/configuration::node-http-request-configured",
+            "crit": 3,
+            "desc": "Node HTTP request has hostname and port",
+            "conf": 0.8,
+            "spans": [[2136, 28]]
+          },
+          {
+            "id": "micro-behaviors/data/buffer::javascript-write-then-end-stream",
+            "crit": 3,
+            "desc": "JavaScript writes then ends a stream",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::buffer-from-base64",
+            "crit": 3,
+            "desc": "Base64 decoding via Buffer.from (JS)",
+            "conf": 0.8
+          },
+          {
+            "id": "micro-behaviors/data/decode/custom::fromcharcode-arrow-map",
+            "crit": 3,
+            "desc": "Arrow-maps character codes to a string",
+            "conf": 0.85,
+            "atk": "T1140"
+          },
+          {
+            "id": "micro-behaviors/data/serialize/json::json-stringify-call",
+            "crit": 2,
+            "desc": "Calls JSON.stringify()",
+            "conf": 0.5,
+            "spans": [[1713, 0]]
+          },
+          {
+            "id": "micro-behaviors/data/serialize/object-schema::json-stringify-env-field",
+            "crit": 1,
+            "desc": "JSON serialization includes an env field",
+            "conf": 0.88
+          },
+          {
+            "id": "micro-behaviors/os/env/access::js-filtered-env-copy",
+            "crit": 3,
+            "desc": "Filters and copies process.env values",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/os/module/load::cjs-require-in-try-fallback",
+            "crit": 3,
+            "desc": "CommonJS require inside try fallback",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/os/sysinfo/hostname::node-os-alias-hostname-call",
+            "crit": 3,
+            "desc": "Node os-alias hostname query",
+            "conf": 0.8,
+            "atk": "T1082",
+            "spans": [[1332, 10]]
+          },
+          {
+            "id": "micro-behaviors/process/user/query::node-os-alias-userinfo-call",
+            "crit": 3,
+            "desc": "Node os-alias user identity query",
+            "conf": 0.8,
+            "atk": "T1033"
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-cpu-count-sandbox-check",
+            "crit": 3,
+            "desc": "os.cpus() low-count sandbox check",
+            "conf": 0.75,
+            "mbc": "B0007",
+            "atk": "T1497"
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::env-filter-method",
+            "crit": 1,
+            "desc": "process.env adjacent to filter or match",
+            "conf": 0.82,
+            "atk": "T1552.001",
+            "spans": [[1856, 0]]
+          },
+          {
+            "id": "micro-behaviors/crypto/symmetric/xor/loop::js-byte-array-xor-modulo-key-loop",
+            "crit": 3,
+            "desc": "JavaScript XOR loop uses repeating key",
+            "conf": 0.96,
+            "mbc": "B0032",
+            "atk": "T1027"
+          },
+          {
+            "id": "micro-behaviors/crypto/symmetric/xor/loop::xor-modulo-key-loop",
+            "crit": 3,
+            "desc": "XOR loop uses repeating-key modulo indexing",
+            "conf": 0.8,
+            "mbc": "B0032",
+            "atk": "T1027",
+            "spans": [[0, 29]]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::base64-decode-call-text",
+            "crit": 3,
+            "desc": "JavaScript invokes a Base64 decoder",
+            "conf": 0.86,
+            "spans": [[38, 47]]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::multiple-node-base64-decodes",
+            "crit": 3,
+            "desc": "Multiple Node.js Base64 decodes",
+            "conf": 0.8
+          },
+          {
+            "id": "micro-behaviors/data/encode/char-code::fromcharcode-call",
+            "crit": 3,
+            "desc": "Builds characters with String.fromCharCode",
+            "conf": 0.9
+          },
+          {
+            "id": "micro-behaviors/data/encode/charcode::charcodeat-arithmetic",
+            "crit": 3,
+            "desc": "Arithmetic applied to first character code",
+            "conf": 0.75,
+            "spans": [[1034, 31]]
+          },
+          {
+            "id": "micro-behaviors/os/module/dynamic-load::node-dynamic-require-call",
+            "crit": 3,
+            "desc": "Requires a module named by a call",
+            "conf": 0.82,
+            "spans": [[1259, 12]]
+          },
+          {
+            "id": "micro-behaviors/os/module/dynamic-load::node-variable-require-call",
+            "crit": 3,
+            "desc": "Requires a module named by a variable",
+            "conf": 0.88,
+            "spans": [[1691, 7]]
+          },
+          {
+            "id": "objectives/discovery/system/fingerprint/user::node-host-user-query-pair",
+            "crit": 3,
+            "desc": "Node queries hostname and username",
+            "conf": 0.9,
+            "atk": "T1033",
+            "spans": [[1334, 54]]
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-check-obfuscated",
+            "crit": 4,
+            "desc": "Low-CPU check in XOR-obfuscated JavaScript",
+            "conf": 0.9,
+            "mbc": "B0007",
+            "atk": "T1497"
+          },
+          {
+            "id": "objectives/exfiltration/stealer/host-profile/http::javascript-xor-host-profile-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates host and user",
+            "conf": 0.99,
+            "atk": "T1041"
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::node-host-identified-env-harvest",
+            "crit": 4,
+            "desc": "Copies filtered environment with host identity",
+            "conf": 0.94,
+            "atk": "T1552.001",
+            "spans": [[1334, 54], [1844, 626]]
+          },
+          {
+            "id": "objectives/exfiltration/sensitive-data::js-sensitive-env-source",
+            "crit": 1,
+            "desc": "Sensitive environment secret access (JS)",
+            "conf": 0.9,
+            "mbc": "B0030",
+            "atk": "T1041"
+          },
+          {
+            "id": "objectives/exfiltration/stealer/credential/env::javascript-xor-env-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates filtered environment",
+            "conf": 0.99,
+            "mbc": "E1041",
+            "atk": "T1552.001,T1041"
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-gated-env-http-exfil",
+            "crit": 5,
+            "desc": "Sandbox check gates environment exfiltration",
+            "conf": 0.99,
+            "mbc": "B0007,E1041",
+            "atk": "T1497.001,T1552.001,T1041"
+          }
+        ],
+        "ctx": [
+          {
+            "ln": 0,
+            "line": 1,
+            "col": 1,
+            "b": "boXZ.B8&{yx(kOnzGWduz!9z*3s!0(B95KiuT#r7t}xt&yDU1bw[CQ{e[Pcxz73=Es$srjnP41rAC5i+h:Iywlq@2uk%mvUegj[nB7El^cN?a^3taA#v@#B6zxJp[CQNRZDT*#iB95KljWKp6w[u0nw].*bd03{!vQTs?hz=^gj7AhDB95KBjWKp6w[u0nvqG:#v<>!sy?mG%Bz99+w]zYry?mYhx*1dix/]&Sy?mG%Bz9:Id>r5?twmwavQ0LLusd5Ptwkx<uU.ogwO#d5xK9YuwPS6nzxJ%LBz>91A+PA7c[dla4glP-zGx[xuTE>quTF4t4glP-zGx[xuTE$[jZRMvc){(9og9.}D3BP]BzS{Tq9uoQi$hKbz/fSraywF%wiBpbCQK{@B#JcopJZUixfwy9dlv$Cv@DmaBrB{$xL6zmuW9$Dd}RgEC28W+Cq}otcN?a^3s!0(B95KiuV*lHuTF4acPaXCnoG5^yJ?-(jTRWu4glP-zGx[xuTEq!jZRMvc){#%ydxT2i$hKbz/fSraywF!C0fhtCQK}1p!jOldlv$Cv@DmaBrB{$BzTfFuW9$Dhd*q]A-1$.cN?a^3s:"
+          },
+          {
+            "ln": 813,
+            "line": 22,
+            "col": 19,
+            "b": "fleA?i$hKbz/fSraywF>wJ:ycCQK{{BAfq/dlv$Cv@DmaBrB{$B7EHwuW9$DCxv>szf6#2cN?a^3s!0(B95KiuVZiHuTF4acWoe&Ab5()jTRWu4glDHwg??zB7=$euW9$DrD@y-C1=E>gbr&Dd{jP9yDkKsi4DH)f>aQoC2@)dvj$ezsue]NoI!o6g?pV2lS4uny?b?bCVF@/vnnEicN*Ga4glP-zGx[xuTEp#jZRMbtqftnB8U@fBspH6CQK{!djD(^vq)S8jW8!^A+PA7e[Pcxz9}#BAZK+QwHI4vv}Yp>lVlHDl3aIedj)njdjD(:z!T8quTF4acNQt(e]$#Fx(>+guW9$DcN*F%A+fA9A=U!udk2vNx(ktauW9$DcN*Ga4glP-zGx[xuTEqZjV1#Ki$hKeB-7Yhx(v(iuTEqRwN/H7dshHhv@DmaBrB{$A6mMnCQK{%C4ae@h/?bfdlv$Cv@DmaBrB{$Ac1fHuW9$DiC7iEB$k}2cN?a^3s!0(B95KiuU<QyuTF4acOG7vo)gbqjTRWu4gmh$D3:4tzGx[xz-@bLADL#owHH[)CQK{)B:2$@djEt*z/fSray^MMe[n<yB0@F0x>w+pv%&Vle]k9pxlm/HgavlPBAIRwaUU#/z/fSrazr]Re[/fABz+J7wHF#WBz<&>Cv+!Zvrl0ddlz3TzGx[xBV<T}B-RbmnP5cUc[c=>B7GxfvqPNdBz<&>Cv+!Zvrl0ddlz3TzGx[xuTE>$jZho2CQK{@B#JcopJZUixfwy9dj!?kCQK}0p!i#[p^V)YiD45ddj!?kCQK}0B-G/!d}9ABdj!?kCQK{%fjE!4w]x*Wdj!?kCQK{)p=zf[d}{!+CrF8pdj!?kCQK{%fhbz^w{4-ldj!?kCQK{%feDvAk%mvUdp22Ez/Nmoz/fSraAFVzw/$C/B9o0Vx>w=be[]iky&%o1B0#8UE0*5?x(mA%B.268d03*^A+funA=93OjahcXBAIRwaU=6bv{%E?xEEBvDVAXtB-Ivyf/%^)3vJu<w{503BzkVhaywF!CXgVac$B=N4gmh$D3:mqc%{s>xK$W?c[cP=wPS6nzAzuDzGx[xAY[COADL#owHH[)xMtK-v@DmaBrCJ=n(FIXe]#bPx(mM$w{C!Ktvg-Jw)EDrwPq<bA+cUauW9$DflIF4cN*F%xM4%lzEEx[c[cYKuTE}[t@)1qADL#owHH[)CQK{)B:2$@djD((B7Gw-zF0/ndk2::wPzV%zdLn5uTEq!t@(}Bz!0v1B1Q%Dwge(Ttvg-GC3Nd8vRPE:Bs}uuD2>xMA=kD0B8@%BzGWDYw[=76wPxhmjW9Tlx(mA%B.268c%{s%wHS1OyC6ssv@co#wPGnbuVP^cE0/YZx(mA%B.268c%{t6zZ*6YyC6ssv@co#wPGnbuVoB5E0/YZx(mA%B.268c%{s&BT.Y=yC6ssv@co#wPGnbuTW[5dk2TLwozx[c[60+yBIzgd0)N0e]JpByH5#uA=kD0B8@%BzGYl1t}QhvvSMTix(mMifF1}jfE.A0eph^]el=E*BzUqAl$7gGe]CPKc[cYKuTE+/t@<uLvr({5w[rMfD1eiMtvg-GCWivvE0*o?Ejml/z/fSrayWG2B.kk%AXp%Az/3[wdlz3TzGx[xB3jK@A+flkwPI@wDUvtsBz+J7wJBg9v>]POz/P}XuTEqZeo23txGxHcCQK}.xfwy9dj/sEBzbP6i:Vlkz.bNkvpS}&B2[ULuTEq+t@(t1vqpjsdlzP6CxdztwHI1pj992=zE+dAjagQEByO#jwHR$O4gmH)3jNs}fcA@1xk8E4zddJ$eO]uzyIvW0aw=G(B75V(lU{EFzGDr{v@bN{B0ap/D2)zawKyoFwO#PjDKQr8ay/tcB98CBv@#Tfc$sw.aBwI=aBsL8arR^HBzbxfe[5Zkoj-w>jS[k!vq]{NwQbzCD)0xGz!0v1B1R3wC3wrXCQK}-wh=C:ib7=sfjX3rfkJy.f?s8Fdp16zD)0rHy?#fx3lQDlaARphB1R3wB%5{<v>ItgC4>#nzF-%5BrC%UaAhvtv}x.5e[F{ztvg-Zc)%jHh-COkx*:<jwls4!sV[bYt{aJxaywG2c)%mIA^hE/jV$ewi$hJtarR!GxLzJuvQTs?auZ&?xLzJuwO#VljV$}JuTF4acO]pxfLTDFjTRV/3lQDlarR^>aywG2c){JRC2@/.AXz6dwo])?yE&tlsxENpl]xitvSuyeo*6<M4gjj2arR^HiV}^pCQK{&wP?c$p&Xj4s.8?iiCRf5njWnJoFpNkh+k&Co>)B1pKlRJk%mvUdlv$CarV7w3lQEgvr(Z3zGG}xjS]7X3lQDlay/C6vru6wayPtpzET!qwgnS:j%j@Xx(+[lAWUp4CM"
+          },
+          {
+            "ln": 3104,
+            "line": 56,
+            "col": 6,
+            "b": "zET!@AWU=QaAe>OwgnTF4gjj2arUxgasItBx(+[nAa}%RC{%>.4gjj2arR^HB7GC)x(dB1B-Y2WdiH=qaywF!CXgVad0)7NefF).azT1XBzbxfe[5Zkoj-x3B9g@kBAh8kxdbC+atCM0aBLW&atLVgiwJ3B4gjj2arV7w3lQDlaAz4nB-IvxDMWxLv}f7>B2>B=A=>}Aaz>XixM4Axaz&ULAa9<4iV@w:Eld(BarV7w3vJu<4gl@<wozZ1e[GoDz/P@vauZ&]aw=G(B75V(lU{EFzGEALv@=c?By^*Qx>qg7iV]?XdiH=qaz$+maw=G(B75V(lU{EFzGEppdiK424gi"
+          }
+        ],
+        "facts": {
+          "metrics": {
+            "ast": {
+              "call_count": 106,
+              "max_array_len": 7,
+              "max_concat_chain": 2,
+              "max_depth": 23,
+              "member_count": 34,
+              "member_depth_max": 4,
+              "node_count": 1747,
+              "op.add": 2,
+              "op.eq": 1,
+              "op.lnot": 5,
+              "op.lor": 12,
+              "op.lt": 2,
+              "op.mod": 1,
+              "op.sub": 1,
+              "op.xor": 1,
+              "op_density.add": 0,
+              "op_density.eq": 0,
+              "op_density.lnot": 0,
+              "op_density.lor": 0.01,
+              "op_density.lt": 0,
+              "op_density.mod": 0,
+              "op_density.sub": 0,
+              "op_density.xor": 0,
+              "xor_mod_loop_count": 1
+            },
+            "binary": { "peak_region_bytes": 3072, "peak_region_entropy": 5.6 },
+            "binds": { "count": 42 },
+            "comments": { "chars": 34, "count": 1, "lines": 1, "to_code_ratio": 0.02 },
+            "file": { "entropy": 5.6, "size": 3378 },
+            "functions": {
+              "anonymous": 9,
+              "avg_length_lines": 2.29,
+              "avg_name_length": 6,
+              "avg_nesting_depth": 0.21,
+              "avg_param_name_length": 1.15,
+              "avg_params": 0.93,
+              "code_ratio": 0.5,
+              "count": 6,
+              "density": 21.88,
+              "length_stddev": 2.19,
+              "max_length_lines": 7,
+              "max_nesting_depth": 1,
+              "max_params": 3,
+              "min_length_lines": 1,
+              "nested": 2,
+              "no_params_count": 4,
+              "one_liners": 10,
+              "single_char_params": 11
+            },
+            "identifiers": {
+              "all_lowercase_ratio": 0.85,
+              "all_uppercase_ratio": 0.01,
+              "avg_entropy": 1.77,
+              "avg_length": 4.92,
+              "count": 293,
+              "has_digit_ratio": 0.01,
+              "length_stddev": 2.77,
+              "max_length": 13,
+              "min_length": 1,
+              "numeric_suffix_count": 1,
+              "reuse_ratio": 0.34,
+              "sequential_names": 13,
+              "single_char_count": 13,
+              "single_char_ratio": 0.13,
+              "underscore_prefix_count": 34,
+              "unique": 101
+            },
+            "source": { "class_count": 1, "function_count": 5 },
+            "strings": {
+              "avg_entropy": 3.12,
+              "avg_length": 12.05,
+              "base64_candidates": 13,
+              "bytes": 699,
+              "count": 58,
+              "empty_count": 4,
+              "entropy_stddev": 0.89,
+              "high_entropy_count": 1,
+              "max_length": 64,
+              "path_count": 5
+            },
+            "text": {
+              "avg_line_length": 50.78,
+              "char_entropy": 5.6,
+              "digit_ratio": 0.07,
+              "empty_line_ratio": 0.03,
+              "encoded_string_ratio": 0.22,
+              "identifier_density": 4.58,
+              "last_line_length": 78,
+              "line_length_stddev": 87.05,
+              "lines": 64,
+              "lines_over_200": 2,
+              "lines_over_500": 1,
+              "long_token_count": 4,
+              "max_line_length": 594,
+              "max_ws_run": 1,
+              "normalized_string_count": 7.25,
+              "normalized_unique_identifiers": 16.83,
+              "space_count": 209,
+              "string_density": 0.91,
+              "suspicious_identifier_ratio": 0.13,
+              "top_char": 95,
+              "top_char_null": 0,
+              "top_char_ratio": 0.07,
+              "unique_chars": 89,
+              "whitespace_ratio": 0.1
+            }
+          },
+          "imp": [
+            ["", "Buffer.from"],
+            ["", "Buffer.from"],
+            ["", "Buffer.alloc"],
+            ["", "r.i"],
+            ["", "r.toString"],
+            ["", "vm"],
+            ["", "sd"],
+            ["", "hf"],
+            ["", "un"],
+            ["", "cw"],
+            ["", "ev"],
+            ["", "tm"],
+            ["", "pk"],
+            ["", "ex"],
+            ["", "ct"],
+            ["", "aj"],
+            ["", "hr"],
+            ["", "po"],
+            ["", "sl"],
+            ["", "ho"],
+            ["", "pa"],
+            ["", "au"],
+            ["", "ap"],
+            ["", "ke"],
+            ["", "se"],
+            ["", "to"],
+            ["", "d.push"],
+            ["", "c2"],
+            ["", "String.fromCharCode"],
+            ["", "c.charCodeAt"],
+            ["", "cp"],
+            ["", "ps"],
+            ["", "ln"],
+            ["", "require"],
+            ["", "o.cpus"],
+            ["", "o.hostname.toLowerCase"],
+            ["", "o.hostname"],
+            ["", "o.userInfo.username.toLowerCase"],
+            ["", "o.userInfo"],
+            ["", "sv"],
+            ["", "h.includes"],
+            ["", "u.includes"],
+            ["", "check"],
+            ["", "require"],
+            ["", "JSON.stringify"],
+            ["", "require.hostname"],
+            ["", "require"],
+            ["", "require.userInfo"],
+            ["", "require"],
+            ["", "process.cwd"],
+            ["", "Object.keys.filter.reduce"],
+            ["", "Object.keys.filter"],
+            ["", "Object.keys"],
+            ["", "k.includes"],
+            ["", "k.includes"],
+            ["", "k.includes"],
+            ["", "k.includes"],
+            ["", "k.includes"],
+            ["", "k.includes"],
+            ["", "process.env.k.substring"],
+            ["", "Date.now"],
+            ["", "Buffer.from"],
+            ["", "r.request"],
+            ["", "s.write"],
+            ["", "s.end"],
+            ["", "setTimeout"],
+            ["", "exfil"],
+            ["", "module.exports"]
+          ],
+          "funcs": [
+            ["__x", 89],
+            ["c", 1024],
+            ["__check", 1140],
+            ["__exfil", 1637],
+            ["k", 1876],
+            ["anonymous", 1994],
+            ["constructor", 2322],
+            ["anonymous", 2702],
+            ["anonymous", 2795],
+            ["anonymous", 2913],
+            ["anonymous", 3006],
+            ["_r", 3101],
+            ["anonymous", 3163],
+            ["anonymous", 3346]
+          ],
+          "tgt": [
+            "Buffer.alloc",
+            "Buffer.from",
+            "Date.now",
+            "JSON.stringify",
+            "Object.keys",
+            "Object.keys().filter",
+            "Object.keys().filter().reduce",
+            "PaysafeClient",
+            "String.fromCharCode",
+            "__check",
+            "__d.push",
+            "__exfil",
+            "__x",
+            "c.charCodeAt",
+            "h.includes",
+            "k.includes",
+            "o.cpus",
+            "o.hostname",
+            "o.hostname().toLowerCase",
+            "o.userInfo",
+            "o.userInfo().username.toLowerCase",
+            "process.cwd",
+            "r.request",
+            "r.toString",
+            "require",
+            "require().hostname",
+            "require().userInfo",
+            "s.end",
+            "s.write",
+            "setTimeout",
+            "u.includes"
+          ],
+          "mbr": [
+            "Buffer.alloc",
+            "Buffer.from",
+            "Date.now",
+            "JSON.stringify",
+            "Object.keys",
+            "Object.keys().filter",
+            "Object.keys().filter().reduce",
+            "String.fromCharCode",
+            "__d.push",
+            "__k.length",
+            "b.length",
+            "c.apiKey",
+            "c.charCodeAt",
+            "c.environment",
+            "c.length",
+            "h.includes",
+            "k.includes",
+            "module.exports",
+            "o.cpus",
+            "o.hostname",
+            "o.hostname().toLowerCase",
+            "o.userInfo",
+            "o.userInfo().username",
+            "o.userInfo().username.toLowerCase",
+            "process.cwd",
+            "process.env",
+            "r.request",
+            "r.toString",
+            "require().hostname",
+            "require().userInfo",
+            "require().userInfo().username",
+            "s.end",
+            "s.write",
+            "u.includes"
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "path": "/Users/t/Downloads/paysafe-kyc-1.0.2.tgz!!package/package.json",
+        "type": "package.json",
+        "sha": "ea3d2775876b58c4958ef48293e067939c8f9569a13870bc492401aaf6ff991f",
+        "size": 637,
+        "risk": 2,
+        "depth": 1,
+        "pid": 0,
+        "mol": "Md(Pa)",
+        "traits": [
+          {
+            "id": "supply-chain/missing-author",
+            "crit": 3,
+            "desc": "Package has empty or missing author field",
+            "conf": 0.5
+          },
+          {
+            "id": "metadata/package/manifest/repository::has-repository-field",
+            "crit": 2,
+            "desc": "package.json declares repository metadata",
+            "conf": 0.9,
+            "spans": [[473, 0]]
+          },
+          {
+            "id": "metadata/package/manifest/repository::has-repository-url",
+            "crit": 2,
+            "desc": "package.json declares a repository URL",
+            "conf": 0.85,
+            "spans": [[554, 0]]
+          },
+          {
+            "id": "metadata/package/manifest/repository::repo-url-git-host",
+            "crit": 3,
+            "desc": "Repository identifies major Git host",
+            "conf": 0.9,
+            "spans": [[554, 46]]
+          }
+        ],
+        "ctx": [
+          {
+            "ln": 0,
+            "line": 1,
+            "col": 1,
+            "b": "[4ltY4gjj2arR>CvqPN1iV]K?Aaa3kvp<75yK6zledz}earR^JC4CYnx(v(kiV]K?f!Ldjg9OmU3lQDlar>ucB7ol8Acb/jzx.a:ar<S<D2)zawGTSGlM*8NwO#Q7BA]0LwPzG%x>7N[x(v(iq::n5edz}earR^Jzddc@b03??b57}9wQ2?xB0rdA3lQDlar>(pA+PGmB0rT/aBsL8arR^HarR^HarR^HarR^HarR^Hb6myqBrS:*ar>xbxM21#b1lJ)z/N(YzF{UtwPI@oB8UY2x>z6<wlZr3tY?.Ogb-xWfFCmuaz2!iBrAmY4gjj2arR^HarR^HarR^HarV7-4gjj2arR>zwQeGrA+6kniV]LH4gjj2arR^HarR^HarR^HarR^HarR^JAaa3kvp<6{edz}earR^HarR^HarR^HarR^HarR^Hb5qEla$KfgarR^HarR^HarR^HarR^HarR^Har>JgwO#Q7BA]5Y4gjj2arR^HarR^HarR^HarR^Hao"
+          },
+          {
+            "ln": 425,
+            "line": 13,
+            "col": 36,
+            "b": "4gjj2arR^HarR^HarR^HarR!jedz}earR^Jy?Wx<zGxwkiV]K?o?wqdedz}earR^JA+fidB7]-mA^n&&arV1u3lQDlarR^HarR^HarR^HarR^HarR^Hb6n9HwG<eTar>DjBrSmB3lQDlarR^HarR^HarR^HarR^HarR^Hb6v{xb03??b4>Rid}<3DAc15[fk20vxMW=pv@DiqAaa3kvp<77Aaa3kvp<75yK6zxxk8Di4gjj2arR^HarR^HarR^HarR^HaBKXaEglI"
+          }
+        ],
+        "facts": {
+          "metrics": {
+            "binary": { "peak_region_bytes": 637, "peak_region_entropy": 3.81 },
+            "consistency": { "name_repo_mismatch": 0 },
+            "file": { "entropy": 3.81, "size": 637 }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,2235 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {{template "favicon"}}
+    <meta name="build" content="{{.BuildCommit}}" />
+    <meta name="layout" content="{{.Layout}}" />
+    <title>{{.Headline}} - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="{{if isPublic}}atomdrift lab{{else}}litmus{{end}}" />
+    <meta property="og:title" content="{{.Headline}} — {{.Verdict}}" />
+    {{if .MetaDesc}}<meta property="og:description" content="{{.MetaDesc}}" />
+    <meta name="description" content="{{.MetaDesc}}" />{{end}}
+    <meta name="twitter:card" content="summary" />
+    <style nonce="{{.StyleNonce}}">
+    {{template "fonts" .}}
+    </style>
+    <style nonce="{{.StyleNonce}}">
+        :root {
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --iron: #52525b;
+            --slate: #555e6d;
+            --mist: #f5f5f5;
+            --white: #ffffff;
+            --cream: #fafaf9;
+            --border: #e8e8e8;
+            --isotope: #3b82f6;
+            --isotope-dim: rgba(59, 130, 246, 0.1);
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: rgba(208, 255, 0, 0.14);
+            --hostile: #ef4444;
+            --suspicious: #eab308;
+            --notable: #3b82f6;
+            --clean: #22c55e;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--cream);
+            color: var(--carbon);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+        /* Visually hide content while keeping it available to screen readers.
+           Used for severity badges, off-screen heading labels, and live
+           announcements that should not take up visual space. */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        /* Skip-to-main affordance for keyboard users. Hidden off-screen until
+           focused; then it slides into view as the first interactive item. */
+        .skip-link {
+            position: absolute;
+            left: 16px;
+            top: -40px;
+            background: var(--carbon);
+            color: var(--toxic);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 1000;
+            transition: top 0.15s;
+        }
+        .skip-link:focus { top: 8px; outline: 2px solid var(--toxic); outline-offset: 2px; }
+        /* Universal keyboard focus ring. We only paint it on :focus-visible so
+           mouse clicks don't show a ring, but every interactive element gets a
+           clear focus indicator when navigating by keyboard. */
+        :focus { outline: none; }
+        :focus-visible {
+            outline: 2px solid var(--toxic-muted);
+            outline-offset: 2px;
+            border-radius: 3px;
+        }
+        button:focus-visible,
+        a:focus-visible,
+        [tabindex]:focus-visible {
+            outline: 2px solid var(--toxic-muted);
+            outline-offset: 2px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+        .logo {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 22px;
+            letter-spacing: -0.5px;
+        }
+        .logo-accent {
+            color: var(--toxic-muted);
+        }
+        .beta-tag {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--toxic-dark);
+            background: rgba(208, 255, 0, 0.14);
+            border: 1px solid rgba(208, 255, 0, 0.2);
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: super;
+            letter-spacing: 0.5px;
+        }
+        .tagline {
+            font-size: 14px;
+            color: var(--iron);
+            font-weight: 400;
+        }
+        .back-link {
+            font-size: 14px;
+            color: var(--slate);
+        }
+        .back-link:hover {
+            color: var(--carbon);
+        }
+
+        /* Hero Section */
+        .hero {
+            position: relative;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        }
+        /* Prev/next arrows tucked into the corners of the hero. Only
+           rendered (by hero-nav.js) when the user arrived from the feed
+           and we have a list to iterate through. Deliberately small and
+           pale so they don't compete with the verdict + filename. */
+        .hero-nav {
+            position: absolute;
+            top: 8px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            line-height: 1;
+            color: #c4c8d0;
+            border-radius: 999px;
+            text-decoration: none;
+            transition: color 0.12s, background 0.12s;
+            z-index: 2;
+        }
+        .hero-nav:hover { color: var(--iron); background: var(--mist); }
+        /* Keyboard shortcut help dialog. <dialog> handles focus trap +
+           Esc-to-close natively; we just paint it. ::backdrop dims the
+           page so the dialog reads as floating above. */
+        dialog.kbd-help {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0;
+            background: var(--white);
+            color: var(--carbon);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+            max-width: 360px;
+            width: calc(100% - 32px);
+        }
+        dialog.kbd-help::backdrop {
+            background: rgba(10, 10, 10, 0.35);
+        }
+        .kbd-help-form { padding: 18px 22px 20px; }
+        .kbd-help-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .kbd-help-head h2 {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            color: var(--carbon);
+        }
+        .kbd-help-close {
+            background: none;
+            border: none;
+            font: inherit;
+            font-size: 20px;
+            line-height: 1;
+            color: var(--slate);
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+        .kbd-help-close:hover { color: var(--carbon); background: var(--mist); }
+        .kbd-help-list {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px 16px;
+            align-items: center;
+            margin: 0;
+        }
+        .kbd-help-list dt { margin: 0; }
+        .kbd-help-list dd {
+            margin: 0;
+            font-size: 13px;
+            color: var(--graphite);
+        }
+        .kbd-help-list kbd {
+            display: inline-block;
+            min-width: 22px;
+            padding: 3px 8px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            color: var(--carbon);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 1;
+        }
+        .hero-nav-prev { left: 8px; }
+        .hero-nav-next { right: 8px; }
+        .hero-has-nav .verdict { padding-right: 24px; }
+        @media (max-width: 768px) {
+            .hero-nav { width: 36px; height: 36px; font-size: 22px; }
+            .hero-has-nav .verdict { padding-right: 32px; }
+        }
+        /* Compact hero: collapses the molecule + formula block so the tabs
+           below get more room. Toggled by the hero-toggle button (or
+           double-click on a pointer device). */
+        .hero.compact { margin-bottom: 12px; }
+        .hero.compact .hero-body { display: none; }
+        .hero.compact .verdict-meta { padding-bottom: 12px; }
+        /* Disclosure button in the verdict bar. The chevron rotates with
+           aria-expanded so sighted and SR users see the same state. */
+        .hero-toggle {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            padding: 8px 12px;
+            min-width: 36px;
+            min-height: 36px;
+            color: var(--iron);
+            cursor: pointer;
+            font: inherit;
+            font-size: 16px;
+            line-height: 1;
+            transition: background 0.1s, border-color 0.1s, color 0.1s;
+        }
+        .hero-toggle:hover { background: var(--mist); color: var(--carbon); }
+        .hero-toggle[aria-expanded="false"] .hero-toggle-icon { display: inline-block; transform: rotate(180deg); }
+        /* Hero head — filename + verdict pill on one row; no full-bleed tint. */
+        .verdict-bar {
+            padding: 16px 26px 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            background: var(--white);
+            border-bottom: none;
+        }
+        .verdict-bar.sev-hostile,
+        .verdict-bar.sev-suspicious,
+        .verdict-bar.sev-notable,
+        .verdict-bar.sev-benign { background: var(--white); }
+        .verdict-bar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .hero-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            align-items: center;
+            gap: 24px;
+            padding: 0 26px;
+        }
+        .molecule-info { padding: 0; border-left: none; }
+        .file-name {
+            display: inline-block;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--carbon);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: min(128ch, 100%);
+        }
+        .verdict-meta {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            color: var(--slate);
+            padding: 0 26px;
+            border-bottom: none;
+            word-break: break-all;
+        }
+        /* The SHA itself is a link to VirusTotal — there's almost always
+           more context out there for a real sample than we ship locally.
+           Hairline underline keeps the link affordance subtle since the
+           label "SHA256" sits next to it. */
+        .verdict-meta a {
+            color: inherit;
+            border-bottom: 1px dotted var(--slate);
+            transition: color 0.12s, border-color 0.12s;
+        }
+        .verdict-meta a:hover { color: var(--carbon); border-bottom-color: var(--carbon); }
+        /* LLM interpretation — a one-line, human-readable rationale, shown only
+           when an interpretation pass ran (a subset of samples, typically
+           suspicious/hostile). Sits just under the SHA, above the collapsible
+           body, so it stays visible even when the hero is collapsed. */
+        /* AI interpretation — a quiet callout under the SHA line. Sits on a soft
+           surface with rounded corners so it reads as an intentional panel rather
+           than floating text, matching the card idiom used elsewhere on the page.
+           The "AI" chip carries the carbon/toxic brand accent. Any ML/LLM
+           disagreement surfaces in the level badge's hover text, not here. */
+        .hero-listing {
+            margin: 8px 26px 0;
+            color: var(--slate);
+            font-size: 13px;
+            font-style: italic;
+        }
+        .hero-llm {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 12px 26px 4px;
+            padding: 8px 12px;
+            background: var(--mist);
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--carbon);
+        }
+        .hero-llm-tag {
+            flex: none;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            background: var(--carbon);
+            color: var(--toxic);
+        }
+        .hero-llm-text {
+            flex: 1 1 200px;
+            min-width: 0;
+            font-style: italic;
+            color: var(--iron);
+        }
+        /* Verdict pill — small chip in the hero head corner, tinted by severity. */
+        .verdict {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 14px;
+            border-radius: 999px;
+            font-weight: 600;
+            line-height: 1;
+        }
+        .verdict::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .verdict-bar.sev-hostile .verdict { background: rgba(239, 68, 68, 0.14); color: #991b1b; }
+        .verdict-bar.sev-hostile .verdict::before { background: var(--hostile); }
+        .verdict-bar.sev-suspicious .verdict { background: rgba(234, 179, 8, 0.18); color: #854d0e; }
+        .verdict-bar.sev-suspicious .verdict::before { background: var(--suspicious); }
+        .verdict-bar.sev-notable .verdict { background: rgba(59, 130, 246, 0.14); color: #1e40af; }
+        .verdict-bar.sev-notable .verdict::before { background: var(--notable); }
+        .verdict-bar.sev-benign .verdict { background: rgba(154, 190, 37, 0.20); color: #4a6b0f; }
+        .verdict-bar.sev-benign .verdict::before { background: var(--toxic-muted); }
+        .verdict-label {
+            font-size: 13px;
+            color: var(--iron);
+        }
+        .verdict-value {
+            font-family: 'Oxanium', sans-serif;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.6px;
+            color: inherit;
+        }
+
+        /* Litmus band — two-color gradient square */
+        .band {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        /* The hero stamp is colored by verdict, not by the level gradient, so it
+           matches the verdict pill beside it and the classification bands on the
+           index listing. Hex values mirror the index .band palette verbatim so
+           the same sample reads the same color on both pages. */
+        .verdict-bar.sev-hostile .band { background: #ef4444; }
+        .verdict-bar.sev-suspicious .band { background: #facc15; }
+        .verdict-bar.sev-notable .band { background: #3b82f6; }
+        .verdict-bar.sev-benign .band { background: #22c55e; }
+        /* Formula lives at the top of the right-column meta panel.
+           Compact (15px Oxanium) so it fits the narrow column alongside
+           the size/first-seen/analyzed rows below it. Long formulas
+           scroll horizontally inside the card; native scrollbar is
+           hidden so it stays clean. Whole card is a link to /?m=… to
+           find other samples with the same malecule. */
+        .formula-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--slate);
+            margin-bottom: 5px;
+        }
+        .formula {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow: hidden;
+            padding: 7px 10px;
+            margin-bottom: 14px;
+            background: var(--cream);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--carbon);
+            text-decoration: none;
+            transition: border-color 0.12s, background 0.12s;
+        }
+        .formula-text {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            white-space: nowrap;
+            font-family: 'Oxanium', sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            line-height: 1.3;
+            scrollbar-width: none;
+        }
+        .formula-text::-webkit-scrollbar { display: none; }
+        .formula-text sub {
+            font-size: 0.65em;
+            vertical-align: baseline;
+            position: relative;
+            top: 0.2em;
+        }
+        .formula-arrow {
+            flex: 0 0 auto;
+            font-size: 11px;
+            color: var(--slate);
+            transition: color 0.12s;
+        }
+        a.formula:hover {
+            border-color: var(--toxic-muted);
+            background: var(--white);
+        }
+        a.formula:hover .formula-arrow {
+            color: var(--toxic-dark);
+        }
+        /* Meta as a key/value list with thin dividers. */
+        .meta-table {
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+        }
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--mist);
+        }
+        .meta-row:last-child { border-bottom: none; }
+        .meta-label {
+            color: var(--slate);
+            font-size: 12px;
+        }
+        .meta-value {
+            color: var(--graphite);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            text-align: right;
+        }
+        /* PURLs (e.g. "pkg:maven/org.foo/bar@1.2.3") can outrun the meta
+           column; let them wrap rather than spill past the card edge. */
+        .purl-value {
+            min-width: 0;
+            word-break: break-all;
+        }
+        /* "Also detected by" chips: one per nameable external source (open
+           databases, blogs) that cited this sample, plus an anonymous count
+           chip for the rest. Wrap right-aligned alongside the meta value. */
+        .detectedby-value {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            justify-content: flex-end;
+        }
+        .feed-chip {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            background: var(--mist);
+            color: var(--graphite);
+            font-size: 11px;
+            font-family: 'SF Mono', Consolas, monospace;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        a.feed-chip:hover { background: var(--toxic); color: #fff; }
+        /* Small inline rescan button — shown whenever the last analysis
+           is older than rescanCooldown. Subtle by default so it doesn't
+           compete with the analysis timestamp; toxic accent on hover
+           signals interactivity. */
+        .rescan-btn {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 8px;
+            padding: 5px 10px;
+            font: inherit;
+            font-size: 13px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--slate);
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
+        }
+        .rescan-btn:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        .rescan-btn:disabled {
+            cursor: progress;
+            opacity: 0.6;
+        }
+        .rescan-btn.is-done {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+            cursor: default;
+        }
+        .rescan-btn.is-error {
+            color: #991b1b;
+            border-color: rgba(239, 68, 68, 0.4);
+            background: rgba(239, 68, 68, 0.08);
+            cursor: default;
+        }
+        /* Download-original-bytes button, shown next to Size. Only rendered
+           server-side when SizeBytes is in (0, 400 MB]. Same visual weight as
+           .rescan-btn so they share the inline-meta look. */
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 8px;
+            padding: 5px 10px;
+            font-size: 13px;
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: var(--slate);
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            text-decoration: none;
+            transition: color 0.12s, border-color 0.12s, background 0.12s;
+        }
+        .download-btn:hover {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        .download-btn.is-disabled,
+        .download-btn.is-disabled:hover {
+            color: var(--slate);
+            border-color: var(--border);
+            background: var(--mist);
+            cursor: not-allowed;
+            opacity: 0.72;
+        }
+        /* Brief confirmation that the filename was copied to clipboard
+           alongside the download. Mirrors .rescan-btn.is-done. */
+        .download-btn.is-done {
+            color: var(--toxic-dark);
+            border-color: var(--toxic-muted);
+            background: var(--toxic-dim);
+        }
+        /* Source provenance row. The label is a hostname (or domain
+           fallback) so it fits the narrow column; the full URL lives in
+           the href + title. Ellipsizes if the hostname is still too
+           wide for the column. */
+        .source-value {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .source-link {
+            color: var(--graphite);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--slate);
+            transition: color 0.12s, border-color 0.12s;
+        }
+        .source-link:hover {
+            color: var(--toxic-dark);
+            border-bottom-color: var(--toxic-muted);
+        }
+        .eco-badge {
+            display: inline-flex;
+            align-items: center;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            padding: 4px 8px;
+            letter-spacing: 0.3px;
+            text-decoration: none;
+        }
+        .eco-badge.eco-red    { color: #991b1b; background: rgba(239, 68, 68, 0.10);  border-color: rgba(239, 68, 68, 0.25); }
+        .eco-badge.eco-rose   { color: #9f1239; background: rgba(244, 63, 94, 0.10);  border-color: rgba(244, 63, 94, 0.25); }
+        .eco-badge.eco-orange { color: #9a3412; background: rgba(249, 115, 22, 0.12); border-color: rgba(249, 115, 22, 0.25); }
+        .eco-badge.eco-yellow { color: #854d0e; background: rgba(234, 179, 8, 0.14);  border-color: rgba(234, 179, 8, 0.30); }
+        .eco-badge.eco-brown  { color: #78350f; background: rgba(161, 98, 7, 0.12);   border-color: rgba(161, 98, 7, 0.28); }
+        .eco-badge.eco-green  { color: #166534; background: rgba(34, 197, 94, 0.10);  border-color: rgba(34, 197, 94, 0.25); }
+        .eco-badge.eco-cyan   { color: #155e75; background: rgba(6, 182, 212, 0.10);  border-color: rgba(6, 182, 212, 0.25); }
+        .eco-badge.eco-blue   { color: #1e40af; background: rgba(59, 130, 246, 0.10); border-color: rgba(59, 130, 246, 0.22); }
+        .eco-badge.eco-indigo { color: #3730a3; background: rgba(99, 102, 241, 0.10); border-color: rgba(99, 102, 241, 0.25); }
+        .eco-badge.eco-purple { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.25); }
+        .eco-badge.eco-slate  { color: var(--graphite); background: var(--mist); border-color: var(--border); }
+        .eco-badge:hover { filter: brightness(0.95); }
+        .molecule-viz {
+            min-height: 200px;
+            background: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .molecule-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #molecule-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Tabs Section */
+        .tabs-section {
+            margin-top: 24px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .tabs {
+            display: flex;
+            gap: 0;
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            padding: 0 8px;
+            overflow-x: auto;
+        }
+        .tab {
+            padding: 12px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--iron);
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+            font-family: inherit;
+            white-space: nowrap;
+        }
+        .tab:hover {
+            color: var(--carbon);
+        }
+        .tab.active {
+            color: var(--carbon);
+            border-bottom-color: var(--toxic-muted);
+            font-weight: 600;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        /* Breathing room between the tab strip and the first card so a tinted
+           composite doesn't crowd the tab indicator. */
+        #tab-content { padding-top: 16px; }
+
+        /* ---- Structure tab: the pid-driven containment / provenance tree.
+           One representation of one fact — each node's parent — so the archive,
+           its fetched dependencies, and their members read as a single tree. --- */
+        #tab-structure { padding-top: 12px; }
+        .ttree { list-style: none; font-family: 'SF Mono', Consolas, monospace; font-size: 13px; }
+        .ttree .tnode { list-style: none; }
+        .trow { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; }
+        .trow.clickable { cursor: pointer; }
+        .trow.clickable:hover { background: var(--mist); }
+        .tdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+        .tdot.hostile { background: var(--hostile); }
+        .tdot.suspicious { background: var(--suspicious); }
+        .tdot.notable { background: var(--notable); }
+        .tdot.baseline, .tdot.component, .tdot.filtered, .tdot.none { background: var(--border); }
+        .ttw { width: 12px; flex: none; color: var(--slate); font-size: 10px; text-align: center; transition: transform 0.15s ease; }
+        .tnode.collapsed > .trow .ttw { transform: rotate(-90deg); }
+        .ttw.leaf { visibility: hidden; }
+        .tname { color: var(--carbon); white-space: nowrap; border-bottom: 1px solid transparent; }
+        .tname.tdir { color: var(--slate); font-weight: 600; } /* directory node — no link */
+        a.tname:hover { color: var(--isotope); border-bottom-color: var(--isotope); }
+        .ttype { font-size: 11px; color: var(--iron); background: var(--mist); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'Inter', -apple-system, sans-serif; }
+        .tgrow { flex: 1 1 auto; min-width: 8px; }
+        .tmeta { font-size: 11.5px; color: var(--slate); white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .tchip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-family: 'Inter', -apple-system, sans-serif; border-radius: 5px; padding: 2px 7px; border: 1px solid transparent; white-space: nowrap; }
+        .tchip .g { font-size: 12px; line-height: 1; }
+        /* fetched = eco-cyan (network provenance); registry = eco-purple
+           (metadata). Deliberately not severity hues, so provenance never reads
+           as risk. */
+        .tchip.fetch { color: #155e75; background: rgba(6, 182, 212, 0.10); border-color: rgba(6, 182, 212, 0.30); }
+        .tchip.reg { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.28); }
+        .tchip.fetch a { color: inherit; border-bottom: 1px dotted currentColor; }
+        .tchip.fetch a:hover { color: var(--isotope); border-bottom-color: var(--isotope); }
+        .tkids { list-style: none; margin-left: 21px; border-left: 1px solid var(--border); padding-left: 2px; }
+        .tnode.collapsed > .tkids { display: none; }
+        .trow.tmore { color: var(--slate); font-family: 'Inter', -apple-system, sans-serif; font-size: 12px; padding-left: 30px; }
+        .tlegend { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px 10px 2px; margin-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--slate); font-family: 'Inter', -apple-system, sans-serif; }
+        .tlegend .item { display: inline-flex; align-items: center; gap: 6px; }
+        .trow.clickable:focus-visible { outline: 2px solid var(--isotope); outline-offset: 1px; }
+        @media (prefers-reduced-motion: reduce) { .ttw { transition: none; } }
+
+        .findings-output {
+            background: var(--carbon);
+            color: #e5e7eb;
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .findings-output .hostile { color: #f87171; }
+        .findings-output .suspicious { color: #fbbf24; }
+        .findings-output .notable { color: #60a5fa; }
+        .findings-output .dim { color: #6b7280; }
+
+        /* Terminal Output */
+        .terminal-output {
+            background: var(--carbon);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #e5e7eb;
+            max-height: 500px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .terminal-output .hostile { color: #f87171; }
+        .terminal-output .suspicious { color: #fbbf24; }
+        .terminal-output .notable { color: #60a5fa; }
+        .terminal-output .dim { color: #6b7280; }
+
+        footer {
+            margin-top: 48px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: var(--iron);
+            position: relative;
+        }
+        footer::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 0;
+            width: 80px;
+            height: 2px;
+            background: var(--toxic);
+        }
+        footer a {
+            color: var(--slate);
+        }
+        footer a:hover {
+            color: var(--carbon);
+        }
+
+        /* Galaxy info panel */
+        /* Molecule atom/click pop-up — floats over the canvas, shares the
+           pill/card visual vocabulary of the rest of the result page. */
+        .galaxy-info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.97);
+            backdrop-filter: blur(6px);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            color: var(--carbon);
+            font-size: 13px;
+            max-height: 220px;
+            overflow-y: auto;
+            display: none;
+            z-index: 10;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        .galaxy-info.visible { display: block; }
+        .galaxy-legend {
+            position: absolute;
+            left: 12px;
+            bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 10px;
+            background: rgba(255, 255, 255, 0.82);
+            border: 1px solid var(--mist);
+            border-radius: 6px;
+            font-size: 11px;
+            color: var(--carbon);
+            pointer-events: none;
+        }
+        .galaxy-legend[hidden] { display: none; }
+        .galaxy-legend-item { display: flex; align-items: center; gap: 7px; }
+        .galaxy-legend-swatch { width: 18px; height: 0; border-top-width: 2px; border-top-style: solid; }
+        .galaxy-legend-swatch.local { border-top-color: #5aa9e6; }
+        .galaxy-legend-swatch.dependency { border-top-color: #e0a458; }
+        .galaxy-legend-swatch.inferred { border-top-color: #7c8a84; border-top-style: dashed; opacity: 0.7; }
+        .galaxy-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .galaxy-info-title {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--carbon);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .galaxy-info-close {
+            cursor: pointer;
+            background: none;
+            border: none;
+            font: inherit;
+            color: var(--slate);
+            font-size: 20px;
+            line-height: 1;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            flex-shrink: 0;
+            transition: background 0.1s, color 0.1s;
+        }
+        .galaxy-info-close:hover { background: var(--mist); color: var(--carbon); }
+        .galaxy-info-formula {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: var(--carbon);
+            padding: 6px 10px;
+            background: var(--cream);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            word-break: break-word;
+        }
+        .galaxy-info-findings {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .galaxy-info-findings > div {
+            padding: 4px 8px;
+            border-radius: 4px;
+            border-left: 3px solid transparent;
+            background: var(--cream);
+            color: var(--graphite);
+            word-break: break-all;
+        }
+        .galaxy-info-findings .hostile { border-left-color: var(--hostile); background: rgba(239, 68, 68, 0.06); color: #991b1b; }
+        .galaxy-info-findings .suspicious { border-left-color: var(--suspicious); background: rgba(234, 179, 8, 0.07); color: #854d0e; }
+        .galaxy-info-findings .notable { border-left-color: var(--notable); background: rgba(59, 130, 246, 0.05); color: #1e40af; }
+        .galaxy-info-findings .dim { background: transparent; color: var(--slate); font-style: italic; }
+
+        /* Findings Tables */
+        .findings-section {
+            margin-bottom: 32px;
+        }
+        .file-findings {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+
+        .category-section {
+            margin-bottom: 12px;
+        }
+        .category-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #0d2040;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 8px 16px;
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+        }
+        /* Trait list — card rows with inline-expanding detail. */
+        .findings-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .finding-card {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 10px 14px;
+            background: var(--cream);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            transition: border-color 0.1s;
+            font-size: 13px;
+        }
+        .finding-card.expandable:hover { border-color: var(--toxic-muted); }
+        .finding-card.open { border-color: var(--toxic-muted); background: var(--toxic-dim); }
+        /* The expandable card's toggle is a real <button> so keyboard users
+           get the right semantics. We strip the UA defaults and replicate
+           the prior 3-column row layout inside the button. */
+        .finding-card-toggle {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: auto auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+            background: none;
+            border: none;
+            color: inherit;
+            font: inherit;
+            text-align: left;
+            width: 100%;
+            padding: 0;
+            cursor: pointer;
+        }
+        /* Disclosure triangle: the obvious accordion affordance. It leads the
+           row and rotates a quarter-turn when the card opens. Only expandable
+           cards carry a toggle, so only they show a caret. */
+        .finding-card-toggle::before {
+            content: "\25B8"; /* ▸ */
+            color: var(--iron);
+            font-size: 11px;
+            line-height: 1;
+            transition: transform 0.12s ease;
+        }
+        .finding-card-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+        .finding-card-toggle:hover::before { color: var(--carbon); }
+        .finding-card-toggle .trait-body {
+            display: grid;
+            grid-template-columns: 24em 1fr;
+            gap: 14px;
+            align-items: baseline;
+            min-width: 0;
+        }
+        @media (max-width: 640px) {
+            .finding-card-toggle .trait-body { grid-template-columns: 1fr; gap: 2px; }
+        }
+        /* Two-column grid: fixed-width trait-id, flex-width description.
+           Fixed first column means descriptions line up vertically across
+           every card in the list — easy to scan top-to-bottom. The 24em
+           id column fits ~43 monospaced chars at 12px, covering long
+           trait IDs like behaviors/system_persistence_registry_run
+           without ellipsizing them on standard widths. Long IDs that
+           still overflow ellipsize; hover the id to see the full string. */
+        .finding-card .trait-body {
+            display: grid;
+            grid-template-columns: 24em 1fr;
+            gap: 14px;
+            align-items: baseline;
+            min-width: 0;
+        }
+        .finding-card .trait-id {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            color: var(--iron);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .finding-card .trait-desc {
+            font-size: 13.5px;
+            color: var(--graphite);
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @media (max-width: 640px) {
+            /* Stack on narrow viewports where 16em + description doesn't fit. */
+            .finding-card .trait-body { grid-template-columns: 1fr; gap: 2px; }
+        }
+        .finding-card .files-pill {
+            font-size: 13px;
+            color: var(--slate);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 9px;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            white-space: nowrap;
+        }
+        .finding-card.open .files-pill { background: var(--white); border-color: var(--toxic-muted); color: var(--carbon); }
+        .finding-detail {
+            grid-column: 1 / -1;
+            padding-top: 10px;
+            margin-top: 6px;
+            border-top: 1px solid var(--border);
+        }
+        /* The detail panel uses the [hidden] attribute now (managed by JS
+           when aria-expanded flips), so collapsed state is conveyed in the
+           accessibility tree too — not just visually. */
+        .finding-detail[hidden] { display: none; }
+        /* Unified matches list: each row is one (evidence, file?) pair.
+           The evidence text is always shown; the file link only renders
+           when cleave's roll-up attribution gave us a known inner file.
+           That way "what matched" and "where it matched" sit on the same
+           line and a reader can choose which they want without having to
+           expand a second view. */
+        ul.finding-matches {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+        }
+        .finding-match {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 4px 12px;
+            padding: 6px 0;
+            border-top: 1px solid var(--mist);
+        }
+        .finding-match:first-child { border-top: none; }
+        .finding-match-evidence {
+            color: var(--graphite);
+            background: transparent;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .finding-match-file {
+            color: var(--iron);
+            font-size: 12.5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 0 1 auto;
+            max-width: 40%;
+        }
+        .finding-match-loc {
+            color: var(--slate);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            flex: 0 0 auto;
+        }
+        .finding-match-count {
+            color: var(--slate);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Context view — cleave's source/hex windows. A source block is numbered
+           lines with the matched span lit by severity; a hex block is an
+           offset / bytes / ascii grid with the matched bytes lit. Quiet gray
+           context, so the highlight is what the eye lands on. */
+        .ctx-view {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+            line-height: 1.55;
+        }
+        .ctx-block {
+            width: 100%;
+            border-collapse: collapse;
+            background: #fafafa;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            /* Monospace so the hex/ascii grid lines up; source rows bring their
+               own monospace via the chroma class, but the hex rows do not. */
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .ctx-row td {
+            padding: 1px 0;
+            vertical-align: top;
+            white-space: pre;
+        }
+        .ctx-row.has-hit { background: rgba(0, 0, 0, 0.015); }
+        .ctx-loc {
+            width: 1%;
+            padding: 1px 14px 1px 12px !important;
+            text-align: right;
+            color: var(--slate);
+            user-select: none;
+            font-variant-numeric: tabular-nums;
+            border-right: 1px solid var(--border);
+        }
+        .ctx-code {
+            padding-left: 14px !important;
+            color: var(--iron);
+            /* Wrap so a long line is fully visible; !important beats the
+               `.ctx-row td { white-space: pre }` base rule of equal specificity. */
+            white-space: pre-wrap !important;
+            overflow-wrap: anywhere;
+        }
+        .ctx-clip { color: var(--slate); user-select: none; }
+        /* Hex offset reads smaller (it is an address, not the focus) but keeps
+           the same gutter padding as a source line number for consistency.
+           Hex and ascii are one logical dump, so the gap between them is tight;
+           the gap from the divider to the bytes matches the source code inset. */
+        .ctx-hex .ctx-loc { font-size: 11px; }
+        .ctx-hex .ctx-bytes { padding: 1px 4px 1px 14px !important; color: var(--iron); }
+        .ctx-hex .ctx-ascii { padding: 1px 14px 1px 0 !important; color: var(--slate); }
+        /* Fixed-width cells make the grid a function of layout, not glyph
+           metrics: each hex pair is a 2ch box, each ascii char a 1ch box, so the
+           columns line up within a window and across files regardless of font. */
+        .ctx-hex .ctx-bytes .ctx-cell { display: inline-block; width: 2ch; margin-right: 0.5ch; }
+        .ctx-hex .ctx-bytes .ctx-cell:nth-child(8) { margin-right: 1.25ch; }
+        .ctx-hex .ctx-bytes .ctx-cell:last-child { margin-right: 0; }
+        .ctx-hex .ctx-ascii .ctx-cell { display: inline-block; width: 1ch; }
+        .ctx-cell { color: inherit; }
+        /* The match highlight: a tinted background per severity, carried by the
+           shared --hostile/--suspicious/--notable palette. mark resets the UA
+           yellow so only our tint shows.
+           Disabled for now — the per-severity tint is neutralised so a matched
+           span reads as plain (still syntax-coloured) text, with no background.
+           To restore, put the rgba backgrounds / colours back on the rules below:
+             .ctx-hit.hostile    { background: rgba(239, 68, 68, 0.20); color: #7f1d1d; }
+             .ctx-hit.suspicious { background: rgba(234, 179, 8, 0.22); color: #713f12; }
+             .ctx-hit.notable    { background: rgba(59, 130, 246, 0.18); color: #1e3a8a; }
+             .ctx-hit.baseline,
+             .ctx-hit.component  { background: rgba(0, 0, 0, 0.08); } */
+        mark.ctx-hit { background: none; color: inherit; }
+        .ctx-hit.hostile,
+        .ctx-hit.suspicious,
+        .ctx-hit.notable,
+        .ctx-hit.baseline,
+        .ctx-hit.component { background: none; color: inherit; }
+
+        /* File tab — one card per file, ordered by criticality, each listing its
+           top findings with their context. The default view for current reports. */
+        .file-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 18px;
+            overflow: hidden;
+            background: var(--white);
+        }
+        .file-card:last-child { margin-bottom: 0; }
+        .file-card-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 16px;
+            margin-bottom: 4px; /* override the global header { margin-bottom: 40px } */
+            background: var(--mist);
+            border-bottom: 1px solid var(--border);
+        }
+        .fcard-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--carbon);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .fcard-type {
+            margin-left: auto;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            color: var(--iron);
+            text-transform: uppercase;
+        }
+        /* Composite card — a cross-file conclusion with no code of its own. One
+           tight line: the description, then the members it drew from as
+           "file:line". Carries its severity as a soft tint plus a left rail,
+           inset slightly so it reads as the archive-level summary, not just
+           another file. Tints match the verdict-bar / galaxy palette. */
+        /* Top-traits headline: the sample's most significant findings, shown as
+           a compact scannable strip above the per-file content cards. */
+        .top-traits {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin: 0 10px 16px;
+        }
+        .top-trait {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 12px;
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .top-trait.hostile { border-left-color: var(--hostile); border-color: rgba(239, 68, 68, 0.22); background: rgba(239, 68, 68, 0.07); }
+        .top-trait.suspicious { border-left-color: var(--suspicious); border-color: rgba(234, 179, 8, 0.26); background: rgba(234, 179, 8, 0.09); }
+        .top-trait.notable { border-left-color: var(--notable); border-color: rgba(59, 130, 246, 0.22); background: rgba(59, 130, 246, 0.06); }
+        .top-trait-desc { color: var(--carbon); text-decoration: none; font-weight: 500; }
+        a.top-trait-desc:hover { text-decoration: underline; }
+
+        /* Composite trail: the members a cross-file conclusion drew from, inline
+           after a top-trait description — "file:line, file:line". */
+        .composite-trail {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 11.5px;
+            color: var(--slate);
+        }
+        .composite-src { color: var(--slate); }
+        .composite-src a { color: var(--notable); text-decoration: none; }
+        .composite-src a:hover { text-decoration: underline; }
+        .composite-loc { color: var(--slate); }
+
+        /* Content window: cleave's content-centric unit — one context window
+           headed by chips for the traits whose notes land inside it. Each chip's
+           severity color matches the highlight color of its span in the code
+           below. Windows sit flush inside the file card, divided by a hairline —
+           no nested box. */
+        /* Footnote when the file cap dropped some files. */
+        .content-limit-note {
+            margin: 4px 2px 0;
+            padding: 10px 14px;
+            border-top: 1px solid var(--border);
+            color: var(--iron);
+            font-size: 12.5px;
+        }
+        .win-section { padding: 3px 14px 5px; }
+        .win-section + .win-section { border-top: 1px solid var(--mist); }
+        /* The win-section already supplies the left inset, so the line-number
+           column hugs it — no doubled-up gutter before the code. Source loc
+           columns size to the widest loc on the page (--ctx-loc-src-ch) so every
+           window in a file lines up, but never narrower than 5 digits so the
+           gutter stays a consistent width across files. The hex offset uses a
+           fixed width instead, so the bytes/ascii grid starts at the same place
+           across different files too; an unusually large offset simply widens
+           that one file's column. Values stay right-aligned against the divider. */
+        .win-section .ctx-loc { padding-left: 0 !important; }
+        .win-section .ctx-src .ctx-loc { width: max(5ch, calc(var(--ctx-loc-src-ch, 3) * 1ch)); }
+        .win-section .ctx-hex .ctx-loc { width: 9ch; }
+        /* Freeze only the line-number gutter so it never scrolls away if the
+           code column ever overflows (it wraps, so that's rare). Trait
+           descriptions sit in their own .ctx-traits column on the right. */
+        .win-section .ctx-loc {
+            position: sticky;
+            left: 0;
+            z-index: 1;
+            background: var(--white);
+        }
+        .win-section .ctx-row.has-hit .ctx-loc { background: var(--cream); }
+        /* Trait descriptions ride their own right-hand column (.ctx-traits),
+           colour-keyed to the highlight, so the code column wraps to full width
+           without a note crowding it. Capped server-side to the file's top few
+           traits (maxAnnotatedTraits) to stay scannable — every trait still
+           highlights its span. The inline .ctx-anno below is retained for hex
+           rows, whose byte dump has no separate column. */
+        .ctx-traits {
+            padding: 2px 14px !important;
+            border-left: 1px solid var(--border);
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+        .ctx-traits:empty { border-left-color: transparent; }
+        /* Descriptions ride a fixed-width lane so every window's gutter is the
+           same width. A definite width (not max-width) is the load-bearing bit:
+           with max-width the column sized to its own longest note, so the gutter
+           width varied window-to-window. The width is set on the anno, not the
+           cell (a table cell's own width is only a hint in auto layout, but a
+           child block's definite width is honoured and fixes the column). Data
+           caps descriptions at 48 chars; the lane fits a typical 48-char note and
+           ellipsizes the widest, with the full text in the anno's title on hover.
+           font-size/line-height match the code column so gutter and code read as
+           one consistent size. It never wraps (white-space: nowrap). */
+        .ctx-traits .anno {
+            display: block;
+            width: 25em;
+            font-size: 12.5px;
+            line-height: 1.55;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .ctx-traits .anno + .anno { margin: 3px 0 0; }
+        .ctx-anno {
+            display: inline-block;
+            flex: 0 1 auto;
+            margin-left: auto;
+            max-width: 80ch;
+            padding-left: 24px;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            vertical-align: baseline;
+        }
+        .anno {
+            font-size: 12.5px;
+            color: var(--iron);
+        }
+        .anno + .anno { margin-left: 14px; }
+        .anno::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .anno.hostile::before { background: var(--hostile); }
+        .anno.suspicious::before { background: var(--suspicious); }
+        .anno.notable::before { background: var(--notable); }
+        /* The code sits flush inside the file card — drop the block's own frame
+           and background so it reads as part of the card, not a box-in-box. The
+           code column takes the slack so annotations align to the right edge. */
+        .win-section .ctx-view { gap: 0; padding: 0; overflow-x: auto; }
+        .win-section .ctx-block { border: none; border-radius: 0; background: transparent; }
+        .win-section .ctx-code { width: 100%; }
+        .crit-badge {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+        .crit-badge.hostile { background: var(--hostile); }
+        .crit-badge.suspicious { background: var(--suspicious); }
+        .crit-badge.notable { background: var(--notable); }
+        .crit-badge.baseline { background: var(--slate); }
+        .crit-badge.component { background: #aab2bd; }
+        .traits-truncation {
+            margin: 12px 4px 0;
+            font-size: 12px;
+            color: var(--slate);
+            opacity: 0.7;
+        }
+        .trait-id {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            color: var(--graphite);
+            white-space: nowrap;
+        }
+        .trait-desc {
+            color: var(--carbon);
+            line-height: 1.5;
+        }
+        .no-findings {
+            padding: 40px;
+            text-align: center;
+            color: var(--iron);
+            font-size: 14px;
+        }
+
+
+        .members-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 11px;
+            padding: 52px 24px;
+            color: var(--iron);
+            font-size: 13.5px;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+
+        .members-loading::before {
+            content: "";
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--toxic-muted);
+            animation: members-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes members-pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0.4); opacity: 1; }
+            70%  { box-shadow: 0 0 0 9px rgba(154, 190, 37, 0); opacity: 0.55; }
+            100% { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0); opacity: 1; }
+        }
+
+        .members-note {
+            padding: 44px 24px;
+            text-align: center;
+            color: var(--slate);
+            font-size: 13.5px;
+        }
+        .limited-info-notice {
+            background: var(--isotope-dim);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 8px;
+            padding: 16px 20px;
+            font-size: 14px;
+            color: var(--graphite);
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        .limited-info-notice a {
+            color: var(--isotope);
+            text-decoration: underline;
+        }
+
+        /* "Found in N archives" backlinks shown on standalone child pages */
+        .parents-panel {
+            background: var(--white);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .parents-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 10px 16px;
+            background: var(--mist);
+            border-bottom: 1px solid var(--border);
+        }
+        .parents-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .parents-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--mist);
+        }
+        .parents-item:last-child { border-bottom: none; }
+        .parents-item:hover { background: rgba(0, 0, 0, 0.02); }
+        .parents-link {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex: 1 1 auto;
+            color: var(--carbon);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .parents-link:hover { color: var(--isotope); }
+        .parents-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .parents-badge {
+            font-family: 'Oxanium', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .parents-badge.hostile { color: var(--hostile); }
+        .parents-badge.suspicious { color: #92400e; }
+        .parents-badge.benign { color: #4d7c0f; }
+        /* Edge-type chip in the "Referenced by" panel ("fetched"/"registry"):
+           how this content is related to the referrer, since it isn't inside it */
+        .parents-rel {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--slate);
+            background: var(--mist);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            padding: 0 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .parents-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+            color: var(--slate);
+            flex-shrink: 0;
+        }
+        .parents-sha {
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .parents-when {
+            font-variant-numeric: tabular-nums;
+        }
+        /* Flagged-dependency chips. A chip is a link to the dependency's own
+           record — the ↗ suffix and hover tint are the affordance, matching
+           the feed's dependency chips. A pathological locator ellipsizes
+           rather than stretching the panel. */
+        .dep-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px 16px;
+        }
+        .dep-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 48ch;
+            overflow: hidden;
+            padding: 3px 9px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--mist);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--carbon);
+            text-decoration: none;
+        }
+        .dep-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .dep-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .dep-chip.hostile .dep-dot { background: #ef4444; }
+        .dep-chip.suspicious .dep-dot { background: #facc15; }
+        .dep-kind {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--slate);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        a.dep-chip::after { content: " ↗"; opacity: 0.55; }
+        a.dep-chip:hover, a.dep-chip:focus-visible {
+            border-color: var(--isotope);
+            color: var(--isotope);
+            background: var(--white);
+        }
+        a.dep-chip:focus-visible { outline: 2px solid var(--isotope); outline-offset: 1px; }
+        .dep-chip.more {
+            color: var(--slate);
+            font-weight: 400;
+        }
+        .feedback-prompt {
+            text-align: center;
+            font-size: 14px;
+            color: var(--iron);
+            margin-top: 48px;
+        }
+        .feedback-prompt a {
+            color: var(--slate);
+            text-decoration: underline;
+        }
+        .feedback-prompt a:hover {
+            color: var(--carbon);
+        }
+
+        .filetype-tag {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 6px;
+            background: rgba(107, 114, 128, 0.12);
+            color: var(--slate);
+            border-radius: 3px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+
+        /* Provenance tab — the sample's origin record, grouped into titled
+           clusters (Identity / Origin / Timeline / Labeling). Each cluster is
+           a quiet two-column row table; values that are hashes/versions/URLs
+           render in the monospace face. */
+        .prov-group {
+            margin-bottom: 24px;
+        }
+        .prov-group:last-child {
+            margin-bottom: 0;
+        }
+        .prov-group-title {
+            margin: 0 0 8px;
+            padding: 0 14px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--iron);
+        }
+        .prov-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .prov-table td,
+        .prov-table th {
+            padding: 7px 14px;
+            border-bottom: 1px solid var(--mist);
+            vertical-align: top;
+            text-align: left;
+            font-weight: 400;
+        }
+        .prov-table tr:last-child td,
+        .prov-table tr:last-child th {
+            border-bottom: none;
+        }
+        .prov-table tr:hover {
+            background: rgba(0, 0, 0, 0.02);
+        }
+        .prov-key {
+            color: var(--iron);
+            white-space: nowrap;
+            width: 1%;
+            padding-right: 28px;
+        }
+        .prov-value {
+            color: var(--carbon);
+            word-break: break-word;
+        }
+        .prov-value.mono {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 12.5px;
+        }
+        .prov-link {
+            color: var(--notable);
+            text-decoration: none;
+        }
+        .prov-link:hover {
+            text-decoration: underline;
+        }
+        .report-meta {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+            color: var(--iron);
+            font-size: 13px;
+        }
+        .report-output {
+            margin: 0;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fafafa;
+            color: var(--carbon);
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        @media (max-width: 768px) {
+            .hero-body {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+            .molecule-viz {
+                min-height: 170px;
+            }
+            .formula-text {
+                font-size: 14px;
+            }
+            .verdict-bar { padding: 18px 18px 4px; }
+            .verdict-meta { padding: 0 18px 12px; }
+            .hero-llm { margin-left: 18px; margin-right: 18px; }
+            .hero-body { padding: 8px 18px 20px; }
+            /* Bump primary controls to ~44px touch targets on small screens
+               (Apple HIG / WCAG 2.5.5). Keeps the desktop density we like
+               while still being friendly to thumbs on a phone. */
+            .tab { padding: 14px 18px; font-size: 14px; }
+            .rescan-btn,
+            .download-btn { padding: 8px 12px; font-size: 13px; }
+            .hero-toggle { min-width: 44px; min-height: 44px; }
+            .galaxy-info-close { width: 40px; height: 40px; }
+        }
+        /* Respect users who opt out of motion at the OS level. */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.001ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+        /* Chroma syntax highlighting (generated server-side). Scoped under
+           .chroma so it only applies inside <code class="chroma"> blocks —
+           currently the evidence column of expanded trait cards. */
+        {{chromaCSS}}
+        .chroma { background: transparent; font: inherit; color: inherit; }
+        .chroma span { font: inherit; }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    {{template "banner" .}}
+    <div class="container">
+        <header>
+            <div>
+                <a href="/" class="logo">{{template "wordmark" .}}</a>
+                <p class="tagline">{{template "tagline" .}}</p>
+            </div>
+            <a href="/" class="back-link" aria-keyshortcuts="x" title="Back to feed (press x)"><span aria-hidden="true">← </span>Analyze another</a>
+        </header>
+
+        <main id="main-content">
+        <!-- Live region used for short status announcements (e.g. "Source
+             loaded", "SHA copied"). The text is replaced from JS; screen
+             readers announce the change because of aria-live="polite". -->
+        <div id="a11y-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+        <section class="hero" aria-labelledby="hero-filename">
+            <div class="verdict-bar {{if eq .Verdict "HOSTILE"}}sev-hostile{{else if eq .Verdict "SUSPICIOUS"}}sev-suspicious{{else if eq .Verdict "NOTABLE"}}sev-notable{{else}}sev-benign{{end}}">
+                <div class="verdict-bar-left">
+                    <span class="band" aria-hidden="true"></span>
+                    <h1 class="file-name" id="hero-filename" title="{{.Filename}}">{{.Headline}}</h1>{{if .FileType}}<span class="filetype-tag">{{.FileType}}</span>{{end}}
+                </div>
+                <div class="verdict">
+                    <span class="sr-only">Verdict: </span><span class="verdict-value">{{.Verdict}}</span>
+                </div>
+                <button type="button" class="hero-toggle" id="hero-toggle" aria-expanded="true" aria-controls="hero-details" aria-label="Collapse sample details">
+                    <span class="hero-toggle-icon" aria-hidden="true">▴</span>
+                </button>
+            </div>
+            <div class="verdict-meta"><span class="sr-only">SHA256: </span><a href="https://www.virustotal.com/gui/file/{{.SHA256}}" target="_blank" rel="noopener noreferrer" aria-label="Look up {{.SHA256}} on VirusTotal (opens in new tab)">{{.SHA256}}<span aria-hidden="true"> ↗</span></a>{{if .Level}}{{if ne (deref .Level) -1}}<span class="verdict-level" title="{{.VerdictTip}}">&nbsp;·&nbsp;{{.LevelConfidence}}%</span>{{end}}{{end}}</div>
+            {{if .RegistryDesc}}
+            <div class="hero-listing" title="marketplace listing description">“{{.RegistryDesc}}”</div>
+            {{end}}
+            {{if .LLMInterpretation}}
+            <div class="hero-llm">
+                <span class="hero-llm-tag" title="AI interpretation{{if .LLMConfidence}} · {{.LLMConfidence}}% confidence{{end}}">AI</span>
+                <span class="hero-llm-text">{{.LLMInterpretation}}</span>
+            </div>
+            {{end}}
+            <div class="hero-body" id="hero-details">
+            <div class="molecule-viz">
+                <div class="molecule-container">
+                    <canvas id="molecule-canvas" role="img" aria-label="Sample trait clustering diagram. An accessible breakdown of the same traits appears in the Traits tab below."></canvas>
+                    <div class="galaxy-info" id="galaxy-info" role="region" aria-labelledby="galaxy-info-title" aria-live="polite">
+                        <div class="galaxy-info-header">
+                            <span class="galaxy-info-title" id="galaxy-info-title"></span>
+                            <button type="button" class="galaxy-info-close" id="galaxy-info-close" aria-label="Close trait details">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="galaxy-info-formula" id="galaxy-info-formula"></div>
+                        <div class="galaxy-info-findings" id="galaxy-info-findings"></div>
+                    </div>
+                    <div class="galaxy-legend" id="galaxy-legend" hidden>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch local"></span>Local reference</span>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch dependency"></span>Suspicious dependency</span>
+                        <span class="galaxy-legend-item"><span class="galaxy-legend-swatch inferred"></span>Inferred</span>
+                    </div>
+                </div>
+            </div>
+            <div class="molecule-info">
+                <div class="formula-label" id="formula-label">Mal-ecule</div>
+                <a class="formula" href="/?m={{.FormulaQuery}}" aria-describedby="formula-label" aria-label="Find other samples with malecule {{.Formula}}">
+                    <span class="formula-text">{{.Formula}}</span>
+                    <span class="formula-arrow" aria-hidden="true">↗</span>
+                </a>
+                <div class="meta-table">
+                    <div class="meta-row">
+                        <span class="meta-label">Size</span>
+                        <span class="meta-value">
+                            {{.Size}}
+                            {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d"><span aria-hidden="true">⇩ </span>download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects"><span aria-hidden="true">⇩ </span>download unavailable</span>{{end}}{{end}}
+                        </span>
+                    </div>
+                    {{if .FirstSeenAt}}
+                    <div class="meta-row">
+                        <span class="meta-label">First seen</span>
+                        <span class="meta-value" title="{{.FirstSeenAt}}">{{.FirstSeenAgo}}</span>
+                    </div>
+                    {{end}}
+                    {{if .AnalyzedAt}}
+                    <div class="meta-row">
+                        <span class="meta-label">Analyzed</span>
+                        <span class="meta-value" title="{{.AnalyzedAt}}">
+                            {{.AnalyzedAgo}}
+                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if .PURL}}
+                    <div class="meta-row">
+                        <span class="meta-label">Package</span>
+                        {{if .PURLIndexURL}}
+                        <a class="meta-value purl-value" href="{{.PURLIndexURL}}"
+                           title="All analyzed versions of this package">{{.PURL}}</a>
+                        {{else}}
+                        <span class="meta-value purl-value" title="Package URL">{{.PURL}}</span>
+                        {{end}}
+                    </div>
+                    {{end}}
+                    {{if .Users}}
+                    <div class="meta-row">
+                        <span class="meta-label">Installs</span>
+                        <span class="meta-value" title="marketplace install count at fetch time">{{.Users}}</span>
+                    </div>
+                    {{end}}
+                    {{if .Ecosystem}}
+                    <div class="meta-row">
+                        <span class="meta-label">Ecosystem</span>
+                        <span class="meta-value">
+                            {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if .SourceLabel}}
+                    <div class="meta-row">
+                        <span class="meta-label">Source</span>
+                        <span class="meta-value source-value">
+                            {{if .SourceURL}}<a class="source-link" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer" aria-label="Open source URL {{.SourceURL}} in a new tab">{{.SourceLabel}}<span aria-hidden="true"> ↗</span></a>{{else}}<span title="domain only — no exact URL recorded">{{.SourceLabel}}</span>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                    {{if or .DetectedBy .MoreSources}}
+                    <div class="meta-row">
+                        <span class="meta-label" title="Other threat feeds, scanners, blogs, or advisories that have also cited this sample">Also detected by</span>
+                        <span class="meta-value detectedby-value">
+                            {{range .DetectedBy}}{{if .URL}}<a class="feed-chip" href="{{.URL}}" target="_blank" rel="noopener noreferrer" title="{{.Note}}" aria-label="Open {{.Source}} report in a new tab">{{.Source}}<span aria-hidden="true"> ↗</span></a>{{else}}<span class="feed-chip" title="{{.Note}}">{{.Source}}</span>{{end}}{{end}}{{if .MoreSources}}<span class="feed-chip" title="Sources we don't name individually">{{.MoreSources}}</span>{{end}}
+                        </span>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            </div>
+        </section>
+
+        {{if .LimitedInfo}}
+        <div class="limited-info-notice">
+            This file type is not yet supported, so analysis could not be performed. See <a href="/formats">supported formats</a> for best results, or analyze locally with <a href="https://github.com/atomdrift-project/litmus">litmus</a>.
+        </div>
+        {{end}}
+
+        {{- /* Flagged dependencies lead the panels: they explain an elevated
+             verdict, where the backlinks below only place the sample. A chip
+             links to the dependency's own record; one without a usable sha
+             renders as a plain span, same anatomy either way. */ -}}
+        {{if .FlaggedDeps}}
+        <section class="parents-panel" aria-labelledby="deps-title">
+            <h2 class="parents-title" id="deps-title">{{len .FlaggedDeps}} flagged dependenc{{if eq (len .FlaggedDeps) 1}}y{{else}}ies{{end}}</h2>
+            <div class="dep-chips">
+                {{range .FlaggedDeps}}
+                {{if .Href}}<a class="dep-chip {{.Crit}}" href="{{.Href}}" title="{{.Locator}}"><span class="dep-dot" aria-hidden="true"></span><span class="dep-label">{{.Label}}</span>{{if .Kind}}<span class="dep-kind">{{.Kind}}</span>{{end}}</a>
+                {{else}}<span class="dep-chip {{.Crit}}" title="{{.Locator}}"><span class="dep-dot" aria-hidden="true"></span><span class="dep-label">{{.Label}}</span>{{if .Kind}}<span class="dep-kind">{{.Kind}}</span>{{end}}</span>{{end}}
+                {{end}}
+                {{if .FlaggedDepsHidden}}<span class="dep-chip more">+{{.FlaggedDepsHidden}} more in Structure</span>{{end}}
+            </div>
+        </section>
+        {{end}}
+
+        {{define "parentItem"}}
+                <li class="parents-item">
+                    <a class="parents-link" href="/file/{{.SHA256}}#file={{.ChildSHA}}" title="open archive view">
+                        {{if .Classification}}<span class="parents-badge {{.Classification}}">{{.Classification}}</span>{{end}}
+                        <span class="parents-name">{{.Filename}}</span>
+                        {{if and .Rel (ne .Rel "unpacked")}}<span class="parents-rel" title="this sample references the file; it was retrieved from a locator the sample declares — not contained in it">{{.Rel}}</span>{{end}}
+                    </a>
+                    <span class="parents-meta">
+                        <span class="parents-sha" title="{{.SHA256}}">{{.SHA256Short}}</span>
+                        {{if .AnalyzedAgo}}<span class="parents-when" title="{{.AnalyzedAt}}">analyzed {{.AnalyzedAgo}}</span>{{end}}
+                    </span>
+                </li>
+        {{end}}
+        {{if .Parents}}
+        <section class="parents-panel" aria-labelledby="parents-title">
+            <h2 class="parents-title" id="parents-title">Found in {{len .Parents}} archive{{if ne (len .Parents) 1}}s{{end}}</h2>
+            <ul class="parents-list">
+                {{range .Parents}}{{template "parentItem" .}}{{end}}
+            </ul>
+        </section>
+        {{end}}
+
+        {{if .Referrers}}
+        <section class="parents-panel" aria-labelledby="referrers-title">
+            <h2 class="parents-title" id="referrers-title">Referenced by {{len .Referrers}} sample{{if ne (len .Referrers) 1}}s{{end}}</h2>
+            <ul class="parents-list">
+                {{range .Referrers}}{{template "parentItem" .}}{{end}}
+            </ul>
+        </section>
+        {{end}}
+
+        <section class="tabs-section" aria-label="Analysis details"{{if .DeferredMembers}} data-defer-members="{{.SHA256}}"{{end}}>
+            <div class="tabs" role="tablist" aria-label="Analysis sections">
+                {{if or .FileViews .DeferredMembers}}<button type="button" class="tab active" role="tab" id="tabbtn-content" data-tab="content" aria-selected="true" aria-controls="tab-content" tabindex="0">Content</button>{{end}}
+                <button type="button" class="tab{{if not (or .FileViews .DeferredMembers)}} active{{end}}" role="tab" id="tabbtn-traits" data-tab="traits" aria-selected="{{if or .FileViews .DeferredMembers}}false{{else}}true{{end}}" aria-controls="tab-traits" tabindex="{{if or .FileViews .DeferredMembers}}-1{{else}}0{{end}}">Traits</button>
+                {{if .Provenance}}<button type="button" class="tab" role="tab" id="tabbtn-provenance" data-tab="provenance" aria-selected="false" aria-controls="tab-provenance" tabindex="-1">Provenance</button>{{end}}
+                {{if .ReportContent}}<button type="button" class="tab" role="tab" id="tabbtn-report" data-tab="report" aria-selected="false" aria-controls="tab-report" tabindex="-1">Report</button>{{end}}
+                {{if .HasTree}}<button type="button" class="tab" role="tab" id="tabbtn-structure" data-tab="structure" aria-selected="false" aria-controls="tab-structure" tabindex="-1">Structure</button>{{end}}
+            </div>
+
+            {{if .FileViews}}
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0" {{.ContentLocStyle}}>{{template "contentBody" .}}</div>
+            {{else if .DeferredMembers}}
+            <div class="tab-content active" id="tab-content" role="tabpanel" aria-labelledby="tabbtn-content" tabindex="0"><p class="members-loading" aria-live="polite">Loading file contents…</p></div>
+            {{end}}
+{{define "contentBody"}}
+                {{if .TopTraits}}
+                <div class="top-traits" aria-label="Most significant traits">
+                    {{range .TopTraits}}
+                    <div class="top-trait {{if .Crit}}{{.Crit}}{{else}}notable{{end}}">
+                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                        <span class="top-trait-desc">{{.Desc}}</span>{{if .Sources}}<span class="composite-trail">{{range $i, $s := .Sources}}{{if $i}}, {{else}}: {{end}}<span class="composite-src">{{if $s.Anchor}}<a href="#{{$s.Anchor}}">{{$s.Label}}{{if $s.Loc}}:{{$s.Loc}}{{end}}</a>{{else}}{{$s.Label}}{{if $s.Loc}}:{{$s.Loc}}{{end}}{{end}}</span>{{end}}</span>{{end}}
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+                {{range .FileViews}}
+                {{if .Windows}}
+                <section class="file-card" id="{{.Anchor}}">
+                    <header class="file-card-head">
+                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
+                        <span class="fcard-name" title="{{.Path}}">{{.Filename}}</span>
+                        {{if .FileType}}<span class="fcard-type">{{.FileType}}</span>{{end}}
+                    </header>
+                    {{range .Windows}}
+                    <div class="win-section">{{template "ctxblocks" .Blocks}}</div>
+                    {{end}}
+                </section>
+                {{end}}
+                {{end}}
+                {{if .FilesOmitted}}
+                <p class="content-limit-note">Showing the top {{.FilesShownLimit}} files for legibility — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}result{{else}}results{{end}}) hidden. Open a file directly to see its full context.</p>
+                {{end}}
+{{end}}
+
+            {{/* When no file carries per-line context (legacy or context-free
+                 data) the Content tab is omitted entirely and Traits is the
+                 default, so the two tabs never render identical evidence. */}}
+            <div class="tab-content{{if not (or .FileViews .DeferredMembers)}} active{{end}}" id="tab-traits" role="tabpanel" aria-labelledby="tabbtn-traits" tabindex="0">{{if .DeferredMembers}}<p class="members-loading" aria-live="polite">Loading traits…</p>{{else}}{{template "findingsbody" .}}{{end}}</div>
+{{define "findingsbody"}}
+                {{if .IsArchive}}
+                    {{if .ArchiveCategories}}
+                        {{range .ArchiveCategories}}
+                        <div class="category-section">
+                            <h2 class="category-title">{{.Name}}</h2>
+                            <div class="findings-list">
+                                {{range .Findings}}
+                                <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
+                                    {{if .Matches}}
+                                    <button type="button" class="finding-card-toggle" aria-expanded="false">
+                                        <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                        <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
+                                        <span class="trait-body">
+                                            <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                            <span class="trait-desc">{{.Desc}}</span>
+                                        </span>
+                                        <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}</span>
+                                    </button>
+                                    <div class="finding-detail" hidden>
+                                        <ul class="finding-matches">
+                                            {{range .Matches}}
+                                            <li class="finding-match">
+                                                {{if .Filename}}<span class="finding-match-file" title="{{.Path}}">{{.Filename}}</span>{{end}}
+                                                {{if .Location}}<span class="finding-match-loc">{{.Location}}</span>{{end}}
+                                                <code class="finding-match-evidence chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Evidence}}{{end}}</code>
+                                                {{if gt .Count 1}}<span class="finding-match-count">×{{.Count}}</span>{{end}}
+                                            </li>
+                                            {{end}}
+                                        </ul>
+                                    </div>
+                                    {{else}}
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
+                                    <div class="trait-body">
+                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                        <span class="trait-desc">{{.Desc}}</span>
+                                    </div>
+                                    {{end}}
+                                </div>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
+                        {{if gt .ArchiveTraitTotal .ArchiveTraitShown}}
+                        <p class="traits-truncation">{{.ArchiveTraitShown}} of {{.ArchiveTraitTotal}} traits shown</p>
+                        {{end}}
+                    {{else}}
+                        <div class="no-findings">No notable behaviors detected across this archive.</div>
+                    {{end}}
+                {{else if .FileFindings}}
+                    {{range .FileFindings}}
+                    {{$traitTotal := .TraitTotal}}
+                    {{$traitShown := .TraitShown}}
+                    {{range .Categories}}
+                    <div class="category-section">
+                        <h2 class="category-title">{{.Name}}</h2>
+                        <div class="findings-list">
+                            {{range .Findings}}
+                            <div class="finding-card{{if .Matches}} expandable{{end}}"{{if .Matches}} data-trait-id="{{.ID}}"{{end}}>
+                                {{if .Matches}}
+                                <button type="button" class="finding-card-toggle" aria-expanded="false">
+                                    <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                    <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
+                                    <span class="trait-body">
+                                        <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                        <span class="trait-desc">{{.Desc}}</span>
+                                    </span>
+                                    <span class="files-pill">{{len .Matches}} match{{if ne (len .Matches) 1}}es{{end}}</span>
+                                </button>
+                                <div class="finding-detail" hidden>
+                                    {{if .Context}}
+                                    {{template "ctxblocks" .Context}}
+                                    {{else}}
+                                    <ul class="finding-matches">
+                                        {{range .Matches}}
+                                        <li class="finding-match">
+                                            {{if .Filename}}<span class="finding-match-file" title="{{.Path}}">{{.Filename}}</span>{{end}}
+                                            {{if .Location}}<span class="finding-match-loc">{{.Location}}</span>{{end}}
+                                            <code class="finding-match-evidence chroma">{{if .Tokens}}{{range .Tokens}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{else}}{{.Evidence}}{{end}}</code>
+                                            {{if gt .Count 1}}<span class="finding-match-count">×{{.Count}}</span>{{end}}
+                                        </li>
+                                        {{end}}
+                                    </ul>
+                                    {{end}}
+                                </div>
+                                {{else}}
+                                <span class="crit-badge {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{if .Crit}}{{.Crit}}{{else}}notable{{end}} ({{.ConfPct}}% confident)" aria-hidden="true"></span>
+                                <span class="sr-only">{{if .Crit}}{{.Crit}}{{else}}notable{{end}} severity, {{.ConfPct}}% confident. </span>
+                                <div class="trait-body">
+                                    <span class="trait-id" title="{{.ID}}">{{.ID}}</span>
+                                    <span class="trait-desc">{{.Desc}}</span>
+                                </div>
+                                {{end}}
+                            </div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                    {{if gt $traitTotal $traitShown}}
+                    <p class="traits-truncation">{{$traitShown}} of {{$traitTotal}} traits shown</p>
+                    {{end}}
+                    {{end}}
+                {{else}}
+                    {{if .LimitedInfo}}
+                    <div class="no-findings">Analysis could not be performed for this file type.</div>
+                    {{else}}
+                    <div class="no-findings">No notable behaviors detected — this file appears clean.</div>
+                    {{end}}
+                {{end}}
+{{end}}
+
+            {{if .Provenance}}
+            <div class="tab-content" id="tab-provenance" role="tabpanel" aria-labelledby="tabbtn-provenance" tabindex="0">
+                {{range .Provenance}}
+                <div class="prov-group">
+                    <h3 class="prov-group-title">{{.Title}}</h3>
+                    <table class="prov-table">
+                        <tbody>
+                            {{range .Rows}}
+                            <tr>
+                                <th scope="row" class="prov-key">{{.Label}}</th>
+                                <td class="prov-value{{if .Mono}} mono{{end}}">{{if .Href}}<a class="prov-link" href="{{.Href}}"{{if .External}} target="_blank" rel="noopener noreferrer"{{end}}>{{.Value}}{{if .External}}<span aria-hidden="true"> ↗</span>{{end}}</a>{{else}}{{.Value}}{{end}}</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+            {{if .ReportContent}}
+            <div class="tab-content" id="tab-report" role="tabpanel" aria-labelledby="tabbtn-report" tabindex="0">
+                {{if or .ReportProvider .ReportCreated}}
+                <div class="report-meta">
+                    {{if .ReportProvider}}<span>Provider {{.ReportProvider}}</span>{{end}}
+                    {{if .ReportCreated}}<span>Created {{.ReportCreated}}</span>{{end}}
+                </div>
+                {{end}}
+                <pre class="report-output">{{.ReportContent}}</pre>
+            </div>
+            {{end}}
+
+            {{if .HasTree}}
+            <div class="tab-content" id="tab-structure" role="tabpanel" aria-labelledby="tabbtn-structure" tabindex="0">
+                <ul class="ttree">
+                    {{range .Tree}}{{template "treeNode" .}}{{end}}
+                </ul>
+                <div class="tlegend">
+                    <span class="item"><span class="tdot none"></span> contained member</span>
+                    <span class="item"><span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched</span> pulled from a URL its parent declared</span>
+                    <span class="item"><span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span> package metadata, not an extracted file</span>
+                </div>
+            </div>
+            {{end}}
+        </section>
+{{define "treeNode"}}
+                <li class="tnode{{if .Collapsed}} collapsed{{end}}">
+                    <div class="trow{{if .Children}} clickable{{end}}"{{if .Children}} tabindex="0" role="button" aria-expanded="{{if .Collapsed}}false{{else}}true{{end}}"{{end}}>
+                        <span class="tdot {{if .Crit}}{{.Crit}}{{else}}none{{end}}" aria-hidden="true"></span>
+                        <span class="ttw{{if not .Children}} leaf{{end}}" aria-hidden="true">{{if .Children}}&#9662;{{end}}</span>
+                        {{if .IsDir}}<span class="tname tdir">{{.Name}}/</span>{{else}}<a class="tname" href="/file/{{.SHA256}}" title="{{.Path}}">{{.Name}}</a>{{if .FileType}}<span class="ttype">{{.FileType}}</span>{{end}}{{if eq .Rel "fetched"}}<span class="tchip fetch"><span class="g" aria-hidden="true">&#8675;</span> fetched{{if .Via}} &middot; <a href="{{.Via}}" target="_blank" rel="noopener noreferrer" title="{{.Via}}">{{.ViaHost}}</a>{{end}}</span>{{end}}{{if eq .Role "sidecar"}}<span class="tchip reg"><span class="g" aria-hidden="true">&#9432;</span> registry</span>{{end}}{{end}}
+                        <span class="tgrow"></span>
+                        {{if .IsDir}}<span class="tmeta">{{.Count}} file{{if ne .Descendants 1}}s{{end}}</span>{{else if .Children}}<span class="tmeta">{{.Count}} file{{if ne .Descendants 1}}s{{end}}{{if .SizeHuman}} &middot; {{.SizeHuman}}{{end}}</span>{{else if .SizeHuman}}<span class="tmeta">{{.SizeHuman}}</span>{{end}}
+                    </div>
+                    {{if .Children}}
+                    <ul class="tkids">
+                        {{range .Children}}{{template "treeNode" .}}{{end}}
+                        {{if gt .Hidden 0}}<li class="tnode"><div class="trow tmore">+ {{.Hidden}} more files</div></li>{{end}}
+                    </ul>
+                    {{end}}
+                </li>
+{{end}}
+        <div class="feedback-prompt">
+            Not seeing what you expected? <a href="https://github.com/atomdrift-project/lab/issues" target="_blank" rel="noopener noreferrer">Let us know</a>
+        </div>
+        </main>
+
+        {{template "footer" .}}
+    </div>
+
+    <script nonce="{{.Nonce}}" id="molecule-data" type="application/json">{{.MoleculeJSON}}</script>
+    <script nonce="{{.Nonce}}" id="molecule-layout" type="application/json">"{{.Layout}}"</script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/molecule.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/members.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/hero-nav.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/tree.js?v={{.BuildCommit}}"></script>
+</body>
+</html>
+{{define "ctxanno"}}{{range .}}<span class="anno {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" title="{{.Desc}}">{{.Desc}}</span>{{end}}{{end}}
+{{define "ctxblocks"}}
+<div class="ctx-view">
+    {{range .}}
+    {{if .Hex}}
+    <table class="ctx-block ctx-hex"><tbody>
+        {{range .Rows}}
+        <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
+            <td class="ctx-loc">{{.Loc}}</td>
+            <td class="ctx-bytes">{{range .Segs}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}</td>
+            <td class="ctx-ascii">{{range .ASCII}}<span class="ctx-cell{{if .Crit}} ctx-hit {{.Crit}}{{end}}">{{.Text}}</span>{{end}}{{if .Annos}}<span class="ctx-anno">{{template "ctxanno" .Annos}}</span>{{end}}</td>
+        </tr>
+        {{end}}
+    </tbody></table>
+    {{else}}
+    <table class="ctx-block ctx-src"><tbody>
+        {{range .Rows}}
+        <tr class="ctx-row{{if .Crit}} has-hit{{end}}">
+            <td class="ctx-loc">{{.Loc}}</td>
+            <td class="ctx-code chroma"><span class="ctx-srctext">{{if .Lead}}<span class="ctx-clip">…</span>{{end}}{{range .Segs}}{{if .Crit}}<mark class="ctx-hit {{.Crit}}">{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}</mark>{{else if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="ctx-clip">…</span>{{end}}</span></td>
+            <td class="ctx-traits">{{if .Annos}}{{template "ctxanno" .Annos}}{{end}}</td>
+        </tr>
+        {{end}}
+    </tbody></table>
+    {{end}}
+    {{end}}
+</div>
+{{end}}

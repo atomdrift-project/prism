@@ -51,7 +51,7 @@ func TestParseTopTraitsDependencyURL(t *testing.T) {
 // Rows scanned before scan emitted the dep field — and rows whose dep is
 // malformed — keep the generic id chip, exactly as before.
 func TestParseTopTraitsDependencyFallbacks(t *testing.T) {
-	generic := feedTrait{ID: "fetch.dependency-verdict", Full: "fetch/dependency-verdict", Crit: "hostile"}
+	generic := feedTrait{ID: "fetch/dependency-verdict", Full: "fetch/dependency-verdict", Crit: "hostile"}
 	cases := []struct {
 		name string
 		raw  string

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -88,40 +86,6 @@ func TestBuildFileTreeCycleSafe(t *testing.T) {
 	roots := buildFileTree(files) // must return without hanging
 	if len(roots) == 0 {
 		t.Fatal("self-parented node should still surface as a root")
-	}
-}
-
-// The recursive treeNode template must render a fetched node's provenance chip
-// and linked source host, recurse into a registry-sidecar child, and link each
-// row to the member's page — a render check the parse-only test can't catch.
-func TestTreeNodeRenders(t *testing.T) {
-	tmpl := resultTemplateForTest(t)
-	node := &treeNode{
-		Name: "4.13.0", SHA256: "1d40ca01", FileType: "gz",
-		Rel: "fetched", Via: "https://github.com/opencv/opencv/archive/4.13.0.tar.gz",
-		ViaHost: "github.com", Crit: "suspicious", SizeHuman: "95 MB",
-		Descendants: 10198, Count: "10,198",
-		Children: []*treeNode{
-			{Name: "package.json", SHA256: "abc", FileType: "package.json", Role: "sidecar", Crit: "notable"},
-		},
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "treeNode", node); err != nil {
-		t.Fatalf("treeNode render: %v", err)
-	}
-	out := buf.String()
-	for _, want := range []string{
-		`class="tchip fetch"`,
-		`href="https://github.com/opencv/opencv/archive/4.13.0.tar.gz"`,
-		"github.com",
-		"10,198 files",
-		`class="tchip reg"`, // the sidecar child recursed into
-		`href="/file/1d40ca01"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("treeNode output missing %q\n---\n%s", want, out)
-		}
 	}
 }
 

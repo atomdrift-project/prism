@@ -29,8 +29,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
-	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -245,9 +243,6 @@ func (f falloutVerificationFilter) matches(corroborated bool) bool {
 type falloutRow struct {
 	feedRow
 
-	// MolSVG is the row's skeletal-formula thumbnail, rendered server-side
-	// from the exemplar's malecule formula.
-	MolSVG template.HTML
 	// HeatClass buckets the row's age for the decay halo: "heat-2" under six
 	// hours, "heat-1" under a day, "heat-0" once the particle has cooled.
 	HeatClass string
@@ -272,7 +267,12 @@ func (r falloutRow) IsWave() bool { return r.WaveSize >= waveMinSize }
 type falloutDay struct {
 	Label string // "TODAY", "YESTERDAY", or an uppercase weekday
 	Sub   string // "Mon Aug 4 · 21 catches · 2 waves · 4 singles"
+	// ID anchors the band so the rail can jump to it; Date and Count feed
+	// the rail's day list without re-parsing Sub.
+	ID    string
+	Date  string
 	Rows  []falloutRow
+	Count int
 }
 
 // falloutSector is one chip in the ecosystem strip: a sector with damage in
@@ -302,17 +302,20 @@ type falloutPageData struct {
 	// go. CurrentWeek is false whenever the reader is looking at the archive,
 	// which is what the "back to this week" affordance keys off.
 	AllSectorsURL string
-	OlderURL      string
-	NewerURL      string
-	CurrentURL    string
-	Sectors       []falloutSector
-	Days          []falloutDay
-	MeterSegs     []bool
-	WeeklyCount   int
-	HasHopper     bool
-	CurrentWeek   bool
-	FeedDegraded  bool
-	Filtered      bool
+	// CiteURL is the dated address of this week, the one that names the same
+	// catches forever, shown so a reader can cite it.
+	CiteURL      string
+	OlderURL     string
+	NewerURL     string
+	CurrentURL   string
+	Sectors      []falloutSector
+	Days         []falloutDay
+	MeterSegs    []bool
+	WeeklyCount  int
+	HasHopper    bool
+	CurrentWeek  bool
+	FeedDegraded bool
+	Filtered     bool
 }
 
 const falloutMeterSegs = 6
@@ -355,6 +358,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		// narrows this in buildFalloutView.
 		WindowLabel:   week.label(),
 		AllSectorsURL: falloutURL(week.param(), "", verifiedRaw),
+		CiteURL:       falloutURL(week.Date, "", ""),
 		CurrentURL:    falloutURL("", eco, verifiedRaw),
 	}
 	if week.Prev != "" {
@@ -685,7 +689,10 @@ func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSiz
 				plural(len(rows), "catch", "catches"),
 				len(waves), pluralWord(len(waves), "wave", "waves"),
 				len(singles), pluralWord(len(singles), "single", "singles")),
-			Rows: bandRows,
+			ID:    "day-" + day,
+			Date:  date.Format("Mon 2 Jan"),
+			Count: len(rows),
+			Rows:  bandRows,
 		})
 	}
 	return days
@@ -827,7 +834,6 @@ func normalizeFalloutIdentity(r *feedRow) {
 func decorateFalloutRows(rows []falloutRow, now time.Time) {
 	for i := range rows {
 		normalizeFalloutIdentity(&rows[i].feedRow)
-		rows[i].MolSVG = skeletalSVG(rows[i].Formula, rows[i].TopTraits)
 		rows[i].HeatClass = decayClass(now.Sub(rows[i].AnalyzedAt))
 		if len(rows[i].TopTraits) > 2 {
 			rows[i].TopTraits = rows[i].TopTraits[:2]
@@ -969,155 +975,80 @@ func parseFormulaGroups(formula string) []molGroup {
 	return groups
 }
 
-// molGroupPriority ranks which composite deserves the ring: objectives carry
-// the hostile structure, micro-behaviors second; metadata and provenance
-// groups only draw when nothing better exists.
-func molGroupPriority(lead string) int {
-	switch lead {
+// molRingMax caps how many members one subscript may expand to: a Cm₆₅ would
+// otherwise mint 65 tiles nobody can read.
+const molRingMax = 5
+
+// tierTiles is one tier of a formula rendered as tiles: the tier symbol (O, H,
+// Md, K, Th), its name, and the atoms it holds with their subscripts.
+type tierTiles struct {
+	Tier  string
+	Name  string
+	Atoms []tileAtom
+}
+
+// tileAtom is one element tile: its symbol, the category it stands for, and
+// how many subcategories the formula counted under it.
+type tileAtom struct {
+	Symbol string
+	Name   string
+	Count  int
+}
+
+// tierName spells out a tier symbol for a title attribute.
+func tierName(tier string) string {
+	switch tier {
 	case "O":
-		return 0
+		return "objectives"
 	case "H":
-		return 1
-	case "K":
-		return 2
-	case "Th":
-		return 3
+		return "behaviours"
 	case "Md":
-		return 4
+		return "metadata"
+	case "K":
+		return "well-known"
+	case "Th":
+		return "third-party"
 	default:
-		return 5
+		return ""
 	}
 }
 
-// molMaxAtoms bounds the thumbnail: a ring of up to five plus a chain of up
-// to three keeps the drawing legible at 38px; deeper formulas are truncated,
-// which is fine — the thumbnail is a fingerprint, not a census.
-const (
-	molRingMax  = 5
-	molChainMax = 3
-)
-
-// traitSeverityBySymbol maps element symbols to the highest criticality among
-// the row's top traits whose category path touches that element — the only
-// per-atom severity signal the feed projection carries.
-func traitSeverityBySymbol(traits []feedTrait) map[string]string {
-	rank := map[string]int{"hostile": 2, "suspicious": 1}
-	out := make(map[string]string, 4)
-	for _, t := range traits {
-		if rank[t.Crit] == 0 {
-			continue
-		}
-		for _, seg := range strings.FieldsFunc(t.Full, func(r rune) bool { return r == '/' || r == '.' }) {
-			el, ok := categoryToElement(seg)
-			if !ok {
+// formulaTiers turns a formula like "O₄(AlEu₂CaDy)H₅(CmCrDb₅Os₄Po)Md(Pa)"
+// into tile rows, one per tier, preserving the formula's order. Standalone
+// atoms outside any parenthesis become a row with no tier symbol. Counts are
+// read from the subscripts; parseFormulaGroups expands them into repeated
+// members, so they are folded back here.
+func formulaTiers(formula string) []tierTiles {
+	var out []tierTiles
+	for _, g := range parseFormulaGroups(formula) {
+		t := tierTiles{Tier: g.Lead, Name: tierName(g.Lead)}
+		idx := make(map[string]int, len(g.Members))
+		for _, sym := range g.Members {
+			if i, ok := idx[sym]; ok {
+				t.Atoms[i].Count++
 				continue
 			}
-			if rank[t.Crit] > rank[out[el.Symbol]] {
-				out[el.Symbol] = t.Crit
+			name := sym
+			if el, ok := elementBySymbol(sym); ok {
+				name = el
 			}
+			idx[sym] = len(t.Atoms)
+			t.Atoms = append(t.Atoms, tileAtom{Symbol: sym, Name: name, Count: 1})
+		}
+		if len(t.Atoms) > 0 {
+			out = append(out, t)
 		}
 	}
 	return out
 }
 
-// skeletalSVG renders the bond-line thumbnail for a formula. The ring is the
-// highest-priority composite (objectives first — that's where the hostile
-// structure lives); the chain is the runner-up group. Returns an empty
-// document when the formula parses to nothing — the template renders the
-// frame either way so rows stay aligned.
-func skeletalSVG(formula string, traits []feedTrait) template.HTML {
-	groups := parseFormulaGroups(formula)
-	slices.SortStableFunc(groups, func(a, b molGroup) int {
-		return cmp.Compare(molGroupPriority(a.Lead), molGroupPriority(b.Lead))
-	})
-	var ring, chain []string
-	if len(groups) > 0 {
-		ring = groups[0].Members[:min(len(groups[0].Members), molRingMax)]
-	}
-	if len(groups) > 1 {
-		chain = groups[1].Members[:min(len(groups[1].Members), molChainMax)]
-	}
-	severity := traitSeverityBySymbol(traits)
-
-	var svg strings.Builder
-	svg.WriteString(`<svg width="38" height="32" viewBox="0 0 38 32" aria-hidden="true">`)
-
-	// Deterministic rotation: the same formula always draws the same shape,
-	// different formulas start their rings at different angles.
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(formula)) // fnv's Write never fails
-	rot := float64(h.Sum32()%64) / 64 * 2 * math.Pi
-
-	type pt struct{ x, y float64 }
-	var ringPts []pt
-	if len(ring) > 0 {
-		cx, cy, radius := 14.0, 16.0, 9.0
-		if len(chain) == 0 {
-			cx = 19
-		}
-		if len(ring) == 1 {
-			ringPts = []pt{{cx, cy}}
-		} else {
-			for i := range ring {
-				a := rot + 2*math.Pi*float64(i)/float64(len(ring))
-				ringPts = append(ringPts, pt{cx + radius*math.Sin(a), cy - radius*math.Cos(a)})
-			}
-		}
-		for i := range ringPts {
-			next := ringPts[(i+1)%len(ringPts)]
-			if len(ringPts) > 1 {
-				line(&svg, ringPts[i].x, ringPts[i].y, next.x, next.y)
-			}
+// elementBySymbol maps an element symbol back to the trait category it stands
+// for, for tile titles. Symbols the table does not know keep their letters.
+func elementBySymbol(sym string) (string, bool) {
+	for category, el := range categoryElements {
+		if el.Symbol == sym {
+			return category, true
 		}
 	}
-
-	// The chain zigzags rightward, bonded to the ring's first vertex when a
-	// ring exists.
-	var chainPts []pt
-	if len(chain) > 0 {
-		startX, startY := 8.0, 20.0
-		if len(ringPts) > 0 {
-			startX, startY = ringPts[0].x, ringPts[0].y
-		}
-		x, y := startX, startY
-		up := true
-		for range chain {
-			nx := x + 9
-			ny := y - 9
-			if !up {
-				ny = y + 9
-			}
-			ny = math.Min(math.Max(ny, 6), 27)
-			nx = math.Min(nx, 35)
-			chainPts = append(chainPts, pt{nx, ny})
-			line(&svg, x, y, nx, ny)
-			x, y, up = nx, ny, !up
-		}
-	}
-
-	label := func(p pt, sym string) {
-		crit, ok := severity[sym]
-		if !ok {
-			return // neutral atoms stay bare vertices
-		}
-		class := "e-s"
-		if crit == "hostile" {
-			class = "e-h"
-		}
-		fmt.Fprintf(&svg, `<text class="%s" x="%.0f" y="%.0f">%s</text>`,
-			class, p.x, p.y+3, template.HTMLEscapeString(sym))
-	}
-	for i, p := range ringPts {
-		label(p, ring[i])
-	}
-	for i, p := range chainPts {
-		label(p, chain[i])
-	}
-	svg.WriteString(`</svg>`)
-	//nolint:gosec // built from numeric coordinates, fixed markup, and HTML-escaped element symbols only
-	return template.HTML(svg.String())
-}
-
-func line(b *strings.Builder, x1, y1, x2, y2 float64) {
-	fmt.Fprintf(b, `<line class="bond" x1="%.0f" y1="%.0f" x2="%.0f" y2="%.0f"/>`, x1, y1, x2, y2)
+	return "", false
 }

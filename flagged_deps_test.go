@@ -170,7 +170,7 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 	if !strings.Contains(html, "2 flagged dependencies") {
 		t.Error("panel title missing or miscounted")
 	}
-	if !strings.Contains(html, "+3 more in Structure") {
+	if !strings.Contains(html, "+3 more") {
 		t.Error("capped remainder must be disclosed")
 	}
 }

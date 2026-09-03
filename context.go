@@ -91,8 +91,15 @@ type contextRow struct {
 	// Lead/Trail mark a source line clipped to a window around its match — the
 	// template renders a leading/trailing ellipsis so a long minified line stays
 	// focused on the match instead of burying the annotation off-screen.
+	// Gap, when non-zero, makes this a fold marker standing in for that many
+	// plain context rows the region left out between two matches.
+	Gap   int
 	Lead  bool
 	Trail bool
+	// Cont marks a row that only continues a span begun on an earlier row —
+	// a multi-line match's tail. It carries the span's edge but not its
+	// highlight, and folds away like plain context.
+	Cont bool
 }
 
 // rowAnno is one trailing annotation on a context row: a trait's description in
@@ -581,6 +588,7 @@ func renderSourceWindow(
 		block.Rows = append(block.Rows, contextRow{
 			Loc:   strconv.FormatInt(win.Offset, 10),
 			Crit:  crit,
+			Cont:  crit != "" && !spanStartsInRow(findingsByID, base, len(win.Data), filterID),
 			Segs:  highlightedSegs(clip.Text, spans, filename),
 			Annos: rowAnnos(findingsByID, base, len(win.Data), descByID, annotated),
 			Lead:  clip.Lead,
@@ -632,6 +640,7 @@ func appendTextChunkRows(
 		block.Rows = append(block.Rows, contextRow{
 			Loc:   loc,
 			Crit:  crit,
+			Cont:  crit != "" && !spanStartsInRow(findingsByID, rowBase, len(data), filterID),
 			Segs:  highlightedSegs(clip.Text, spans, filename),
 			Annos: rowAnnos(findingsByID, rowBase, len(data), descByID, annotated),
 			Lead:  clip.Lead || (i == 0 && startCol > 1),
@@ -855,6 +864,22 @@ func spansForRow(findings map[string]*finding, base int64, n int, filterID strin
 		}
 	}
 	return spans, crit
+}
+
+// spanStartsInRow reports whether any span begins inside the row at base of
+// length n, as opposed to merely running through it from an earlier row.
+func spanStartsInRow(findings map[string]*finding, base int64, n int, filterID string) bool {
+	for id, f := range findings {
+		if filterID != "" && id != filterID {
+			continue
+		}
+		for _, sp := range f.Spans {
+			if sp[0] >= base && sp[0] < base+int64(n) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // spanSeverityAt returns the severity class of the span covering byte index k,

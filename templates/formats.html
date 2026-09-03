@@ -4,25 +4,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {{template "favicon"}}
-    <title>Supported Formats - {{if isPublic}}atomdrift lab{{else}}litmus{{end}}</title>
+    <title>Supported Formats - {{if isPublic}}isotope13 labs{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
         :root {
-            --carbon: #0a0a0a;
-            --graphite: #404040;
-            --iron: #52525b;
-            --slate: #6b7280;
-            --mist: #f5f5f5;
+            --carbon: #0D0008;
+            --graphite: #4A2040;
+            --iron: #4A2040;
+            --slate: #8A6080;
+            --mist: #fdf5fc;
             --white: #ffffff;
-            --cream: #fafaf9;
-            --border: #e8e8e8;
-            --isotope: #3b82f6;
+            --cream: #ffffff;
+            --border: #efe3ec;
+            --isotope: #2563eb;
             --isotope-dim: rgba(59, 130, 246, 0.1);
-            --toxic: #d0ff00;
-            --toxic-muted: #9abe25;
-            --toxic-dark: #4a6b0f;
-            --toxic-dim: rgba(208, 255, 0, 0.14);
-            --hostile: #ef4444;
+            --toxic: #FF00CC;
+            --toxic-muted: #CC0077;
+            --toxic-dark: #CC0077;
+            --toxic-dim: #FFEDFB;
+            --hostile: #e11d48;
         }
         * {
             margin: 0;
@@ -56,12 +56,14 @@
         .logo-accent {
             color: var(--toxic-muted);
         }
+        .logo-sup { font-size: 11px; color: var(--toxic); margin-left: 1px; }
+        .logo-sub { color: var(--slate); margin-left: 6px; }
         .beta-tag {
             font-size: 11px;
             font-weight: 600;
             color: var(--toxic-dark);
-            background: rgba(208, 255, 0, 0.14);
-            border: 1px solid rgba(208, 255, 0, 0.2);
+            background: #FFEDFB;
+            border: 1px solid #FFEDFB;
             padding: 1px 5px;
             border-radius: 3px;
             margin-left: 6px;
@@ -162,7 +164,7 @@
 
         <div class="page-title">Supported Formats</div>
         <p class="page-desc">
-            File formats supported by <a href="https://github.com/atomdrift-project/cleave">cleave</a>, the analysis engine behind {{if isPublic}}atomdrift lab{{else}}litmus{{end}}.
+            File formats supported by <a href="https://github.com/atomdrift-project/cleave">cleave</a>, the analysis engine behind {{if isPublic}}isotope13 labs{{else}}litmus{{end}}.
         </p>
 
         <div class="format-section">
