@@ -380,3 +380,36 @@ func TestNoRichContextFallsBack(t *testing.T) {
 		t.Errorf("legacy window should yield nil blocks, got %+v", blocks)
 	}
 }
+
+// TestLnkRendersAsHex pins the view a structured binary gets: an LNK's strings
+// are UTF-16 inside a record, so a source view shows mojibake while the hex
+// view's ASCII gutter shows the target plainly.
+func TestLnkRendersAsHex(t *testing.T) {
+	if !isBinaryType("lnk") {
+		t.Fatal("an LNK must render as hex, not as source lines")
+	}
+	file := &cleaveFile{
+		FileType: "lnk", Path: "DOC.lnk", Size: 400,
+		Findings: []finding{{ID: "objectives/execution/lnk/proxy::command-c-argument", Desc: "LNK arguments execute command with /c", Crit: 4, Conf: 0.9}},
+		Ctx:      []contextWindow{{Offset: 281, Data: []byte("c\x00m\x00d\x00.\x00e\x00x\x00e\x00")}},
+	}
+	windows := unlabeledWindows(file)
+	if len(windows) != 1 {
+		t.Fatalf("windows = %d, want the one context window cleave recorded", len(windows))
+	}
+	if !windows[0].Block.Hex {
+		t.Error("the block must be a hex view")
+	}
+	if windows[0].Notes[0].Desc != "LNK arguments execute command with /c" {
+		t.Errorf("window title = %q, want the file's strongest finding", windows[0].Notes[0].Desc)
+	}
+	var ascii string
+	for _, r := range windows[0].Block.Rows {
+		for _, s := range r.ASCII {
+			ascii += s.Text
+		}
+	}
+	if !strings.Contains(ascii, "c.m.d...e.x.e") && !strings.Contains(ascii, "cmd.exe") {
+		t.Errorf("the ASCII gutter must show the target; got %q", ascii)
+	}
+}

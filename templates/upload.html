@@ -14,7 +14,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <title>{{if isPublic}}isotope13 labs{{else}}litmus{{end}} - Index</title>
+    <title>{{if isPublic}}isotope13 labs{{else}}litmus{{end}} - Stream</title>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{.Title}} — {{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
@@ -43,6 +43,18 @@
             --suspicious: #d97706;
             --benign: #CC0077;
             --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+            /* Aliases for the shared header and footer (chromestyle). Same
+               values as this page's own names, under the site-wide vocabulary. */
+            --ink: #0D0008;
+            --ink-mid: #4A2040;
+            --ink-light: #8A6080;
+            --paper: #ffffff;
+            --rule: #efe3ec;
+            --fu: #FF00CC;
+            --fu-deep: #CC0077;
+            --fu-dim: #FFEDFB;
+            --fu-border: #FFC7F4;
+            --display: "Oxanium", sans-serif;
         }
         * { box-sizing: border-box; }
         body {
@@ -61,103 +73,18 @@
             margin: 0 auto;
             padding: 24px 0 28px;
         }
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 18px;
-            padding-bottom: 18px;
-            border-bottom: 1px solid var(--border);
-        }
-        .brand {
-            display: flex;
-            align-items: baseline;
-            gap: 14px;
-            min-width: 0;
-        }
-        .logo {
-            font-family: "Oxanium", monospace;
-            font-weight: 700;
-            font-size: 24px;
-            color: var(--carbon);
-            text-decoration: none;
-            white-space: nowrap;
-        }
-        .logo-accent { color: var(--toxic-muted); }
-        .logo-sup { font-size: 11px; color: var(--toxic); margin-left: 1px; }
-        .logo-sub { color: var(--slate); margin-left: 6px; }
-        .beta-tag {
-            margin-left: 6px;
-            font-family: var(--mono);
-            font-size: 10px;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid #FFEDFB;
-            border-radius: 3px;
-            padding: 1px 5px;
-            vertical-align: super;
-        }
-        .tagline {
-            color: var(--muted);
-            margin: 0;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .site-nav { display: flex; gap: 4px; margin-left: 6px; }
-        .site-nav a {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--slate);
-            text-decoration: none;
-            padding: 5px 11px;
-            border-radius: 999px;
-            border: 1px solid transparent;
-            white-space: nowrap;
-        }
-        .site-nav a:hover { color: var(--carbon); border-color: var(--border); }
-        .site-nav a.active {
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border-color: #FFC7F4;
-        }
+{{template "chromestyle" .}}
         .nav-count {
             font-family: var(--mono);
             font-size: 10px;
             font-weight: 600;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid #FFEDFB;
+            color: var(--fu-deep);
+            background: var(--fu-dim);
+            border: 1px solid var(--fu-border);
             border-radius: 999px;
             padding: 0 6px;
             line-height: 1.5;
             font-variant-numeric: tabular-nums;
-        }
-        .site-nav a.active .nav-count { background: var(--white); }
-        .upload-button {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 38px;
-            padding: 0 15px;
-            border: 1px solid var(--carbon);
-            background: var(--carbon);
-            color: var(--white);
-            border-radius: 6px;
-            font-weight: 700;
-            text-decoration: none;
-            cursor: pointer;
-            white-space: nowrap;
-        }
-        .upload-button.is-disabled {
-            border-color: var(--border);
-            background: var(--mist);
-            color: var(--slate);
-            cursor: not-allowed;
-            opacity: 0.6;
         }
         .top-upload {
             margin: 0;
@@ -742,22 +669,8 @@
             font-size: 0.9em;
             text-align: center;
         }
-        footer {
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-            flex-wrap: wrap;
-            padding-top: 22px;
-            color: var(--muted);
-            font-size: 12px;
-            text-align: center;
-        }
-        footer a { color: var(--slate); }
         @media (max-width: 860px) {
             .shell { width: min(100vw - 22px, 1320px); padding-top: 14px; }
-            .topbar { flex-wrap: wrap; gap: 10px; }
-            .site-nav { margin-left: 0; }
-            .site-nav a { padding: 4px 9px; font-size: 12.5px; }
             .filters-row { align-items: stretch; flex-direction: column; }
             h1 { font-size: 22px; }
             .lede { white-space: normal; }
@@ -776,33 +689,29 @@
 </head>
 <body>
     {{template "banner" .}}
-    <main class="shell">
-        <nav class="topbar" aria-label="Primary">
-            <div class="brand">
-                <a href="/" class="logo">{{template "wordmark" .}}</a>
-            </div>
-            <div class="site-nav">
-                <a href="/fallout">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
-                <a href="/index" class="active">Index</a>
-            </div>
+    <nav class="topbar" aria-label="Primary">
+        <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
+        <div class="site-nav">
+            <a href="/">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
+            <a href="/stream" class="active">Stream</a>
+            <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
             {{if .UploadEnabled}}
             <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
                 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
                 <input type="file" name="file" id="file-input" required />
-                <label class="upload-button" for="file-input">Upload</label>
+                <label class="upload-btn" for="file-input">Upload</label>
                 <div id="upload-status" class="top-upload-status"></div>
             </form>
             {{else}}
-            <div class="top-upload">
-                <span class="upload-button is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
-            </div>
+            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
             {{end}}
-        </nav>
-
+        </div>
+    </nav>
+    <main class="shell">
         <section class="intro">
             <div class="masthead">
                 <div class="headline mh-lock">
-                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Index</h1>
+                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Stream</h1>
                     <p class="lede">Query analyzed artifacts from registries, marketplaces, and lab uploads{{if .WeeklyHostile}} — or <a href="/fallout">see the latest {{.WeeklyHostile}} hostile catches in the fallout →</a>{{else}}.{{end}}</p>
                 </div>
                 {{if .HasHopper}}
@@ -937,8 +846,8 @@
             {{end}}
         </section>
 
-        {{template "footer" .}}
     </main>
+    {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
 </body>
 </html>

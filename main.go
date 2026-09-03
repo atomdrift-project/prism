@@ -688,10 +688,9 @@ type cachedParents struct {
 // The json tags are the client-facing field names. Dropped by
 // invalidateSampleCaches on rescan.
 type cachedMembers struct {
-	ContentHTML string          `json:"content_html"`
-	TraitsHTML  string          `json:"traits_html"`
-	Galaxy      json.RawMessage `json:"galaxy"`
-	HasContent  bool            `json:"has_content"`
+	ContentHTML string `json:"content_html"`
+	TraitsHTML  string `json:"traits_html"`
+	HasContent  bool   `json:"has_content"`
 }
 
 // resultData is the page-data shape consumed by result.html. Field order is
@@ -715,7 +714,6 @@ type resultData struct {
 	// pasted URLs from another browser, and stale wayback captures all fail.
 	DownloadToken string
 	FileType      string
-	MoleculeJSON  template.JS
 	// DeferredMembers marks a compacted-archive page whose member Content and
 	// galaxy are lazy-loaded by the browser from /file/{sha}/members. The
 	// template renders loading placeholders for those regions; a non-archive or
@@ -842,13 +840,17 @@ type resultData struct {
 	// for samples with no recorded provenance beyond their own identity.
 	Provenance []ProvenanceGroup
 	// Badges are the findings the header names outright; Summary is the line
-	// under the title; ShortProv is the rail's provenance; BackboneSVG is the
+	// under the title; ShortProv is the rail's provenance; MaleculeSVG is the
 	// compound drawing; CompoundURL finds other samples with this formula.
-	Badges      []topTrait
-	Summary     string
-	ShortProv   []ProvenanceRow
-	BackboneSVG template.HTML
-	CompoundURL string
+	Badges []topTrait
+	// Findings lists what was found when no evidence region can be drawn,
+	// because the sample's findings carry no byte spans.
+	Findings       []findingRow
+	FindingsHidden int
+	Summary        string
+	ShortProv      []ProvenanceRow
+	MaleculeSVG    template.HTML
+	CompoundURL    string
 	// Parents lists archives that contain this file (extracted or unpacked
 	// members). Populated only on standalone child pages (non-archive views)
 	// so the user can navigate up to the archive context the file came from.
@@ -1027,11 +1029,36 @@ func (r feedRow) Headline() string {
 // bare — filenames usually embed their version already, and the version
 // column belongs to the package attribution.
 func identityHeadline(registryTitle, pkg, filename, version string) string {
+	// A bare sample carries its own hash as its package name. A hash is an
+	// identifier, not a name — it already sits in the ids block below — so it
+	// yields to any real filename before it becomes the page's title.
+	if isHashName(registryTitle) {
+		registryTitle = ""
+	}
+	if isHashName(pkg) {
+		pkg = ""
+	}
 	title := firstNonEmpty(registryTitle, pkg, filename)
 	if version == "" || (registryTitle == "" && pkg == "") {
 		return title
 	}
 	return title + " " + version
+}
+
+// isHashName reports whether a name is nothing but a hex digest — the md5,
+// sha1 or sha256 a bare upload is filed under when no registry named it.
+func isHashName(s string) bool {
+	switch len(s) {
+	case 32, 40, 64:
+	default:
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // imageMemberHeadline builds a headline naming the OS image a file came from —
@@ -1705,6 +1732,12 @@ type finding struct {
 	// Spans holds byte-span evidence: each entry is [offset, length] in
 	// the file's byte space. Intersect against ctx windows to highlight matches.
 	Spans [][2]int64 `json:"spans,omitempty"`
+	// Uses names the traits a composite rule required, as indices into this
+	// file's own Findings slice. Empty for an atomic trait, and for anything
+	// scanned before cleave began recording the relation. Indices are checked
+	// against the slice before use: a stale or truncated report must draw
+	// nothing rather than panic.
+	Uses []int `json:"uses,omitempty"`
 	// Locations is archive attribution: "archive:<member-path>" or
 	// "<file-id>[:<offset>]" strings used by aggregateArchiveCategories to
 	// route findings to the right extracted sub-file.
@@ -1759,6 +1792,7 @@ func (f *finding) UnmarshalJSON(data []byte) error {
 		ID        string          `json:"id"`
 		OldID     string          `json:"i"`
 		Spans     [][2]int64      `json:"spans,omitempty"`
+		Uses      []int           `json:"uses,omitempty"`
 		Locations []string        `json:"loc,omitempty"`
 		OldLocs   []string        `json:"el,omitempty"`
 		From      []compactSource `json:"from,omitempty"`
@@ -1778,6 +1812,7 @@ func (f *finding) UnmarshalJSON(data []byte) error {
 	if len(f.From) == 0 && raw.Src != nil {
 		f.From = []compactSource{{File: *raw.Src}}
 	}
+	f.Uses = raw.Uses
 	f.ID = raw.ID
 	if f.ID == "" {
 		f.ID = raw.OldID
@@ -2184,7 +2219,15 @@ func newMux() *http.ServeMux {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
 	mux.HandleFunc("GET /{$}", handleFallout)
-	mux.HandleFunc("GET /index", handleIndex)
+	mux.HandleFunc("GET /stream", handleIndex)
+	// /index was the stream's name until it got one that says what it is.
+	// Bookmarks and external links keep working.
+	mux.HandleFunc("GET /index", func(w http.ResponseWriter, r *http.Request) {
+		// Rebuilt from a fixed path plus a re-encoded query, so nothing a
+		// caller supplies can reach the path or the host.
+		target := url.URL{Path: "/stream", RawQuery: r.URL.Query().Encode()}
+		http.Redirect(w, r, target.String(), http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("GET /fallout", handleFallout)
 	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
 	mux.HandleFunc("GET /api/fallout", handleFalloutJSON)
@@ -4683,7 +4726,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
-		Title:           "Index",
+		Title:           "Stream",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
@@ -4691,7 +4734,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		data.SelectedFormula, data.SelectedQ,
 	)
 	if ecosystem != "" {
-		data.Title = ecosystem + " · Index"
+		data.Title = ecosystem + " · Stream"
 	}
 	// A package path (/npm/lodash) titles its tab by the coordinate; the
 	// ?purl= query form stays a plain search, matching the box it came from.
@@ -5006,7 +5049,6 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	reqLogger.Log(ctx, level, "detail render timing",
 		"cache_hit", cacheHit,
 		"is_archive", data.IsArchive,
-		"molecule_bytes", len(data.MoleculeJSON),
 		"lookup_ms", lookupDur.Milliseconds(),
 		"prepare_ms", prepDur.Milliseconds(),
 		"report_ms", reportDur.Milliseconds(),
@@ -5172,11 +5214,16 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 // returned error is propagated (not cached) so a transient hopper fault or a
 // 404 is retried on the next request rather than pinned.
 func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, error) {
+	start := time.Now()
 	res, err := enrichedResult(ctx, sha)
 	if err != nil {
 		return cachedMembers{}, err
 	}
+	enrichMS := time.Since(start).Milliseconds()
+	prepareStart := time.Now()
 	data := prepareResultData(res.Filename, sha, &res)
+	prepareMS := time.Since(prepareStart).Milliseconds()
+	renderStart := time.Now()
 
 	var content, traits bytes.Buffer
 	if err := resultTemplate.ExecuteTemplate(&content, "contentBody", data); err != nil {
@@ -5190,10 +5237,25 @@ func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, erro
 		return cachedMembers{}, fmt.Errorf("members render findingsbody %s: %w", sha, err)
 	}
 
+	// The client sits on "Loading the archive's members…" for exactly this long,
+	// so the phases are logged separately: a slow DB and a slow render call for
+	// different fixes, and the total alone can't tell them apart.
+	level := slog.LevelDebug
+	if time.Since(start) >= slowDetailThreshold {
+		level = slog.LevelWarn
+	}
+	logger.Log(ctx, level, "members render timing",
+		"sha256", sha,
+		"enrich_ms", enrichMS,
+		"prepare_ms", prepareMS,
+		"template_ms", time.Since(renderStart).Milliseconds(),
+		"cleave_bytes", len(res.RawLitmus),
+		"files", len(data.FileViews),
+		"total_ms", time.Since(start).Milliseconds(),
+	)
 	return cachedMembers{
 		ContentHTML: content.String(),
 		TraitsHTML:  traits.String(),
-		Galaxy:      json.RawMessage(string(data.MoleculeJSON)),
 		HasContent:  len(data.FileViews) > 0,
 	}, nil
 }
@@ -5475,11 +5537,13 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 	if db == nil {
 		return nil, errors.New("hopper not connected")
 	}
+	pickStart := time.Now()
 	wanted := envelopeChildSHAs(sample.CleaveResult, sha)
 	if len(wanted) > maxFilesShown {
 		wanted = wanted[:maxFilesShown]
 	}
 	wanted = append(wanted, compositeLinkedSHAs(sample.CleaveResult, sha)...)
+	pickMS := time.Since(pickStart).Milliseconds()
 	if len(wanted) == 0 {
 		return nil, nil
 	}
@@ -5508,12 +5572,28 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 	if len(children) == 0 {
 		return nil, nil
 	}
+	fetchMS := time.Since(membersStart).Milliseconds()
+	reStart := time.Now()
 	_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
 	enriched, err := hopper.Reassemble(sample, children)
 	reSpan.End()
 	if err != nil {
 		return nil, err
 	}
+	childBytes := 0
+	for _, c := range children {
+		childBytes += len(c.CleaveResult)
+	}
+	logger.Debug("member enrich timing",
+		"sha256", sha,
+		"wanted", len(wanted),
+		"got", len(children),
+		"pick_ms", pickMS,
+		"fetch_ms", fetchMS,
+		"reassemble_ms", time.Since(reStart).Milliseconds(),
+		"child_bytes", childBytes,
+		"enriched_bytes", len(enriched),
+	)
 	return enriched, nil
 }
 
@@ -7408,7 +7488,6 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		Size:         "0 B",
 		FindingCount: "0",
 		Duration:     "0ms",
-		MoleculeJSON: template.JS("{}"),
 	}
 
 	if sha256Hex != "" && len(sha256Hex) >= 12 {
@@ -7586,34 +7665,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Size = formatBytes(res.SizeBytes)
 	}
 
-	// Extract findings for formula generation
-	var findings []FindingForFormula
-	var totalFindings int
-
+	totalFindings := 0
 	for i := range report.Files {
-		file := &report.Files[i]
-		for _, f := range file.Findings {
-			totalFindings++
-			findings = append(findings, FindingForFormula{
-				ID:       f.ID,
-				Severity: critIntToSeverity(f.Crit),
-			})
-		}
+		totalFindings += len(report.Files[i].Findings)
 	}
 
 	data.FindingCount = strconv.Itoa(totalFindings)
-
-	// Build traits lookup for molecule info panel (trait ID → description + evidence).
-	traitDetails := make(map[string]*TraitDetail)
-	for i := range report.Files {
-		for _, f := range report.Files[i].Findings {
-			if _, exists := traitDetails[f.ID]; exists {
-				continue // deduplicate
-			}
-			td := &TraitDetail{Desc: f.Desc, Crit: critIntToString(f.Crit)}
-			traitDetails[f.ID] = td
-		}
-	}
 
 	// Set verdict and risk level from litmus classification.
 	switch res.Classification {
@@ -7765,10 +7822,20 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	}
 	data.Formula = template.HTML(html.EscapeString(formula)) //nolint:gosec // html.EscapeString sanitizes the input before conversion
 	data.FormulaQuery = desubscriptFormula(formula)
-	data.CompoundURL = "/index?m=" + url.QueryEscape(data.FormulaQuery)
-	data.Badges = resultBadges(data.TopTraits)
+	data.CompoundURL = "/stream?m=" + url.QueryEscape(data.FormulaQuery)
+	data.Badges = resultBadges(data.TopTraits, report.Files)
+	data.Findings, data.FindingsHidden = fallbackFindings(data.FileViews, report.Files)
 	data.ShortProv = shortProvenance(data.Provenance)
-	data.BackboneSVG = backboneSVG(findings)
+	// The drawing is the top-level file's own behaviours: an archive's members
+	// each have their own, and stacking them would draw a graph no single file
+	// has. Rendered at rail size here; the feed renders the same graph small.
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 || i == len(report.Files)-1 {
+			g := buildMaleculeGraph(&report.Files[i])
+			data.MaleculeSVG = template.HTML(maleculeSVG(g, 196, 168)) //nolint:gosec // every dynamic value is escaped or from a fixed palette
+			break
+		}
+	}
 	data.Summary = data.LLMInterpretation
 	if data.Summary == "" {
 		counted := report.Files[0].Findings
@@ -7787,86 +7854,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.Summary = summaryLine(countFindings(counted), members, data.RiskLabel, data.LevelConfidence)
 	}
 
-	// Generate molecule/galaxy data for 3D visualization
-	// For archives with multiple files, build a galaxy
-	if len(report.Files) > 1 {
-		var fileFindings []FileFindings
-		for i := range report.Files {
-			// Cap the galaxy to the same top-N (by criticality — report.Files is
-			// already crit-sorted) the Content tab shows, so the two views always
-			// depict the same set of files. For a compacted archive only these N
-			// were fetched anyway; this also bounds the galaxy for a small inlined
-			// archive whose members all arrived in the parent envelope.
-			if len(fileFindings) >= maxFilesShown {
-				break
-			}
-			file := &report.Files[i]
-			var ff []FindingForFormula
-			for _, f := range file.Findings {
-				ff = append(ff, FindingForFormula{
-					ID:       f.ID,
-					Severity: critIntToSeverity(f.Crit),
-				})
-			}
-
-			if len(ff) > 0 {
-				refs := make([]galaxyRef, len(file.Refs))
-				for j, r := range file.Refs {
-					refs[j] = galaxyRef{Kind: r.Kind, TargetFile: r.TargetFile}
-				}
-				fileFindings = append(fileFindings, FileFindings{
-					ID:             file.ID,
-					Path:           file.Path,
-					Risk:           critIntToString(maxCritInFile(file)),
-					Classification: file.Classification,
-					Probability:    file.Probability,
-					Formula:        file.Formula,
-					Rel:            file.Rel,
-					Parent:         file.Parent,
-					Findings:       ff,
-					Strings:        galaxyStrings(file),
-					Refs:           refs,
-				})
-			}
-		}
-
-		galaxy := BuildGalaxy(fileFindings)
-		if galaxy.IsGalaxy {
-			galaxy.Traits = traitDetails
-			galaxyJSON, err := json.Marshal(galaxy)
-			if err != nil {
-				logger.Debug("failed to marshal galaxy data", "error", err)
-				data.MoleculeJSON = template.JS("{}")
-			} else {
-				data.MoleculeJSON = template.JS(galaxyJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
-			}
-		} else {
-			// Galaxy rejected (e.g. archive with single inner file) — fall through to single molecule
-			mol := BuildMalecule(findings, formula)
-			mol.Filename = filename
-			mol.FileType = data.FileType
-			mol.Traits = traitDetails
-			molJSON, err := json.Marshal(mol)
-			if err != nil {
-				logger.Debug("failed to marshal molecule data", "error", err)
-				data.MoleculeJSON = template.JS("{}")
-			} else {
-				data.MoleculeJSON = template.JS(molJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
-			}
-		}
-	} else {
-		// Single file - build single molecule
-		mol := BuildMalecule(findings, formula)
-		mol.Filename = filename
-		mol.FileType = data.FileType
-		molJSON, err := json.Marshal(mol)
-		if err != nil {
-			logger.Debug("failed to marshal molecule data", "error", err)
-			data.MoleculeJSON = template.JS("{}")
-		} else {
-			data.MoleculeJSON = template.JS(molJSON) //nolint:gosec // JSON-marshalled data is safe for JS embedding
-		}
-	}
+	// The 3D molecule and the galaxy were retired in favour of the server-drawn
+	// malecule above; nothing renders them any more. Building them cost a full
+	// pass over every finding and string in the archive, marshalled ~90 KB per
+	// page, and on a compacted archive ran a second time behind the members
+	// fetch — all of it discarded. BuildGalaxy/BuildMalecule and their tests are
+	// now unreferenced by the server and can go.
 
 	return data
 }
@@ -7877,62 +7870,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 // maxCritInFile returns the highest criticality ordinal from a file's traits.
 func maxCritInFile(f *cleaveFile) int {
 	best := 0
-	for _, t := range f.Findings {
-		if t.Crit > best {
-			best = t.Crit
+	for i := range f.Findings {
+		if f.Findings[i].Crit > best {
+			best = f.Findings[i].Crit
 		}
 	}
 	return best
-}
-
-// parseStringTupleValue extracts the value from a v4 string tuple.
-// Format: [offset, value] or [offset, encoding, value]. Errors are
-// silently swallowed: a malformed tuple just yields an empty result.
-// galaxyStrings gathers the strings from a cleave file that BuildGalaxy scans
-// for dropper relationships. That scan is O(files² × strings × len) and
-// file.Strings comes straight from the attacker-influenced analysis envelope,
-// so a crafted archive (many long strings) could turn every render of the file
-// page into seconds of CPU. The count and per-string length are capped here;
-// real dropper references are short path/filename strings, so the bound does
-// not change normal detection.
-func galaxyStrings(file *cleaveFile) []string {
-	const (
-		maxGalaxyStrings   = 2000
-		maxGalaxyStringLen = 4096
-	)
-	var strs []string
-	add := func(v string) {
-		if len(strs) < maxGalaxyStrings && len(v) <= maxGalaxyStringLen {
-			strs = append(strs, v)
-		}
-	}
-	for _, s := range file.Strings {
-		if len(strs) >= maxGalaxyStrings {
-			break
-		}
-		for _, v := range parseStringTupleValue(s) {
-			add(v)
-		}
-	}
-	return strs
-}
-
-func parseStringTupleValue(raw json.RawMessage) []string {
-	var arr []json.RawMessage
-	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
-		return nil
-	}
-	var val string
-	switch {
-	case len(arr) == 2:
-		_ = json.Unmarshal(arr[1], &val) //nolint:errcheck // tuple shape known; bad data → empty val handled below
-	case len(arr) >= 3:
-		_ = json.Unmarshal(arr[2], &val) //nolint:errcheck // tuple shape known; bad data → empty val handled below
-	}
-	if val == "" {
-		return nil
-	}
-	return []string{val}
 }
 
 // canonicalCategoryOrder is the preferred display order for top-level
@@ -8411,7 +8354,8 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 	for i := range files {
 		file := &files[i]
 		ctxIdx := contextIndex(file)
-		for _, f := range file.Findings {
+		for fi := range file.Findings {
+			f := &file.Findings[fi]
 			if f.Crit < 1 || f.Conf < minTraitConfidence {
 				continue
 			}
@@ -8450,7 +8394,7 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 				agg.addRollupMatches(f.From, idToFile, containerSHAs)
 				continue
 			}
-			agg.addEvidenceMatches(f, ctxIdx, file, pathToFile, idToFile, containerSHAs)
+			agg.addEvidenceMatches(*f, ctxIdx, file, pathToFile, idToFile, containerSHAs)
 		}
 	}
 	if len(bucket) == 0 {
@@ -8557,7 +8501,8 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			agg.order = append(agg.order, mk)
 		}
 
-		for _, f := range file.Findings {
+		for fi := range file.Findings {
+			f := &file.Findings[fi]
 			// Include everything down to component (1) above the confidence
 			// floor; the top-N cap below decides which traits actually render.
 			if f.Crit < 1 || f.Conf < minTraitConfidence {
@@ -8599,7 +8544,7 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				agg.desc = f.Desc
 			}
 			agg.fullIDs = append(agg.fullIDs, f.ID)
-			for _, row := range evidenceRows(f, ctxIdx) {
+			for _, row := range evidenceRows(*f, ctxIdx) {
 				addMatch(agg, row)
 			}
 		}

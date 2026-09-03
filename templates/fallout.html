@@ -83,30 +83,7 @@
         }
         a { color: inherit; text-decoration: none; }
         :focus-visible { outline: 3px solid var(--fu); outline-offset: 3px; border-radius: 4px; }
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 24px;
-            height: 60px;
-            padding: 0 64px;
-            border-bottom: 2px solid var(--fu);
-        }
-        .logo {
-            font-family: var(--display);
-            font-weight: 700;
-            font-size: 21px;
-            letter-spacing: -0.5px;
-            color: var(--ink);
-            white-space: nowrap;
-        }
-        .logo-sup { font-size: 11px; color: var(--fu); margin-left: 1px; }
-        .logo-sub { color: var(--ink-light); margin-left: 6px; }
-        .logo-accent { color: var(--fu-deep); }
-        .site-nav { display: flex; align-items: center; gap: 28px; font-size: 14px; color: var(--ink-mid); }
-        .site-nav a:hover { color: var(--ink); }
-        .site-nav a.active { color: var(--fu-deep); font-weight: 600; }
-        .site-nav .feed { font-family: var(--mono); font-size: 12px; color: var(--fu-deep); }
+{{template "chromestyle" .}}
         .shell {
             display: grid;
             grid-template-columns: 220px minmax(0, 820px);
@@ -164,7 +141,6 @@
         .sector .n { font-family: var(--mono); font-size: 11px; color: var(--ink-mid); }
         .week-link { font-size: 12.5px; font-weight: 600; color: var(--fu-deep); }
         .week-link[aria-disabled="true"] { color: var(--ink-light); font-weight: 500; }
-        .cite { font-family: var(--mono); font-size: 11px; color: var(--fu-deep); white-space: nowrap; }
         h1 {
             margin: 0;
             font-family: var(--display);
@@ -177,6 +153,10 @@
         h1 .eco { color: var(--fu-deep); }
         .lede { margin: 8px 0 0; font-size: 16px; line-height: 1.5; color: var(--ink-mid); max-width: 62ch; }
         .day-head {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--paper);
             display: flex;
             align-items: baseline;
             gap: 12px;
@@ -185,14 +165,29 @@
         }
         .day-head h2 { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.4px; color: var(--ink); }
         .day-head .sub { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--fu-deep); }
+        .lead-tag {
+            font-family: var(--mono);
+            font-size: 9.5px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--fu-deep);
+            border: 1px solid var(--fu-border);
+            border-radius: 3px;
+            padding: 1px 6px;
+            white-space: nowrap;
+        }
+        .mol { display: grid; place-items: center; width: 132px; height: 62px; align-self: start; }
+        .mol svg { width: 100%; height: auto; display: block; }
         .row {
             display: grid;
-            grid-template-columns: 150px minmax(0, 1fr);
+            grid-template-columns: 132px minmax(0, 1fr);
             gap: 16px;
             padding: 14px 0;
             border-bottom: 1px solid var(--rule-soft);
         }
-        .row.wave {
+        .row:hover { background: var(--rule-soft); }
+        .row.lead:hover { background: var(--fu-dim); }
+        .row.lead {
             padding: 14px;
             margin: 10px -14px 0;
             border-radius: 8px;
@@ -253,7 +248,16 @@
             background: var(--fu-dim);
             border: 1px solid var(--fu-border);
         }
-        .why { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--ink-mid); }
+        .why {
+            margin: 0;
+            font-size: 14.5px;
+            line-height: 1.5;
+            color: var(--ink-mid);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
         .chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
         .chip {
             display: inline-flex;
@@ -312,14 +316,11 @@
             font-size: 0.9em;
             text-align: center;
         }
-        footer { padding: 28px 64px; color: var(--ink-light); font-size: 12px; border-top: 1px solid var(--rule); }
-        footer a { color: var(--ink-mid); }
         @media (max-width: 960px) {
-            .topbar { padding: 0 20px; }
             .shell { grid-template-columns: 1fr; gap: 24px; padding: 20px 20px 32px; }
             .rail { position: static; }
             .row { grid-template-columns: 1fr; }
-            .row.wave { margin: 10px 0 0; }
+            .row.lead { margin: 10px 0 0; }
             .row-meta { margin-left: 0; }
         }
     </style>
@@ -327,12 +328,12 @@
 <body>
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
-        <a href="/" class="logo">{{template "wordmark" .}}</a>
+        <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
-            <a href="/fallout" class="active">Fallout</a>
-            <a href="/index">Index</a>
-            <a href="/index#upload">Upload</a>
-            <a class="feed" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
+            <a href="/" class="active">Fallout</a>
+            <a href="/stream">Stream</a>
+            <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
+            <a class="upload-btn" href="/stream#upload">Upload</a>
         </div>
     </nav>
     <div class="shell">
@@ -351,7 +352,7 @@
             {{end}}
             {{if .Sectors}}
             <div class="rail-block">
-                <span class="rail-title">Sectors</span>
+                <span class="rail-title">Filters</span>
                 <nav class="sectors" aria-label="Filter by ecosystem">
                     {{range .Sectors}}<a class="sector{{if .Active}} active{{end}}" href="{{.URL}}"><span class="eco-badge eco-{{.Color}}">{{.Ecosystem}}</span><span class="n">{{.Count}}</span></a>{{end}}
                 </nav>
@@ -362,8 +363,6 @@
                 {{if .OlderURL}}<a class="week-link" href="{{.OlderURL}}" rel="prev" title="The week before">‹ Older week</a>{{else}}<span class="week-link" aria-disabled="true" title="The archive reaches no further back">‹ Older week</span>{{end}}
                 {{if .NewerURL}}<a class="week-link" href="{{.NewerURL}}" rel="next" title="The week after">Newer week ›</a>{{else}}<span class="week-link" aria-disabled="true" title="This is the week in progress">Newer week ›</span>{{end}}
                 {{if not .CurrentWeek}}<a class="week-link" href="{{.CurrentURL}}">↩ This week</a>{{end}}
-                <span class="rail-title">Cite this week</span>
-                <a class="cite" href="{{.CiteURL}}">{{.CiteURL}}</a>
             </div>
         </aside>
         <main>
@@ -381,16 +380,17 @@
                     <span class="sub">{{.Sub}}</span>
                 </div>
                 {{range .Rows}}
-                <article class="row{{if .IsWave}} wave{{end}}">
-                    {{template "tiles" .Formula}}
+                <article class="row{{if .Lead}} lead{{end}}">
+                    <span class="mol" title="{{.Formula}}">{{.MaleculeSVG}}</span>
                     <div class="row-body">
                         <div class="row-title">
-                            <a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a>
+                            <a class="file-link" href="/file/{{.SHA256}}" title="{{.Headline}}">{{.DisplayName}}</a>
+                            {{if .Ecosystem}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}" title="every catch in {{.Ecosystem}}">{{.Ecosystem}}</a>{{end}}
                             {{if .IsWave}}<span class="siblings" title="one campaign, {{.WaveSize}} packages">and <b>{{.Siblings}}</b> siblings</span>{{else}}{{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}{{end}}
+                            {{if .Lead}}<span class="lead-tag">biggest campaign</span>{{end}}
                             <span class="row-meta">
                                 {{with .Users}}<span class="users" title="marketplace install count">{{.}} installs</span>{{end}}
                                 {{if .Corroborated}}<span class="feedmark" title="In external threat feeds — corroborated">✓</span>{{end}}
-                                {{if .Ecosystem}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
                                 <span class="when" title="{{.AnalyzedAt}}">{{.TimeAgo}}</span>
                             </span>
                         </div>
@@ -405,7 +405,7 @@
             {{else if not .FeedDegraded}}
             <div class="empty">
                 {{if .Filtered}}Nothing hostile from {{.SelectedEco}} {{.WindowLabel}} — a quiet sector is a good sector. <a href="{{.AllSectorsURL}}">Every sector →</a>
-                {{else}}Nothing hostile {{.WindowLabel}} — the quietest kind of week. <a href="/index?criticality=hostile">Browse the index →</a>{{end}}
+                {{else}}Nothing hostile {{.WindowLabel}} — the quietest kind of week. <a href="/stream?criticality=hostile">Browse the stream →</a>{{end}}
             </div>
             {{end}}
             {{else}}

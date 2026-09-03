@@ -452,6 +452,9 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		HeatClass: "heat-2",
 		Ribbon:    "biggest blast radius",
 	}}
+	rows[0].MaleculeSVG = template.HTML(maleculeSVG(maleculeFromFormula(wave.Formula, []feedTrait{
+		{ID: "cred/browser-cookies", Full: "objectives/credential-access/browser::cookies", Crit: "hostile"},
+	}), 132, 62))
 	data := falloutPageData{
 		Nonce:         "test-script-nonce",
 		HasHopper:     true,
@@ -465,8 +468,7 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		Sectors: []falloutSector{
 			{Ecosystem: "npm", Color: "red", Count: 24, URL: "/fallout?ecosystem=npm"},
 		},
-		CiteURL: "/fallout?week=2026-08-03",
-		Days:    []falloutDay{{Label: "TODAY", Sub: "Mon Aug 4 · 24 catches · 1 wave · 0 singles", ID: "day-2026-08-04", Date: "Tue 4 Aug", Count: 24, Rows: rows}},
+		Days: []falloutDay{{Label: "TODAY", Sub: "Mon Aug 4 · 24 catches · 1 wave · 0 singles", ID: "day-2026-08-04", Date: "Tue 4 Aug", Count: 24, Rows: rows}},
 	}
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, data); err != nil {
@@ -482,12 +484,13 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		"and <b>22</b> siblings",
 		"/file/" + testSHAHero,
 		"/fallout?ecosystem=npm",
-		// The formula as tiles: the O tier, a Ca tile carrying its count.
-		`<span class="tier-sym tier-O" title="objectives">O</span>`,
-		`title="credential-access">Ca<sub>2</sub></span>`,
-		// The rail: the day anchor and the citable week.
+		// The malecule. A feed row knows categories and severities but not the
+		// dependency graph, so its atoms carry no bonds and, being one per
+		// category, no kinship ties either.
+		`<title>credential-access</title>`,
+		`class="malecule"`,
+		// The rail: the day anchor.
 		`href="#day-2026-08-04"`,
-		`href="/fallout?week=2026-08-03"`,
 		// The week nav: a link back through the archive, and no forward link
 		// on the week in progress.
 		`href="/fallout?week=2026-07-27" rel="prev"`,

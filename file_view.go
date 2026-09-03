@@ -44,6 +44,29 @@ const (
 	maxFilesShown     = 5
 )
 
+// maxEvidenceBlocks caps the whole page, not just one file. Five regions is
+// what a reader actually reads; a five-file archive allowed five each turned
+// the evidence list into a scroll. The five kept are the highest-scoring
+// across every file (windowScore), so a strong region in the third member
+// outranks a weak one in the first.
+const maxEvidenceBlocks = 5
+
+// windowScore ranks a region for both the per-file cap and the page-wide one:
+// whether it backs a headline trait dominates, then whether it is one of our
+// own traits rather than an imported vendor signature, then severity. Ordering
+// by a single number keeps the two caps agreeing on what "strongest" means.
+func windowScore(lw *labeledWindow, wanted map[string]bool) int {
+	head := lw.headNote(wanted)
+	rank := 0
+	if wanted[head.ID] {
+		rank += 2
+	}
+	if !traitIsVendor(head.ID) {
+		rank++
+	}
+	return rank*8 + lw.Crit
+}
+
 // contentOmitted counts what the file cap dropped from the Content tab: how many
 // files, and how many results (context windows + composite findings) those files
 // held — both surfaced in the "results limited" note.
@@ -61,6 +84,9 @@ type fileView struct {
 	Anchor   string // in-page link target, "file-<sha>"
 	Crit     string // severity class of the file's strongest finding
 	Windows  []fileWindow
+	// Solo is true when this is the only file on the page, so its regions drop
+	// the filename from their location line — the hero already carries it.
+	Solo bool
 }
 
 // fileWindow is one rendered context window. Its traits are labeled inline on
@@ -83,6 +109,53 @@ type compositeLink struct {
 	Label  string
 	Anchor string
 	Loc    string
+}
+
+// fileData is one file's windows while the caps are still being applied: the
+// evidence list is chosen across files, so the per-file sets have to outlive
+// the loop that builds them.
+type fileData struct {
+	file    *cleaveFile
+	lws     []labeledWindow
+	maxCrit int
+}
+
+// capEvidenceBlocks trims the whole page to maxEvidenceBlocks regions, keeping
+// the highest-scoring across every file and leaving each file's survivors in
+// file order. Returns how many it dropped, for the "results limited" note.
+func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
+	total := 0
+	for d := range datas {
+		total += len(datas[d].lws)
+	}
+	if total <= maxEvidenceBlocks {
+		return 0
+	}
+	type ref struct{ file, win, score int }
+	refs := make([]ref, 0, total)
+	for d := range datas {
+		for w := range datas[d].lws {
+			refs = append(refs, ref{d, w, windowScore(&datas[d].lws[w], wanted)})
+		}
+	}
+	slices.SortStableFunc(refs, func(a, b ref) int { return cmp.Compare(b.score, a.score) })
+	keep := make([]map[int]bool, len(datas))
+	for _, r := range refs[:maxEvidenceBlocks] {
+		if keep[r.file] == nil {
+			keep[r.file] = make(map[int]bool)
+		}
+		keep[r.file][r.win] = true
+	}
+	for d := range datas {
+		kept := make([]labeledWindow, 0, len(keep[d]))
+		for w := range datas[d].lws {
+			if keep[d][w] {
+				kept = append(kept, datas[d].lws[w])
+			}
+		}
+		datas[d].lws = kept
+	}
+	return total - maxEvidenceBlocks
 }
 
 // buildFileViews assembles the Content tab from cleave's per-file context and
@@ -120,11 +193,6 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		}
 	}
 
-	type fileData struct {
-		file    *cleaveFile
-		lws     []labeledWindow
-		maxCrit int
-	}
 	var datas []fileData
 
 	for i := range files {
@@ -143,6 +211,18 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		// its first source location (the other legs keep the native trait that
 		// fired there). Cross-file composites surface as a whole in the top-traits
 		// headline (with a member trail), so there are no bare composite cards.
+		// No span landed in any window, so nothing got labeled. When the file
+		// carries a suspicious finding of its own, its windows are still the
+		// bytes cleave chose to show, so show them rather than dropping the
+		// file's evidence entirely (unlabeledWindows decides).
+		if len(fd.lws) == 0 {
+			for _, lw := range unlabeledWindows(file) {
+				fd.lws = append(fd.lws, lw)
+				if lw.Crit > fd.maxCrit {
+					fd.maxCrit = lw.Crit
+				}
+			}
+		}
 		for _, a := range inject[file.ID] {
 			attachComposite(fd.lws, a)
 		}
@@ -183,9 +263,16 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		}
 		datas = datas[:maxFilesShown]
 	}
-	rendered := make(map[string]bool)
+	wanted := headlineAtomics(tcands)
 	for d := range datas {
-		datas[d].lws = capWindows(datas[d].lws)
+		datas[d].lws = capWindows(datas[d].lws, wanted)
+	}
+	omitted.Results += capEvidenceBlocks(datas, wanted)
+	datas = slices.DeleteFunc(datas, func(fd fileData) bool { return len(fd.lws) == 0 })
+	// Recorded after both caps: a composite's member trail must only link files
+	// that still have a section to land on.
+	rendered := make(map[string]bool, len(datas))
+	for d := range datas {
 		rendered[datas[d].file.SHA256] = true
 	}
 
@@ -202,16 +289,19 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		}
 		for _, lw := range fd.lws {
 			w := fileWindow{Blocks: []contextBlock{foldContext(lw.Block)}, Range: windowRange(lw.Block)}
-			if len(lw.Notes) > 0 {
-				w.Title = lw.Notes[0].Desc
+			if head := lw.headNote(wanted); head.ID != "" {
+				w.Title = head.Desc
 				if w.Title == "" {
-					w.Title = traitChipID(lw.Notes[0].ID)
+					w.Title = traitChipID(head.ID)
 				}
-				w.Crit = critIntToString(lw.Notes[0].Crit)
+				w.Crit = critIntToString(head.Crit)
 			}
 			view.Windows = append(view.Windows, w)
 		}
 		views = append(views, view)
+	}
+	if len(views) == 1 {
+		views[0].Solo = true
 	}
 	top := make([]topTrait, len(tcands))
 	for i, c := range tcands {
@@ -401,14 +491,121 @@ func legAtRow(s compactSource, row *contextRow) bool {
 // capWindows keeps a file's strongest maxWindowsPerFile windows but renders them
 // in file order, so the most important context survives the cap while the view
 // still reads top-to-bottom by offset.
-func capWindows(lws []labeledWindow) []labeledWindow {
+func capWindows(lws []labeledWindow, wanted map[string]bool) []labeledWindow {
+	// One region per behaviour. A composite that fired on eight scattered
+	// matches used to produce eight regions carrying one identical sentence;
+	// the reader learns nothing from the second. Keep the strongest window for
+	// each heading and let the rest go.
+	kept := make([]labeledWindow, 0, len(lws))
+	best := make(map[string]int, len(lws))
+	for i := range lws {
+		head := lws[i].headNote(wanted)
+		at, seen := best[head.ID]
+		if !seen {
+			best[head.ID] = len(kept)
+			kept = append(kept, lws[i])
+			continue
+		}
+		if lws[i].Crit > kept[at].Crit {
+			kept[at] = lws[i]
+		}
+	}
+	// Show the evidence for the verdict, not every window in the file. When any
+	// region backs one of the headline traits, those are the regions worth a
+	// reader's time and the rest are a second findings list in disguise.
+	backing := make([]labeledWindow, 0, len(kept))
+	for i := range kept {
+		if wanted[kept[i].headNote(wanted).ID] {
+			backing = append(backing, kept[i])
+		}
+	}
+	if len(backing) > 0 {
+		kept = backing
+	}
+	lws = kept
 	if len(lws) <= maxWindowsPerFile {
+		slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(a.Start, b.Start) })
 		return lws
 	}
-	slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(b.Crit, a.Crit) })
+	// Rank what survives by whether it backs a headline trait, then by
+	// severity, so the regions shown are the evidence for the verdict above.
+	slices.SortStableFunc(lws, func(a, b labeledWindow) int {
+		return cmp.Compare(windowScore(&b, wanted), windowScore(&a, wanted))
+	})
 	lws = lws[:maxWindowsPerFile]
 	slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(a.Start, b.Start) })
 	return lws
+}
+
+// traitIsVendor reports whether a trait is an imported third-party signature
+// rather than one of our own behaviour rules. A vendor rule is an attribution —
+// "SigBase thinks this is Cobalt Strike" — and its match is a string set, not a
+// behaviour, so it makes weak evidence and a poor region heading. It stays
+// eligible (on some samples it is all there is) but yields to a first-party
+// trait wherever one covers the same bytes.
+func traitIsVendor(id string) bool { return strings.HasPrefix(id, "third_party/") }
+
+// headNote picks the note a region is titled by: the strongest atomic backing a
+// headline trait, else the strongest atomic, else whatever is left. Composites
+// are demoted on purpose — the verdict and the badges already name them, and
+// what a reader needs beside the bytes is which matcher hit them.
+func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
+	// Notes arrive strongest-first, so the first match in each tier is the
+	// strongest of that tier. Preference runs: our own trait backing a headline
+	// finding, our own trait, a vendor signature backing a headline finding,
+	// any vendor signature — then, only if nothing atomic landed here, the
+	// composite that did.
+	var tier [4]*ctxNoteRef
+	for i := range lw.Notes {
+		n := &lw.Notes[i]
+		if !n.Atomic {
+			continue
+		}
+		slot := 0
+		if traitIsVendor(n.ID) {
+			slot = 2
+		}
+		if !wanted[n.ID] {
+			slot++
+		}
+		if tier[slot] == nil {
+			tier[slot] = n
+		}
+	}
+	for _, n := range tier {
+		if n != nil {
+			return *n
+		}
+	}
+	if len(lw.Notes) > 0 {
+		return lw.Notes[0]
+	}
+	return ctxNoteRef{}
+}
+
+// headlineAtomics names the matchers the headline traits rest on: a composite
+// contributes the traits it used (transitively, since a composite may be built
+// from composites), an atomic contributes itself. Uses indexes the host file's
+// own findings, so resolution never leaves that file.
+func headlineAtomics(cands []topCand) map[string]bool {
+	want := make(map[string]bool, len(cands)*4)
+	var walk func(f *finding, host *cleaveFile, depth int)
+	walk = func(f *finding, host *cleaveFile, depth int) {
+		if len(f.Uses) == 0 || depth > 4 {
+			want[f.ID] = true
+			return
+		}
+		for _, j := range f.Uses {
+			if j < 0 || j >= len(host.Findings) {
+				continue // a stale index names a finding this report does not carry
+			}
+			walk(&host.Findings[j], host, depth+1)
+		}
+	}
+	for i := range cands {
+		walk(cands[i].f, cands[i].host, 0)
+	}
+	return want
 }
 
 // contentLocCh returns the widest Loc string for source line numbers and for

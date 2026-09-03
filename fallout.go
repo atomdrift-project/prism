@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -243,6 +244,12 @@ func (f falloutVerificationFilter) matches(corroborated bool) bool {
 type falloutRow struct {
 	feedRow
 
+	// MaleculeSVG is the row's drawing, rendered server-side from the
+	// exemplar's formula and top traits.
+	MaleculeSVG template.HTML
+	// Lead marks the day's biggest campaign, the one row the band lifts.
+	Lead bool
+
 	// HeatClass buckets the row's age for the decay halo: "heat-2" under six
 	// hours, "heat-1" under a day, "heat-0" once the particle has cooled.
 	HeatClass string
@@ -262,6 +269,32 @@ type falloutRow struct {
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r falloutRow) IsWave() bool { return r.WaveSize >= waveMinSize }
+
+// elideMiddle keeps a long name's head and tail and drops its middle, so what
+// follows it — "and 22 siblings" — is never the thing pushed off the end. A
+// 64-hex filename is unreadable either way, and its first and last bytes are
+// what a reader matches against a report.
+func elideMiddle(s string, limit int) string {
+	r := []rune(s)
+	if limit < 8 || len(r) <= limit {
+		return s
+	}
+	head := (limit - 1) / 2
+	return string(r[:head]) + "…" + string(r[len(r)-(limit-1-head):])
+}
+
+// DisplayName is the row's title as the list shows it: elided in the middle
+// when it is long enough to crowd out the sibling count beside it. Value
+// receiver, like IsWave, so html/template can call it on a range copy.
+//
+//nolint:gocritic // see IsWave — a pointer receiver breaks template rendering
+func (r falloutRow) DisplayName() string {
+	limit := 52
+	if r.IsWave() {
+		limit = 34 // leave room for "and N siblings"
+	}
+	return elideMiddle(r.Headline(), limit)
+}
 
 // falloutDay is one day band of the log.
 type falloutDay struct {
@@ -302,20 +335,17 @@ type falloutPageData struct {
 	// go. CurrentWeek is false whenever the reader is looking at the archive,
 	// which is what the "back to this week" affordance keys off.
 	AllSectorsURL string
-	// CiteURL is the dated address of this week, the one that names the same
-	// catches forever, shown so a reader can cite it.
-	CiteURL      string
-	OlderURL     string
-	NewerURL     string
-	CurrentURL   string
-	Sectors      []falloutSector
-	Days         []falloutDay
-	MeterSegs    []bool
-	WeeklyCount  int
-	HasHopper    bool
-	CurrentWeek  bool
-	FeedDegraded bool
-	Filtered     bool
+	OlderURL      string
+	NewerURL      string
+	CurrentURL    string
+	Sectors       []falloutSector
+	Days          []falloutDay
+	MeterSegs     []bool
+	WeeklyCount   int
+	HasHopper     bool
+	CurrentWeek   bool
+	FeedDegraded  bool
+	Filtered      bool
 }
 
 const falloutMeterSegs = 6
@@ -358,7 +388,6 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		// narrows this in buildFalloutView.
 		WindowLabel:   week.label(),
 		AllSectorsURL: falloutURL(week.param(), "", verifiedRaw),
-		CiteURL:       falloutURL(week.Date, "", ""),
 		CurrentURL:    falloutURL("", eco, verifiedRaw),
 	}
 	if week.Prev != "" {
@@ -671,13 +700,31 @@ func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSiz
 	for _, day := range order {
 		rows := byDay[day]
 		waves, singles := splitWaves(rows, ecoCount, formulaCount, poolSize)
+		// One lead per day: the biggest campaign, given the band. Everything
+		// else — the smaller waves included — reads in the order it landed,
+		// because a page where every third row is highlighted highlights
+		// nothing.
 		bandRows := make([]falloutRow, 0, len(waves)+len(singles))
-		bandRows = append(bandRows, waves...)
-		bandRows = append(bandRows, singles...)
+		if len(waves) > 0 {
+			waves[0].Lead = true
+			bandRows = append(bandRows, waves[0])
+			waves = waves[1:]
+		}
+		rest := make([]falloutRow, 0, len(waves)+len(singles))
+		rest = append(rest, waves...)
+		rest = append(rest, singles...)
+		slices.SortStableFunc(rest, func(a, b falloutRow) int {
+			return cmp.Compare(b.AnalyzedAt.UnixNano(), a.AnalyzedAt.UnixNano())
+		})
+		bandRows = append(bandRows, rest...)
 		if len(bandRows) == 0 {
 			continue
 		}
 		decorateFalloutRows(bandRows, now)
+		for i := range bandRows {
+			g := maleculeFromFormula(bandRows[i].Formula, bandRows[i].TopTraits)
+			bandRows[i].MaleculeSVG = template.HTML(maleculeSVG(g, 132, 62)) //nolint:gosec // every dynamic value is escaped or from a fixed palette
+		}
 		date, err := time.ParseInLocation("2006-01-02", day, loc)
 		if err != nil {
 			continue // impossible: the key came from Format with this layout

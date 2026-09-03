@@ -1,0 +1,436 @@
+{
+  "llm": {
+    "conf": 0.99953216,
+    "grade": "hostile",
+    "model": "Qwen/Qwen3.8-27B",
+    "outcome": "hostile",
+    "interpretation": "LNK executes obfuscated cmd.exe"
+  },
+  "ml": {
+    "v": "7",
+    "eng": "2.8.0",
+    "lvl": 0,
+    "conf": 100,
+    "mods": [
+      { "cls": 2, "raw": 0.99685496, "rte": "az", "prob": 0.99685496 },
+      { "cls": 2, "raw": 0.99930173, "rte": "az/zip", "prob": 0.99930173 }
+    ],
+    "prob": 0.99930173,
+    "files": [
+      { "id": 0, "lvl": 0, "conf": 100, "prob": 0.9993017315864563, "type": "zip" },
+      { "id": 1, "lvl": 279, "conf": 80, "prob": 0.9800000190734863, "type": "zip" },
+      { "id": 2, "lvl": 279, "conf": 80, "prob": 0.9800000190734863, "type": "lnk" }
+    ],
+    "version": "v18.18",
+    "analyzed_at": "2026-09-03T08:10:39Z"
+  },
+  "path": "db884067cde17b23149bf56f17a2e78887756f80b1fb9a8e58a743b7a18bc3ae.zip",
+  "raw": {
+    "files": [
+      {
+        "id": 0,
+        "ctx": [
+          {
+            "b": "p!H([6Awjn2MOUm1ZQ=tJ3q10002W{002y!003Lsi5&-GhAbbRwIDbMgbyTwiBVOThFaW5vkqyMi5&(Rh-iH9i51!@w[0=eiaT%bvk*20vMdZIiauwNvp.6qx(E)Z9#-Tq}?1J!^Jc2.4eC.P}n!/=0aD7cSSy2sIdYsG>Tt-My#9/vSS?t-nAv?5DXih3i^X/>s=?HnZ^R/&/oP!",
+            "ln": 0
+          }
+        ],
+        "mol": "K(Am)O\u2084(AsCXeEr)H\u2082(DbPo)Md",
+        "sha": "9835e3f3fc652c542e1c33578181a49ebd69c61d35ca922bc53c7650257ab072",
+        "path": "db884067cde17b23149bf56f17a2e78887756f80b1fb9a8e58a743b7a18bc3ae.zip",
+        "risk": 116,
+        "size": 1080,
+        "type": "zip",
+        "facts": {
+          "metrics": {
+            "file": { "size": 1080, "entropy": 7.55 },
+            "binary": { "peak_region_bytes": 1024, "peak_region_entropy": 7.61 },
+            "archive": {
+              "file_count": 1,
+              "member_count": 1,
+              "script_count": 0,
+              "zip_bomb_ratio": 1,
+              "compressed_size": 846,
+              "directory_count": 0,
+              "executable_count": 0,
+              "extra_field_size": 0,
+              "noise_file_count": 0,
+              "compression.ratio": 1,
+              "hidden_file_count": 0,
+              "uncompressed_size": 844,
+              "crc_collision_count": 0,
+              "entry_comment_count": 0,
+              "max_filename_length": 68,
+              "rtlo_filename_count": 0,
+              "format.regular_count": 1,
+              "nested_archive_count": 1,
+              "path_traversal_count": 0,
+              "symlink_escape_count": 0,
+              "security.setgid_count": 0,
+              "security.setuid_count": 0,
+              "security.sticky_count": 0,
+              "double_extension_count": 0,
+              "duplicate_member_count": 0,
+              "security.symlink_count": 0,
+              "unicode_filename_count": 0,
+              "homoglyph_filename_count": 0,
+              "security.encrypted_count": 1,
+              "timing.mtime_unique_count": 1,
+              "timing.mtime_unique_ratio": 1,
+              "misplaced_executable_count": 0,
+              "timing.mtime_dominant_count": 1,
+              "timing.mtime_spread_seconds": 0,
+              "timing.sentinel_mtime_count": 0,
+              "security.world_writable_count": 0,
+              "timing.mtime_dominant_fraction": 1,
+              "compression.method_counts.deflate": 1
+            }
+          }
+        },
+        "traits": [
+          {
+            "id": "metadata/file/profile/identity::hex-hash-zip-basename",
+            "conf": 0.92,
+            "crit": 3,
+            "desc": "Zip basename is a hexadecimal hash"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-with-args",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe with arguments",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-character-removal-expansion",
+            "atk": "T1027",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK removes character from variable value"
+          },
+          {
+            "id": "objectives/execution/lnk/proxy::command-c-argument",
+            "atk": "T1218",
+            "conf": 0.94,
+            "crit": 4,
+            "desc": "LNK arguments execute command with /c"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-has-arguments",
+            "atk": "T1204.002",
+            "conf": 0.9,
+            "crit": 1,
+            "desc": "LNK carries command-line arguments"
+          },
+          {
+            "id": "objectives/command-and-control/dropper/lnk/target::minimized-interpreter-window",
+            "atk": "T1564.003",
+            "conf": 0.85,
+            "crit": 4,
+            "desc": "LNK runs an interpreter minimized without activation",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/evasion/hijack-execution-flow/dll-hijacking::archive-shortcut-member",
+            "atk": "T1574.002",
+            "mbc": "F0015",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "Archive contains a Windows shortcut member"
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-delayed-substring-slicing",
+            "atk": "T1027",
+            "conf": 0.98,
+            "crit": 4,
+            "desc": "LNK reconstructs token from variable slices"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-minimized-window",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK runs minimized without activation"
+          },
+          {
+            "id": "well-known/app/browser/microsoft-edge::lnk-icon-location",
+            "conf": 0.98,
+            "crit": 3,
+            "desc": "LNK icon location references Microsoft Edge"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-target",
+            "atk": "T1204.002",
+            "conf": 0.7,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-interpreter-target-with-arguments",
+            "atk": "T1059,T1204.002",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK interpreter target with arguments",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/archive/member::archive-encrypted-member",
+            "conf": 0.9,
+            "crit": 3,
+            "desc": "Archive contains an encrypted member",
+            "spans": [[0, 39]]
+          }
+        ]
+      },
+      {
+        "depth": 1,
+        "facts": {
+          "metrics": {
+            "file": { "size": 844, "entropy": 7.6 },
+            "binary": { "peak_region_bytes": 844, "peak_region_entropy": 7.6 },
+            "archive": {
+              "file_count": 1,
+              "member_count": 1,
+              "script_count": 0,
+              "zip_bomb_ratio": 3.01,
+              "compressed_size": 718,
+              "directory_count": 0,
+              "executable_count": 0,
+              "extra_field_size": 0,
+              "noise_file_count": 0,
+              "compression.ratio": 0.33,
+              "hidden_file_count": 0,
+              "uncompressed_size": 2161,
+              "crc_collision_count": 0,
+              "entry_comment_count": 0,
+              "max_filename_length": 14,
+              "rtlo_filename_count": 0,
+              "format.regular_count": 1,
+              "nested_archive_count": 0,
+              "path_traversal_count": 0,
+              "symlink_escape_count": 0,
+              "security.setgid_count": 0,
+              "security.setuid_count": 0,
+              "security.sticky_count": 0,
+              "double_extension_count": 0,
+              "duplicate_member_count": 0,
+              "security.symlink_count": 0,
+              "unicode_filename_count": 0,
+              "homoglyph_filename_count": 0,
+              "security.encrypted_count": 0,
+              "timing.mtime_unique_count": 1,
+              "timing.mtime_unique_ratio": 1,
+              "misplaced_executable_count": 0,
+              "timing.mtime_dominant_count": 1,
+              "timing.mtime_spread_seconds": 0,
+              "timing.sentinel_mtime_count": 0,
+              "security.world_writable_count": 0,
+              "timing.mtime_dominant_fraction": 1,
+              "compression.method_counts.deflate": 1
+            }
+          }
+        },
+        "id": 1,
+        "mol": "K(Am)O\u2084(AsCXeEr)H(Po)Md",
+        "path": "db884067cde17b23149bf56f17a2e78887756f80b1fb9a8e58a743b7a18bc3ae.zip",
+        "pid": 0,
+        "risk": 115,
+        "sha": "db884067cde17b23149bf56f17a2e78887756f80b1fb9a8e58a743b7a18bc3ae",
+        "size": 844,
+        "traits": [
+          {
+            "id": "objectives/execution/lnk/proxy::command-c-argument",
+            "atk": "T1218",
+            "conf": 0.94,
+            "crit": 4,
+            "desc": "LNK arguments execute command with /c"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-minimized-window",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK runs minimized without activation"
+          },
+          {
+            "id": "well-known/app/browser/microsoft-edge::lnk-icon-location",
+            "conf": 0.98,
+            "crit": 3,
+            "desc": "LNK icon location references Microsoft Edge"
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-character-removal-expansion",
+            "atk": "T1027",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK removes character from variable value"
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-delayed-substring-slicing",
+            "atk": "T1027",
+            "conf": 0.98,
+            "crit": 4,
+            "desc": "LNK reconstructs token from variable slices"
+          },
+          {
+            "id": "objectives/command-and-control/dropper/lnk/target::minimized-interpreter-window",
+            "atk": "T1564.003",
+            "conf": 0.85,
+            "crit": 4,
+            "desc": "LNK runs an interpreter minimized without activation",
+            "from": [{ "file": 2 }]
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-target",
+            "atk": "T1204.002",
+            "conf": 0.7,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-has-arguments",
+            "atk": "T1204.002",
+            "conf": 0.9,
+            "crit": 1,
+            "desc": "LNK carries command-line arguments"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-with-args",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe with arguments",
+            "from": [{ "file": 2 }]
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-interpreter-target-with-arguments",
+            "atk": "T1059,T1204.002",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK interpreter target with arguments",
+            "from": [{ "file": 2 }]
+          },
+          {
+            "id": "metadata/file/profile/identity::hex-hash-zip-basename",
+            "conf": 0.92,
+            "crit": 3,
+            "desc": "Zip basename is a hexadecimal hash",
+            "spans": [[0, 68]]
+          },
+          {
+            "id": "objectives/evasion/hijack-execution-flow/dll-hijacking::archive-shortcut-member",
+            "atk": "T1574.002",
+            "mbc": "F0015",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "Archive contains a Windows shortcut member"
+          }
+        ],
+        "type": "zip"
+      },
+      {
+        "ctx": [
+          {
+            "b": "C(R)=Bo2>Lz2=u(g5}pO7YWOpg5}pO0000000000v@k:ewQ4+^kMz8<1ov]80000000000e=U>K000000000000000000000000000000003Hez2!8De=YC.CMqpP000=",
+            "ln": 281
+          }
+        ],
+        "depth": 2,
+        "facts": {
+          "metrics": {
+            "lnk": {
+              "file_size": 0,
+              "args_leading_tabs": 0,
+              "args_leading_spaces": 0,
+              "args_whitespace_total": 16,
+              "args_max_whitespace_run": 1
+            },
+            "file": { "size": 2161, "entropy": 2.88 },
+            "binary": { "peak_region_bytes": 1024, "peak_region_entropy": 3.41 }
+          }
+        },
+        "id": 2,
+        "mol": "K(Am)O\u2083(AsCXe)H(Po)",
+        "path": "db884067cde17b23149bf56f17a2e78887756f80b1fb9a8e58a743b7a18bc3ae.zip!!DOC-NEGVQE.lnk",
+        "risk": 113,
+        "sha": "74a4baea24f29e8d79c98092c46ab4cf89c564720b910431e498cc9556a548b3",
+        "size": 2161,
+        "traits": [
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-target",
+            "atk": "T1204.002",
+            "conf": 0.7,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-has-arguments",
+            "atk": "T1204.002",
+            "conf": 0.9,
+            "crit": 1,
+            "desc": "LNK carries command-line arguments"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-minimized-window",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK runs minimized without activation"
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-character-removal-expansion",
+            "atk": "T1027",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK removes character from variable value"
+          },
+          {
+            "id": "objectives/anti-static/obfuscation/string/anomaly::lnk-cmd-delayed-substring-slicing",
+            "atk": "T1027",
+            "conf": 0.98,
+            "crit": 4,
+            "desc": "LNK reconstructs token from variable slices"
+          },
+          {
+            "id": "objectives/execution/lnk/proxy::command-c-argument",
+            "atk": "T1218",
+            "conf": 0.94,
+            "crit": 4,
+            "desc": "LNK arguments execute command with /c"
+          },
+          {
+            "id": "well-known/app/browser/microsoft-edge::lnk-icon-location",
+            "conf": 0.98,
+            "crit": 3,
+            "desc": "LNK icon location references Microsoft Edge"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-cmd-with-args",
+            "atk": "T1204.002",
+            "conf": 0.8,
+            "crit": 3,
+            "desc": "LNK targets cmd.exe with arguments"
+          },
+          {
+            "id": "micro-behaviors/process/create/shortcut::lnk-interpreter-target-with-arguments",
+            "atk": "T1059,T1204.002",
+            "conf": 0.94,
+            "crit": 3,
+            "desc": "LNK interpreter target with arguments"
+          },
+          {
+            "id": "objectives/command-and-control/dropper/lnk/target::minimized-interpreter-window",
+            "atk": "T1564.003",
+            "conf": 0.85,
+            "crit": 4,
+            "desc": "LNK runs an interpreter minimized without activation"
+          }
+        ],
+        "type": "lnk"
+      }
+    ],
+    "rev": "479f3",
+    "v": "8"
+  }
+}

@@ -21,8 +21,76 @@ U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
 U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}isotope<sup class="logo-sup">13</sup><span class="logo-sub">labs</span>{{else}}lit<span class="logo-accent">mus</span>{{end}}{{end}} {{define
 "tagline"}}Open-source atomic malware analysis{{end}} {{define "favicon"}}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.ico" sizes="any" />
-    <link rel="apple-touch-icon" href="/static/favicon.svg" />{{end}} {{define "banner"}}{{end}} {{define "footer"}}
+    <link rel="apple-touch-icon" href="/static/favicon.svg" />{{end}} {{define "feedicon"}}<svg class="feed-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><circle cx="3" cy="13" r="2" fill="currentColor"/><path d="M2 8.2a5.8 5.8 0 0 1 5.8 5.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M2 3.1A10.9 10.9 0 0 1 12.9 14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>{{end}}
+
+{{define "chromestyle"}}
+        /* Header and footer, shared by every page so the chrome never drifts
+           between them. Page-specific styles live in each template. */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            height: 60px;
+            padding: 0 64px;
+            border-bottom: 2px solid var(--fu);
+        }
+        .logo {
+            font-family: var(--display);
+            font-weight: 700;
+            font-size: 21px;
+            letter-spacing: -0.5px;
+            color: var(--ink);
+            white-space: nowrap;
+        }
+        .logo:hover .logo-sub { color: var(--fu-deep); }
+        .logo-sup { font-size: 11px; color: var(--fu); margin-left: 1px; }
+        .logo-sub { color: var(--ink-light); margin-left: 6px; }
+        .logo-accent { color: var(--fu-deep); }
+        .site-nav { display: flex; align-items: center; gap: 26px; font-size: 14px; color: var(--ink-mid); }
+        /* Every destination reads the same; only the current page is marked. */
+        .site-nav a { color: var(--ink-mid); }
+        .site-nav a:hover { color: var(--ink); }
+        .site-nav a.active { color: var(--fu-deep); font-weight: 600; }
+        .site-nav .feed-link { display: inline-flex; align-items: center; gap: 6px; }
+        .feed-icon { flex: none; }
+        /* Upload is the one thing you do here rather than read, so it is the
+           one control that looks like a control. */
+        .site-nav .upload-btn {
+            padding: 6px 16px;
+            border: 1px solid var(--fu);
+            border-radius: 5px;
+            background: var(--fu);
+            color: #fff;
+            font-weight: 600;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .site-nav label.upload-btn { cursor: pointer; }
+        .site-nav .upload-btn:hover { background: var(--fu-deep); border-color: var(--fu-deep); color: #fff; }
+        .site-nav .upload-btn.is-disabled { background: transparent; border-color: var(--rule); color: var(--ink-light); cursor: not-allowed; }
+        footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding: 20px 64px 28px;
+            margin-top: 8px;
+            border-top: 1px solid var(--rule);
+            color: var(--ink-light);
+            font-size: 12px;
+        }
+        footer a { color: var(--ink-mid); }
+        footer a:hover { color: var(--fu-deep); }
+        @media (max-width: 960px) {
+            .topbar { height: auto; padding: 12px 20px; flex-wrap: wrap; }
+            .site-nav { gap: 18px; }
+            footer { padding: 20px; }
+        }
+{{end}}
+{{define "banner"}}{{end}} {{define "footer"}}
 <footer>
-    <span>&copy; 2026 <a href="https://isotope13.ai/">isotope¹³</a> · built on <a href="https://atomdrift.org/">atomdrift</a> · powered by <a href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank">prism {{buildCommitShort}}</a></span>
+    <span>&copy; 2026 <a href="https://isotope13.ai/">isotope¹³</a> · built on <a href="https://atomdrift.org/">atomdrift</a></span>
+    <span><a href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank" rel="noopener">prism {{buildCommitShort}}</a></span>
 </footer>
 {{end}}

@@ -130,7 +130,11 @@ const maxContextRows = 48
 // than as source text.
 func isBinaryType(fileType string) bool {
 	switch fileType {
-	case "elf", "pe", "macho", "java_class", "python_bytecode", "beam":
+	case "elf", "pe", "macho", "java_class", "python_bytecode", "beam",
+		// Structured binaries whose evidence is a byte region, not a line:
+		// an LNK's target and arguments are UTF-16 inside a record, which
+		// reads as mojibake in a source view and as text in a hex one.
+		"lnk", "ole", "cfb", "msi", "reg", "dex", "wasm":
 		return true
 	}
 	return false
@@ -191,6 +195,11 @@ type ctxNoteRef struct {
 	ID   string
 	Desc string
 	Crit int
+	// Atomic is true for a plain matcher and false for a composite rule (one
+	// with Uses). A composite fires wherever any of its legs do, so titling a
+	// region with it repeats the same sentence down the page; the atomic that
+	// actually matched those bytes is what the region is evidence of.
+	Atomic bool
 }
 
 // labeledWindow is a rendered context window plus the traits annotating it — the
@@ -228,6 +237,46 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 			continue
 		}
 		out = append(out, labeledWindow{Notes: notes, Block: block, Start: g[0].Offset, Crit: notes[0].Crit})
+	}
+	return out
+}
+
+// unlabeledWindows renders a file's context windows when no finding's span
+// falls inside any of them — a shape cleave produces whenever a trait matched
+// a structural fact rather than a byte range (an LNK's target and arguments,
+// say, which filefacts parses without recording where it found them). The
+// windows are still the bytes cleave chose to show, so the page shows them,
+// titled by the file's strongest finding rather than by a note. Returns nil
+// when the file has no context or its windows are already labeled.
+func unlabeledWindows(file *cleaveFile) []labeledWindow {
+	if !hasRichContext(file) {
+		return nil
+	}
+	filename := extractBasename(file.Path)
+	findingsByID := nativeFindings(file)
+	// Only the file's own findings justify showing its bytes. A finding
+	// inherited from a member describes the member, and a container's context
+	// is its archive header, which says nothing about either.
+	var lead ctxNoteRef
+	crit := -1
+	for _, f := range findingsByID {
+		if f.Crit < minSuspiciousCrit {
+			continue
+		}
+		if f.Crit > crit || (f.Crit == crit && f.ID < lead.ID) {
+			lead, crit = ctxNoteRef{ID: f.ID, Desc: f.Desc, Crit: f.Crit}, f.Crit
+		}
+	}
+	if lead.ID == "" {
+		return nil
+	}
+	var out []labeledWindow
+	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
+		block, ok := renderWindow(g, "", filename, file.FileType, file.Size, findingsByID, nil)
+		if !ok {
+			continue
+		}
+		out = append(out, labeledWindow{Notes: []ctxNoteRef{lead}, Block: block, Start: g[0].Offset, Crit: crit})
 	}
 	return out
 }
@@ -292,7 +341,7 @@ func windowNotes(group []contextWindow, findings map[string]*finding) []ctxNoteR
 					ref, ok := byID[id]
 					if !ok {
 						order = append(order, id)
-						byID[id] = &ctxNoteRef{ID: id, Desc: f.Desc, Crit: f.Crit}
+						byID[id] = &ctxNoteRef{ID: id, Desc: f.Desc, Crit: f.Crit, Atomic: len(f.Uses) == 0}
 					} else {
 						if f.Crit > ref.Crit {
 							ref.Crit = f.Crit

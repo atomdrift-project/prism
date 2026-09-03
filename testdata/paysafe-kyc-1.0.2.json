@@ -10,7 +10,7 @@
     ],
     "version": "v18.18",
     "eng": "2.8.0",
-    "analyzed_at": "2026-09-02T23:57:59Z",
+    "analyzed_at": "2026-09-03T18:41:57Z",
     "files": [
       { "id": 0, "type": "npm", "prob": 0.9984750151634216, "lvl": 0, "conf": 100 },
       { "id": 1, "type": "javascript", "prob": 0.9900000095367432, "lvl": 25, "conf": 92 },
@@ -35,49 +35,68 @@
         },
         "traits": [
           {
-            "id": "micro-behaviors/crypto/symmetric/xor/loop::js-byte-array-xor-modulo-key-loop",
+            "id": "objectives/discovery/system/fingerprint/user::node-host-user-query-pair",
             "crit": 3,
-            "desc": "JavaScript XOR loop uses repeating key",
-            "conf": 0.96,
-            "mbc": "B0032",
-            "atk": "T1027",
+            "desc": "Node queries hostname and username",
+            "conf": 0.9,
+            "atk": "T1033",
             "from": [{ "file": 1 }]
           },
           {
-            "id": "micro-behaviors/data/serialize/object-schema::json-stringify-env-field",
-            "crit": 1,
-            "desc": "JSON serialization includes an env field",
+            "id": "micro-behaviors/os/module/dynamic-load::node-variable-require-call",
+            "crit": 3,
+            "desc": "Requires a module named by a variable",
             "conf": 0.88,
             "from": [{ "file": 1 }]
           },
           {
-            "id": "micro-behaviors/data/encode/char-code::fromcharcode-call",
+            "id": "metadata/package/manifest/repository::has-repository-url",
+            "crit": 2,
+            "desc": "package.json declares a repository URL",
+            "conf": 0.85
+          },
+          {
+            "id": "supply-chain/missing-author",
             "crit": 3,
-            "desc": "Builds characters with String.fromCharCode",
+            "desc": "Package has empty or missing author field",
+            "conf": 0.5
+          },
+          {
+            "id": "micro-behaviors/data/decode/custom::fromcharcode-arrow-map",
+            "crit": 3,
+            "desc": "Arrow-maps character codes to a string",
+            "conf": 0.85,
+            "atk": "T1140",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/os/env/access::js-filtered-env-copy",
+            "crit": 3,
+            "desc": "Filters and copies process.env values",
             "conf": 0.9,
             "from": [{ "file": 1 }]
           },
           {
-            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-check-obfuscated",
-            "crit": 4,
-            "desc": "Low-CPU check in XOR-obfuscated JavaScript",
-            "conf": 0.9,
-            "mbc": "B0007",
-            "atk": "T1497",
-            "from": [{ "file": 1 }]
+            "id": "objectives/exfiltration/stealer/credential/env::javascript-xor-env-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates filtered environment",
+            "conf": 0.99,
+            "mbc": "E1041",
+            "atk": "T1552.001,T1041",
+            "from": [{ "file": 1 }],
+            "uses": [5, 22, 23, 25, 26]
+          },
+          {
+            "id": "metadata/package/manifest/repository::has-repository-field",
+            "crit": 2,
+            "desc": "package.json declares repository metadata",
+            "conf": 0.9
           },
           {
             "id": "micro-behaviors/data/decode/base64::multiple-node-base64-decodes",
             "crit": 3,
             "desc": "Multiple Node.js Base64 decodes",
             "conf": 0.8,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "micro-behaviors/os/module/load::cjs-require-in-try-fallback",
-            "crit": 3,
-            "desc": "CommonJS require inside try fallback",
-            "conf": 0.9,
             "from": [{ "file": 1 }]
           },
           {
@@ -96,59 +115,14 @@
             "from": [{ "file": 1 }]
           },
           {
-            "id": "micro-behaviors/data/decode/base64::base64-decode-call-text",
-            "crit": 3,
-            "desc": "JavaScript invokes a Base64 decoder",
-            "conf": 0.86,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "supply-chain/missing-author",
-            "crit": 3,
-            "desc": "Package has empty or missing author field",
-            "conf": 0.5
-          },
-          {
-            "id": "metadata/package/manifest/repository::repo-url-git-host",
-            "crit": 3,
-            "desc": "Repository identifies major Git host",
-            "conf": 0.9
-          },
-          {
-            "id": "micro-behaviors/communications/http/request/configuration::node-http-request-configured",
-            "crit": 3,
-            "desc": "Node HTTP request has hostname and port",
-            "conf": 0.8,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "micro-behaviors/os/env/access::js-filtered-env-copy",
-            "crit": 3,
-            "desc": "Filters and copies process.env values",
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-check-obfuscated",
+            "crit": 4,
+            "desc": "Low-CPU check in XOR-obfuscated JavaScript",
             "conf": 0.9,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "metadata/package/manifest/repository::has-repository-url",
-            "crit": 2,
-            "desc": "package.json declares a repository URL",
-            "conf": 0.85
-          },
-          {
-            "id": "micro-behaviors/data/buffer::javascript-write-then-end-stream",
-            "crit": 3,
-            "desc": "JavaScript writes then ends a stream",
-            "conf": 0.9,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "objectives/exfiltration/sensitive-data::js-sensitive-env-source",
-            "crit": 1,
-            "desc": "Sensitive environment secret access (JS)",
-            "conf": 0.9,
-            "mbc": "B0030",
-            "atk": "T1041",
-            "from": [{ "file": 1 }]
+            "mbc": "B0007",
+            "atk": "T1497",
+            "from": [{ "file": 1 }],
+            "uses": [12, 23]
           },
           {
             "id": "objectives/anti-analysis/sandbox-detect/script::js-cpu-count-sandbox-check",
@@ -160,97 +134,17 @@
             "from": [{ "file": 1 }]
           },
           {
-            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-gated-env-http-exfil",
-            "crit": 5,
-            "desc": "Sandbox check gates environment exfiltration",
-            "conf": 0.99,
-            "mbc": "B0007,E1041",
-            "atk": "T1497.001,T1552.001,T1041",
-            "from": [{ "file": 1, "line": 33, "off": 1290 }]
-          },
-          {
-            "id": "micro-behaviors/data/serialize/json::json-stringify-call",
-            "crit": 2,
-            "desc": "Calls JSON.stringify()",
-            "conf": 0.5,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "micro-behaviors/data/decode/base64::buffer-from-base64",
-            "crit": 3,
-            "desc": "Base64 decoding via Buffer.from (JS)",
-            "conf": 0.8,
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "metadata/package/manifest/repository::has-repository-field",
-            "crit": 2,
-            "desc": "package.json declares repository metadata",
-            "conf": 0.9
-          },
-          {
-            "id": "micro-behaviors/data/decode/custom::fromcharcode-arrow-map",
-            "crit": 3,
-            "desc": "Arrow-maps character codes to a string",
-            "conf": 0.85,
-            "atk": "T1140",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "objectives/exfiltration/stealer/host-profile/http::javascript-xor-host-profile-http-exfil",
-            "crit": 5,
-            "desc": "XOR-hidden HTTP exfiltrates host and user",
-            "conf": 0.99,
-            "atk": "T1041",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "objectives/credential-access/env/secrets/filtered-access::node-host-identified-env-harvest",
-            "crit": 4,
-            "desc": "Copies filtered environment with host identity",
-            "conf": 0.94,
-            "atk": "T1552.001",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "micro-behaviors/os/module/dynamic-load::node-variable-require-call",
-            "crit": 3,
-            "desc": "Requires a module named by a variable",
+            "id": "micro-behaviors/data/serialize/object-schema::json-stringify-env-field",
+            "crit": 1,
+            "desc": "JSON serialization includes an env field",
             "conf": 0.88,
             "from": [{ "file": 1 }]
           },
           {
-            "id": "objectives/exfiltration/stealer/credential/env::javascript-xor-env-http-exfil",
-            "crit": 5,
-            "desc": "XOR-hidden HTTP exfiltrates filtered environment",
-            "conf": 0.99,
-            "mbc": "E1041",
-            "atk": "T1552.001,T1041",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "objectives/credential-access/env/secrets/filtered-access::env-filter-method",
-            "crit": 1,
-            "desc": "process.env adjacent to filter or match",
-            "conf": 0.82,
-            "atk": "T1552.001",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "objectives/discovery/system/fingerprint/user::node-host-user-query-pair",
+            "id": "metadata/package/manifest/repository::repo-url-git-host",
             "crit": 3,
-            "desc": "Node queries hostname and username",
-            "conf": 0.9,
-            "atk": "T1033",
-            "from": [{ "file": 1 }]
-          },
-          {
-            "id": "micro-behaviors/os/sysinfo/hostname::node-os-alias-hostname-call",
-            "crit": 3,
-            "desc": "Node os-alias hostname query",
-            "conf": 0.8,
-            "atk": "T1082",
-            "from": [{ "file": 1 }]
+            "desc": "Repository identifies major Git host",
+            "conf": 0.9
           },
           {
             "id": "micro-behaviors/crypto/symmetric/xor/loop::xor-modulo-key-loop",
@@ -262,10 +156,122 @@
             "from": [{ "file": 1 }]
           },
           {
+            "id": "micro-behaviors/data/decode/base64::buffer-from-base64",
+            "crit": 3,
+            "desc": "Base64 decoding via Buffer.from (JS)",
+            "conf": 0.8,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-gated-env-http-exfil",
+            "crit": 5,
+            "desc": "Sandbox check gates environment exfiltration",
+            "conf": 0.99,
+            "mbc": "B0007,E1041",
+            "atk": "T1497.001,T1552.001,T1041",
+            "from": [{ "file": 1, "line": 33, "off": 1290 }],
+            "uses": [6, 11]
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::node-host-identified-env-harvest",
+            "crit": 4,
+            "desc": "Copies filtered environment with host identity",
+            "conf": 0.94,
+            "atk": "T1552.001",
+            "from": [{ "file": 1 }],
+            "uses": [0, 5]
+          },
+          {
+            "id": "objectives/exfiltration/stealer/host-profile/http::javascript-xor-host-profile-http-exfil",
+            "crit": 5,
+            "desc": "XOR-hidden HTTP exfiltrates host and user",
+            "conf": 0.99,
+            "atk": "T1041",
+            "from": [{ "file": 1 }],
+            "uses": [0, 22, 23, 25, 26]
+          },
+          {
+            "id": "micro-behaviors/os/sysinfo/hostname::node-os-alias-hostname-call",
+            "crit": 3,
+            "desc": "Node os-alias hostname query",
+            "conf": 0.8,
+            "atk": "T1082",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/decode/base64::base64-decode-call-text",
+            "crit": 3,
+            "desc": "JavaScript invokes a Base64 decoder",
+            "conf": 0.86,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/serialize/json::json-stringify-call",
+            "crit": 2,
+            "desc": "Calls JSON.stringify()",
+            "conf": 0.5,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/crypto/symmetric/xor/loop::js-byte-array-xor-modulo-key-loop",
+            "crit": 3,
+            "desc": "JavaScript XOR loop uses repeating key",
+            "conf": 0.96,
+            "mbc": "B0032",
+            "atk": "T1027",
+            "from": [{ "file": 1 }]
+          },
+          {
             "id": "micro-behaviors/data/encode/charcode::charcodeat-arithmetic",
             "crit": 3,
             "desc": "Arithmetic applied to first character code",
             "conf": 0.75,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/buffer::javascript-write-then-end-stream",
+            "crit": 3,
+            "desc": "JavaScript writes then ends a stream",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/communications/http/request/configuration::node-http-request-configured",
+            "crit": 3,
+            "desc": "Node HTTP request has hostname and port",
+            "conf": 0.8,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/exfiltration/sensitive-data::js-sensitive-env-source",
+            "crit": 1,
+            "desc": "Sensitive environment secret access (JS)",
+            "conf": 0.9,
+            "mbc": "B0030",
+            "atk": "T1041",
+            "from": [{ "file": 1 }],
+            "uses": [29]
+          },
+          {
+            "id": "micro-behaviors/os/module/load::cjs-require-in-try-fallback",
+            "crit": 3,
+            "desc": "CommonJS require inside try fallback",
+            "conf": 0.9,
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "objectives/credential-access/env/secrets/filtered-access::env-filter-method",
+            "crit": 1,
+            "desc": "process.env adjacent to filter or match",
+            "conf": 0.82,
+            "atk": "T1552.001",
+            "from": [{ "file": 1 }]
+          },
+          {
+            "id": "micro-behaviors/data/encode/char-code::fromcharcode-call",
+            "crit": 3,
+            "desc": "Builds characters with String.fromCharCode",
+            "conf": 0.9,
             "from": [{ "file": 1 }]
           }
         ],
@@ -305,20 +311,23 @@
             "id": "micro-behaviors/data/buffer::javascript-write-then-end-stream",
             "crit": 3,
             "desc": "JavaScript writes then ends a stream",
-            "conf": 0.9
+            "conf": 0.9,
+            "spans": [[2224, 17]]
           },
           {
             "id": "micro-behaviors/data/decode/base64::buffer-from-base64",
             "crit": 3,
             "desc": "Base64 decoding via Buffer.from (JS)",
-            "conf": 0.8
+            "conf": 0.8,
+            "spans": [[38, 11]]
           },
           {
             "id": "micro-behaviors/data/decode/custom::fromcharcode-arrow-map",
             "crit": 3,
             "desc": "Arrow-maps character codes to a string",
             "conf": 0.85,
-            "atk": "T1140"
+            "atk": "T1140",
+            "spans": [[1019, 28]]
           },
           {
             "id": "micro-behaviors/data/serialize/json::json-stringify-call",
@@ -331,19 +340,22 @@
             "id": "micro-behaviors/data/serialize/object-schema::json-stringify-env-field",
             "crit": 1,
             "desc": "JSON serialization includes an env field",
-            "conf": 0.88
+            "conf": 0.88,
+            "spans": [[1713, 0]]
           },
           {
             "id": "micro-behaviors/os/env/access::js-filtered-env-copy",
             "crit": 3,
             "desc": "Filters and copies process.env values",
-            "conf": 0.9
+            "conf": 0.9,
+            "spans": [[1844, 626]]
           },
           {
             "id": "micro-behaviors/os/module/load::cjs-require-in-try-fallback",
             "crit": 3,
             "desc": "CommonJS require inside try fallback",
-            "conf": 0.9
+            "conf": 0.9,
+            "spans": [[1247, 20]]
           },
           {
             "id": "micro-behaviors/os/sysinfo/hostname::node-os-alias-hostname-call",
@@ -358,7 +370,8 @@
             "crit": 3,
             "desc": "Node os-alias user identity query",
             "conf": 0.8,
-            "atk": "T1033"
+            "atk": "T1033",
+            "spans": [[1367, 10]]
           },
           {
             "id": "objectives/anti-analysis/sandbox-detect/script::js-cpu-count-sandbox-check",
@@ -366,7 +379,8 @@
             "desc": "os.cpus() low-count sandbox check",
             "conf": 0.75,
             "mbc": "B0007",
-            "atk": "T1497"
+            "atk": "T1497",
+            "spans": [[1290, 24]]
           },
           {
             "id": "objectives/credential-access/env/secrets/filtered-access::env-filter-method",
@@ -382,7 +396,8 @@
             "desc": "JavaScript XOR loop uses repeating key",
             "conf": 0.96,
             "mbc": "B0032",
-            "atk": "T1027"
+            "atk": "T1027",
+            "spans": [[201, 21]]
           },
           {
             "id": "micro-behaviors/crypto/symmetric/xor/loop::xor-modulo-key-loop",
@@ -404,13 +419,15 @@
             "id": "micro-behaviors/data/decode/base64::multiple-node-base64-decodes",
             "crit": 3,
             "desc": "Multiple Node.js Base64 decodes",
-            "conf": 0.8
+            "conf": 0.8,
+            "spans": [[38, 48]]
           },
           {
             "id": "micro-behaviors/data/encode/char-code::fromcharcode-call",
             "crit": 3,
             "desc": "Builds characters with String.fromCharCode",
-            "conf": 0.9
+            "conf": 0.9,
+            "spans": [[1027, 19]]
           },
           {
             "id": "micro-behaviors/data/encode/charcode::charcodeat-arithmetic",
@@ -447,14 +464,18 @@
             "desc": "Low-CPU check in XOR-obfuscated JavaScript",
             "conf": 0.9,
             "mbc": "B0007",
-            "atk": "T1497"
+            "atk": "T1497",
+            "spans": [[201, 21], [1290, 24]],
+            "uses": [10, 12]
           },
           {
             "id": "objectives/exfiltration/stealer/host-profile/http::javascript-xor-host-profile-http-exfil",
             "crit": 5,
             "desc": "XOR-hidden HTTP exfiltrates host and user",
             "conf": 0.99,
-            "atk": "T1041"
+            "atk": "T1041",
+            "spans": [[201, 21], [1334, 54], [1713, 14], [2136, 28], [2224, 17]],
+            "uses": [0, 1, 4, 12, 20]
           },
           {
             "id": "objectives/credential-access/env/secrets/filtered-access::node-host-identified-env-harvest",
@@ -462,7 +483,8 @@
             "desc": "Copies filtered environment with host identity",
             "conf": 0.94,
             "atk": "T1552.001",
-            "spans": [[1334, 54], [1844, 626]]
+            "spans": [[1334, 54], [1844, 626]],
+            "uses": [6, 20]
           },
           {
             "id": "objectives/exfiltration/sensitive-data::js-sensitive-env-source",
@@ -470,7 +492,9 @@
             "desc": "Sensitive environment secret access (JS)",
             "conf": 0.9,
             "mbc": "B0030",
-            "atk": "T1041"
+            "atk": "T1041",
+            "spans": [[1856, 0]],
+            "uses": [11]
           },
           {
             "id": "objectives/exfiltration/stealer/credential/env::javascript-xor-env-http-exfil",
@@ -478,7 +502,9 @@
             "desc": "XOR-hidden HTTP exfiltrates filtered environment",
             "conf": 0.99,
             "mbc": "E1041",
-            "atk": "T1552.001,T1041"
+            "atk": "T1552.001,T1041",
+            "spans": [[201, 21], [1713, 14], [1844, 626], [2136, 28], [2224, 17]],
+            "uses": [0, 1, 4, 6, 12]
           },
           {
             "id": "objectives/anti-analysis/sandbox-detect/script::js-sandbox-gated-env-http-exfil",
@@ -486,7 +512,9 @@
             "desc": "Sandbox check gates environment exfiltration",
             "conf": 0.99,
             "mbc": "B0007,E1041",
-            "atk": "T1497.001,T1552.001,T1041"
+            "atk": "T1497.001,T1552.001,T1041",
+            "spans": [[201, 21], [1290, 24], [1713, 14], [1844, 626], [2136, 28], [2224, 17]],
+            "uses": [21, 25]
           }
         ],
         "ctx": [
@@ -791,7 +819,8 @@
             "id": "supply-chain/missing-author",
             "crit": 3,
             "desc": "Package has empty or missing author field",
-            "conf": 0.5
+            "conf": 0.5,
+            "spans": [[0, 21]]
           },
           {
             "id": "metadata/package/manifest/repository::has-repository-field",

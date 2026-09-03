@@ -54,7 +54,7 @@ func TestResultTemplateParses(t *testing.T) {
 			name: "single_file", data: singleFileData(),
 			dontWant: []string{`class="badge `},
 			want: []string{
-				"Provenance", "registry.npmjs.org", "No line-level context",
+				"Provenance", "registry.npmjs.org", "recorded no findings",
 				`class="verdict "`, `<h1>x.exe</h1>`,
 			},
 		},
@@ -62,7 +62,7 @@ func TestResultTemplateParses(t *testing.T) {
 		// confidence, the summary line renders, the download link is gated on size.
 		{
 			name: "archive_with_children", data: archiveData(),
-			want: []string{`class="verdict hostile"`, "87%", "No line-level context"},
+			want: []string{`class="verdict hostile"`, "87%", "recorded no findings"},
 		},
 		// Per-line context: a region titled by its strongest finding, the matched
 		// line lit whole with its descriptions in the title, and the badge.
@@ -193,7 +193,7 @@ func fileViewData() resultData {
 		Desc: "beacons to a remote host", Crit: "hostile",
 		Sources: []compositeLink{{Label: "loader.js", Anchor: "file-cafe", Loc: "3"}},
 	}}
-	d.Badges = resultBadges(d.TopTraits)
+	d.Badges = resultBadges(d.TopTraits, nil)
 	d.FileViews = []fileView{{
 		Path: "package/postinstall.js", Filename: "postinstall.js", FileType: "JS",
 		SHA256: "deadbeef", Anchor: "file-deadbeef", Crit: "hostile",
@@ -237,7 +237,6 @@ func singleFileData() resultData {
 		DownloadEnabled: true,
 		FindingCount:    "0",
 		Duration:        "10ms",
-		MoleculeJSON:    template.JS("{}"),
 		Layout:          "organic2",
 		BuildCommit:     "test",
 		SuspiciousT:     0.65,
@@ -279,7 +278,6 @@ func archiveData() resultData {
 		Size:            "1.6 KB",
 		FindingCount:    "12",
 		Duration:        "200ms",
-		MoleculeJSON:    template.JS("{}"),
 		Layout:          "organic2",
 		BuildCommit:     "test",
 		SuspiciousT:     0.65,
