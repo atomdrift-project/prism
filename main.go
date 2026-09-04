@@ -4671,6 +4671,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Link", fontPreloadLink)
 	// The feed's default view is unfiltered ("Any" — every analyzed verdict).
 	// With no explicit ?criticality= key crit is "", which loadFeedRowsFromHopper
 	// treats as "require litmus, no class filter". The dropdown's Any option
@@ -4980,6 +4981,9 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	// the browser hydrates the Content + galaxy from /file/{sha}/members after
 	// first paint.
 	data.DeferredMembers = membersDeferred(res.RawLitmus)
+	if data.DeferredMembers {
+		warmMembers(ctx, sha)
+	}
 	var reportDur, parentsDur time.Duration
 	if hopperDB.Load() != nil {
 		reportStart := time.Now()
@@ -5024,6 +5028,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Build", buildCommit)
 	w.Header().Set("X-Layout", data.Layout)
+	w.Header().Set("Link", fontPreloadLink)
 	// template_ms below includes the streamed write to the client, so a slow
 	// client (not a slow server) inflates it — read it alongside the client
 	// RUM beacon (handleFileRUM), which times the browser side directly.
@@ -5202,8 +5207,25 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Derived entirely from an immutable analysis and carrying no session-bound
+	// token, so unlike the page HTML this is safe for shared caches. A rescan
+	// changes it, which is what bounds max-age rather than "immutable".
+	body, err := json.Marshal(cached)
+	if err != nil {
+		logger.Debug("members json encode failed", "sha256", sha, "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(cached); err != nil {
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=86400")
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if _, err := w.Write(body); err != nil {
 		logger.Debug("members json write failed", "sha256", sha, "error", err)
 	}
 }
@@ -5376,6 +5398,44 @@ const parentLookupTimeout = 2 * time.Second
 // fast rather than let unbounded member queries pile on (observed stretching a
 // ~6-row primary-key fetch to 37s when the DB was contended).
 const memberEnrichTimeout = 5 * time.Second
+
+// membersWarmTimeout bounds the background build kicked off by warmMembers.
+// Generous next to memberEnrichTimeout because nothing is waiting on it: the
+// only cost of a slow warm is that the browser's own fetch does the work
+// instead, which is exactly today's behaviour.
+const membersWarmTimeout = 30 * time.Second
+
+// fontPreloadLink starts the two Latin webfaces before the HTML is parsed —
+// browsers honour rel=preload in the header, and Cloudflare promotes it to a
+// 103 Early Hint, so the fonts are in flight while the origin is still
+// rendering. Only the Latin subsets: the -ext files carry accents most pages
+// never reference, and preloading an unused font is worse than not preloading.
+const fontPreloadLink = `</static/fonts/inter-latin.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin, ` +
+	`</static/fonts/oxanium-latin.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin`
+
+// warmMembers builds the archive-member payload in the background while the
+// page HTML is still being written, so the browser's fetch a few milliseconds
+// later is a cache hit rather than the thing it waits on. FetchTTL
+// singleflights, so a real request arriving mid-warm joins this build instead
+// of starting a second one, and a warm that loses the race costs nothing.
+//
+// The request context is detached (values kept, cancellation dropped): this
+// outlives the response it was started from by design.
+func warmMembers(ctx context.Context, sha string) {
+	if membersCache == nil {
+		return
+	}
+	go func() {
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), membersWarmTimeout)
+		defer cancel()
+		_, err := membersCache.FetchTTL(wctx, sha, auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
+			return renderMembersResponse(lctx, sha)
+		})
+		if err != nil {
+			logger.Debug("members warm failed", "sha256", sha, "error", err)
+		}
+	}()
+}
 
 // hopperCacheTTL is how long a cached result is served without consulting
 // hopper. Older entries are still served immediately; the refresh happens
@@ -8075,15 +8135,43 @@ var chromaStylesheet = func() template.CSS {
 // highlightEvidence renders an evidence fragment as chroma tokens, picking
 // the lexer from the source filename. Returns nil when the inputs are empty
 // or no lexer matches; the template then falls back to plain text.
+// lexerCache memoizes chroma's filename-to-lexer lookup, which is far more
+// expensive than it looks: lexers.Match globs the whole registry — hundreds of
+// lexers, several filename patterns each — through path/filepath.Match. Called
+// once per rendered line, as it was, it accounted for 90% of a five-second
+// archive render. The answer depends only on the filename, and a page renders
+// at most a handful of distinct ones.
+var lexerCache sync.Map // filename -> cachedLexer
+
+// cachedLexer wraps the result so a filename chroma has no lexer for caches as
+// a hit holding nil, rather than repeating the registry scan every time.
+type cachedLexer struct{ lexer chroma.Lexer }
+
+// matchLexer returns the coalesced lexer for a filename, or nil when chroma has
+// none. Coalescing happens once here too: it wraps the lexer, so doing it per
+// call allocated a new wrapper for every line.
+func matchLexer(filename string) chroma.Lexer {
+	if v, ok := lexerCache.Load(filename); ok {
+		if cached, isCached := v.(cachedLexer); isCached {
+			return cached.lexer
+		}
+	}
+	var lexer chroma.Lexer
+	if matched := lexers.Match(filename); matched != nil {
+		lexer = chroma.Coalesce(matched)
+	}
+	lexerCache.Store(filename, cachedLexer{lexer: lexer})
+	return lexer
+}
+
 func highlightEvidence(evidence, filename string) []EvidenceToken {
 	if evidence == "" || filename == "" {
 		return nil
 	}
-	lexer := lexers.Match(filename)
+	lexer := matchLexer(filename)
 	if lexer == nil {
 		return nil
 	}
-	lexer = chroma.Coalesce(lexer)
 	iter, err := lexer.Tokenise(nil, evidence)
 	if err != nil {
 		return nil

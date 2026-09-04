@@ -163,10 +163,13 @@
         .region-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--ink); }
         .region-loc { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-light); white-space: nowrap; }
         .region-loc a:hover { color: var(--fu-deep); }
-        .code { border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; padding: 4px 0; background: var(--paper); font-family: var(--mono); font-size: 12.5px; }
-        .line { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; padding: 2px 12px; }
-        .line .ln { text-align: right; font-size: 11px; color: var(--ink-light); line-height: 22px; user-select: none; }
-        .line .src { line-height: 22px; color: var(--ink-light); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+        .code { border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; padding: 6px 0; background: var(--paper); font-family: var(--mono); font-size: 12.5px; }
+        /* Editor metrics: 18px rows on 12.5px type is ~1.44, about what a code
+           editor sets. The old 22px plus 2px of padding made every row 26px,
+           which read as a transcript rather than as source. */
+        .line { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; padding: 0 12px; }
+        .line .ln { text-align: right; font-size: 11px; color: var(--ink-light); line-height: 18px; user-select: none; }
+        .line .src { line-height: 18px; color: var(--ink-light); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
         .line.hit .src { color: var(--ink); white-space: pre-wrap; word-break: break-all; }
         .line.hit-notable { background: var(--notable-bg); box-shadow: inset 3px 0 0 var(--notable); }
         .line.hit-suspicious { background: var(--suspicious-bg); box-shadow: inset 3px 0 0 var(--suspicious); }
@@ -187,6 +190,15 @@
         .finding-desc { font-size: 13.5px; color: var(--ink); min-width: 0; }
         .finding-file { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-light); white-space: nowrap; }
         .note { margin: 0; font-size: 13px; color: var(--ink-mid); }
+        /* Holds the space the real regions will occupy so their arrival moves
+           nothing, and stays invisible for the first fifth of a second so a
+           fast load never flashes a placeholder at anyone. */
+        .evidence-pending { display: flex; flex-direction: column; gap: 20px; opacity: 0; animation: skel-in 0.18s ease 0.2s forwards; }
+        @keyframes skel-in { to { opacity: 1; } }
+        .skel-region { display: flex; flex-direction: column; gap: 8px; padding-left: 18px; border-left: 2px solid var(--rule); }
+        .skel-head { height: 15px; width: 44%; border-radius: 3px; background: var(--rule-soft); }
+        .skel-code { height: 116px; border-radius: 6px; border: 1px solid var(--rule); background: var(--mist); }
+        @media (prefers-reduced-motion: reduce) { .evidence-pending { animation: none; opacity: 1; } }
         .note a { color: var(--fu-deep); font-weight: 600; }
         @media (max-width: 960px) {
             body { font-size: 15px; }
@@ -251,7 +263,7 @@
             </div>
             <h2>Evidence</h2>
             <div class="evidence" id="evidence">
-                {{if .DeferredMembers}}<p class="note" id="members-loading" aria-live="polite">Loading the archive's members…</p>{{end}}
+                {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{if .Findings}}
                 {{- /* The stand-in for a file whose traits carry no byte spans.
@@ -309,7 +321,10 @@
         var url = "/file/{{.SHA256}}/members";
         fetch(url, { headers: { Accept: "application/json" } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
             var note = document.getElementById("members-loading");
-            if (!m) { if (note) note.textContent = "The archive's members could not be loaded."; return; }
+            if (!m) {
+                if (note) { note.className = "note"; note.removeAttribute("aria-busy"); note.textContent = "The archive's members could not be loaded."; }
+                return;
+            }
             if (note) note.remove();
             var host = document.getElementById("evidence");
             host.insertAdjacentHTML("beforeend", m.content_html);

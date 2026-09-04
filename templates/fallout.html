@@ -480,5 +480,12 @@
         </main>
     </div>
     {{template "footer" .}}
+    {{- /* Start fetching a sample page when a pointer settles on its link, so
+           the click lands on a page the browser has already rendered. Moderate
+           eagerness is hover-triggered and the browser caps how many it will
+           run at once, so a 200-row band does not become 200 fetches. */ -}}
+    <script type="speculationrules" nonce="{{.Nonce}}">
+    {"prerender": [{"where": {"href_matches": "/file/*"}, "eagerness": "moderate"}]}
+    </script>
 </body>
 </html>

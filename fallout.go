@@ -481,6 +481,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	w.Header().Set("Link", fontPreloadLink)
 	if err := falloutTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed", "template", "fallout", "error", err)
 		return
