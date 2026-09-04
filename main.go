@@ -719,6 +719,11 @@ type resultData struct {
 	// template renders loading placeholders for those regions; a non-archive or
 	// a fully-inlined archive leaves it false and renders everything up front.
 	DeferredMembers bool
+	// MembersHTML/MembersTraits carry the already-built member evidence when the
+	// payload was in cache at render time. The page then ships complete and the
+	// browser makes no second request at all; DeferredMembers stays false.
+	MembersHTML     template.HTML
+	MembersTraits   template.HTML
 	Duration        string
 	FindingCount    string
 	Nonce           string // script-src nonce
@@ -1873,8 +1878,8 @@ func main() {
 	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "litmus analysis server host:port (also reads LITMUS_ADDR env; empty disables, falling back to hopper-only analysis)")
 	var rateLimit int
 	var rateWindow time.Duration
-	cli.IntVar(&rateLimit, "rate-limit", 10, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
-	cli.DurationVar(&rateWindow, "rate-window", 10*time.Minute, "window over which --rate-limit applies, as a sustained token-bucket rate with a burst of --rate-limit")
+	cli.IntVar(&rateLimit, "rate-limit", 20, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
+	cli.DurationVar(&rateWindow, "rate-window", 5*time.Minute, "window over which --rate-limit applies, as a sustained token-bucket rate with a burst of --rate-limit")
 	if err := cli.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
@@ -4982,7 +4987,16 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	// first paint.
 	data.DeferredMembers = membersDeferred(res.RawLitmus)
 	if data.DeferredMembers {
-		warmMembers(ctx, sha)
+		// Warming means this is usually already built by the time anyone asks.
+		// When it is, inline it: a second round trip the browser cannot even
+		// start until the HTML has parsed costs more than the bytes do.
+		if cached, ok, cerr := membersCache.Get(ctx, sha); cerr == nil && ok && cached.HasContent {
+			data.MembersHTML = template.HTML(cached.ContentHTML)  //nolint:gosec // rendered by our own templates
+			data.MembersTraits = template.HTML(cached.TraitsHTML) //nolint:gosec // rendered by our own templates
+			data.DeferredMembers = false
+		} else {
+			warmMembers(ctx, sha, &res)
+		}
 	}
 	var reportDur, parentsDur time.Duration
 	if hopperDB.Load() != nil {
@@ -5241,9 +5255,31 @@ func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, erro
 	if err != nil {
 		return cachedMembers{}, err
 	}
-	enrichMS := time.Since(start).Milliseconds()
+	return renderMembers(ctx, sha, &res, start, time.Since(start).Milliseconds())
+}
+
+// renderMembersFromResult is renderMembersResponse for a caller that already
+// holds the parent's storedResult — the detail handler, warming its own page.
+// It skips the parent re-read; everything downstream is identical.
+func renderMembersFromResult(ctx context.Context, sha string, parent *storedResult) (cachedMembers, error) {
+	start := time.Now()
+	res := *parent // local copy: RawLitmus is replaced with the enriched envelope
+	if sample, ok := parentSampleFromEnvelope(res.RawLitmus); ok && hopperWasCompacted(sample.CleaveResult) {
+		enriched, err := enrichMembers(ctx, sha, sample)
+		if err != nil {
+			logger.Debug("member enrichment failed; serving parent-only", "sha", sha, "error", err)
+		} else if enriched != nil {
+			res.RawLitmus = string(enriched)
+		}
+	}
+	return renderMembers(ctx, sha, &res, start, time.Since(start).Milliseconds())
+}
+
+// renderMembers turns an enriched result into the cached payload: the shared
+// tail of both paths above.
+func renderMembers(ctx context.Context, sha string, res *storedResult, start time.Time, enrichMS int64) (cachedMembers, error) {
 	prepareStart := time.Now()
-	data := prepareResultData(res.Filename, sha, &res)
+	data := prepareResultData(res.Filename, sha, res)
 	prepareMS := time.Since(prepareStart).Milliseconds()
 	renderStart := time.Now()
 
@@ -5421,20 +5457,42 @@ const fontPreloadLink = `</static/fonts/inter-latin.woff2>; rel=preload; as=font
 //
 // The request context is detached (values kept, cancellation dropped): this
 // outlives the response it was started from by design.
-func warmMembers(ctx context.Context, sha string) {
+func warmMembers(ctx context.Context, sha string, res *storedResult) {
 	if membersCache == nil {
 		return
 	}
+	// The goroutine outlives the request that started it, so it works from its
+	// own copy rather than the handler's.
+	parent := *res
 	go func() {
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), membersWarmTimeout)
 		defer cancel()
 		_, err := membersCache.FetchTTL(wctx, sha, auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
-			return renderMembersResponse(lctx, sha)
+			// The page render already holds this sample's envelope, so the warm
+			// path splices members into that copy rather than re-reading a
+			// multi-megabyte row hopper just handed us.
+			return renderMembersFromResult(lctx, sha, &parent)
 		})
 		if err != nil {
 			logger.Debug("members warm failed", "sha256", sha, "error", err)
 		}
 	}()
+}
+
+// parentSampleFromEnvelope rebuilds the three analysis columns Reassemble reads
+// from an envelope prism already has in memory. The top-level unmarshal keeps
+// each section as a raw slice, so this is one scan rather than a full parse.
+func parentSampleFromEnvelope(envelope string) (*hopper.Sample, bool) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(envelope), &top) != nil {
+		return nil, false
+	}
+	sample := &hopper.Sample{
+		LitmusResult: top["ml"],
+		LLMResult:    top["llm"],
+		CleaveResult: top["raw"],
+	}
+	return sample, len(sample.CleaveResult) > 0
 }
 
 // hopperCacheTTL is how long a cached result is served without consulting
@@ -5598,11 +5656,38 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 		return nil, errors.New("hopper not connected")
 	}
 	pickStart := time.Now()
-	wanted := envelopeChildSHAs(sample.CleaveResult, sha)
-	if len(wanted) > maxFilesShown {
-		wanted = wanted[:maxFilesShown]
+	// Risk-ranked members first, then the members a cross-file composite drew
+	// from so its trail links resolve. Both lists are deduped and the total is
+	// capped: the page renders at most maxFilesShown files and
+	// maxEvidenceBlocks regions, so anything past maxMemberFetch is fetched,
+	// parsed and thrown away. One archive asked for 143 members — 3 MB of child
+	// rows inflating a 9 MB envelope — to render three files.
+	wanted := make([]string, 0, maxMemberFetch)
+	seen := make(map[string]bool, maxMemberFetch)
+	add := func(shas []string) {
+		for _, s := range shas {
+			if len(wanted) >= maxMemberFetch {
+				return
+			}
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			wanted = append(wanted, s)
+		}
 	}
-	wanted = append(wanted, compositeLinkedSHAs(sample.CleaveResult, sha)...)
+	// Risk first, and only the top maxFilesShown of it, because that is all the
+	// content view will ever render. compositeLinkedSHAs is unranked — it names
+	// every member a cross-file composite touched, which is how one archive
+	// asked for 143 — so it only fills what is left, and a member it wanted but
+	// did not get simply loses its trail link (traitSources already drops links
+	// to files that did not render).
+	risky := envelopeChildSHAs(sample.CleaveResult, sha)
+	if len(risky) > maxFilesShown {
+		risky = risky[:maxFilesShown]
+	}
+	add(risky)
+	add(compositeLinkedSHAs(sample.CleaveResult, sha))
 	pickMS := time.Since(pickStart).Milliseconds()
 	if len(wanted) == 0 {
 		return nil, nil

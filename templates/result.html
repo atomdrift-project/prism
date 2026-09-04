@@ -253,7 +253,7 @@
                 <h1>{{.Headline}}</h1>
                 {{with .Summary}}<p class="summary">{{.}}</p>{{end}}
                 {{with .RegistryDesc}}<p class="registry-desc">“{{.}}”</p>{{end}}
-                {{template "findingsbody" .}}
+                {{if .MembersTraits}}{{.MembersTraits}}{{else}}{{template "findingsbody" .}}{{end}}
                 <div class="ids">
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
                     {{if .SourceURL}}<div class="id-line"><span class="k">URL</span><a class="v" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceURL}}</a></div>{{end}}
@@ -265,6 +265,7 @@
             <div class="evidence" id="evidence">
                 {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
+                {{with .MembersHTML}}{{.}}{{end}}
                 {{if .Findings}}
                 {{- /* The stand-in for a file whose traits carry no byte spans.
                        An archive replaces it with real regions once the member

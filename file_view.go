@@ -44,6 +44,13 @@ const (
 	maxFilesShown     = 5
 )
 
+// maxMemberFetch bounds how many archive members the detail page pulls from
+// hopper. Above maxFilesShown to leave room for the members a cross-file
+// composite points at, which render regardless of their own criticality, but
+// nowhere near unbounded: every member fetched is a row read, a JSON parse and
+// a slice of envelope that the caps above may never render.
+const maxMemberFetch = 12
+
 // maxEvidenceBlocks caps the whole page, not just one file. Five regions is
 // what a reader actually reads; a five-file archive allowed five each turned
 // the evidence list into a scroll. The five kept are the highest-scoring
@@ -128,10 +135,11 @@ func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
 	for d := range datas {
 		total += len(datas[d].lws)
 	}
+
+	type ref struct{ file, win, score int }
 	if total <= maxEvidenceBlocks {
 		return 0
 	}
-	type ref struct{ file, win, score int }
 	refs := make([]ref, 0, total)
 	for d := range datas {
 		for w := range datas[d].lws {
