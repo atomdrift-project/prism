@@ -12,7 +12,6 @@ package main
 // dashed. Confusing the two would be the worst thing this picture could do.
 
 import (
-	"cmp"
 	"slices"
 	"strings"
 )
@@ -21,10 +20,6 @@ import (
 // "objectives/anti-static/obfuscation" whole while folding its sixteen matchers
 // into one atom; four splits hairs the index row has no room for.
 const maleculeDepth = 3
-
-// maleculeRing2 caps the outer ring. Past this the drawing stops being read and
-// starts being decoration, so the remainder is counted instead.
-const maleculeRing2 = 12
 
 // maleculeAtom is one behaviour: every finding whose directory truncates here.
 type maleculeAtom struct {
@@ -40,15 +35,11 @@ type maleculeAtom struct {
 	IsRule   bool
 }
 
-// maleculeGraph is a file's behaviours and the two relations between them.
+// maleculeGraph is a file's behaviours and the dependencies between them. The
+// drawing order lives in the renderer (maleculeRank), not here: what earns ink
+// is a question about the picture, not about the report.
 type maleculeGraph struct {
 	Atoms []maleculeAtom
-	Ties  [][2]int // kinship: same category, drawn dashed
-	// Centres are the atoms worth drawing first, strongest severity first.
-	// Ranking by severity rather than by position in the dependency graph is
-	// deliberate: collapsing can leave a hostile behaviour with every
-	// dependency internal and a parent above it, and it still has to be seen.
-	Centres []int
 }
 
 func maleculeKey(id string) string {
@@ -136,36 +127,6 @@ func buildMaleculeGraph(file *cleaveFile) maleculeGraph {
 			graph.Atoms[to].UsedBy = append(graph.Atoms[to].UsedBy, from)
 		}
 	}
-	byCat := make(map[string][]int, len(graph.Atoms))
-	for i := range graph.Atoms {
-		byCat[graph.Atoms[i].Category] = append(byCat[graph.Atoms[i].Category], i)
-	}
-	cats := make([]string, 0, len(byCat))
-	for c := range byCat {
-		cats = append(cats, c)
-	}
-	slices.Sort(cats)
-	for _, c := range cats {
-		ids := byCat[c]
-		for a := range ids {
-			for b := a + 1; b < len(ids); b++ {
-				graph.Ties = append(graph.Ties, [2]int{ids[a], ids[b]})
-			}
-		}
-	}
-	for i := range graph.Atoms {
-		if graph.Atoms[i].IsRule || critFromString(graph.Atoms[i].Crit) >= minNotableCrit {
-			graph.Centres = append(graph.Centres, i)
-		}
-	}
-	slices.SortStableFunc(graph.Centres, func(x, y int) int {
-		a, b := &graph.Atoms[x], &graph.Atoms[y]
-		return cmp.Or(
-			cmp.Compare(critFromString(b.Crit), critFromString(a.Crit)),
-			cmp.Compare(b.conf, a.conf),
-			cmp.Compare(a.Key, b.Key),
-		)
-	})
 	return graph
 }
 
@@ -228,16 +189,6 @@ func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 			})
 		}
 	}
-	byCat := map[string][]int{}
-	for i := range graph.Atoms {
-		byCat[graph.Atoms[i].Category] = append(byCat[graph.Atoms[i].Category], i)
-	}
-	for i := range graph.Atoms {
-		graph.Centres = append(graph.Centres, i)
-	}
-	slices.SortStableFunc(graph.Centres, func(a, b int) int {
-		return cmp.Compare(critFromString(graph.Atoms[b].Crit), critFromString(graph.Atoms[a].Crit))
-	})
 	return graph
 }
 

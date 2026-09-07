@@ -600,7 +600,7 @@ func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
 		if row.Classification == "hostile" &&
 			!row.CreatedAt.Before(week.Start) && row.CreatedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) &&
-			!falloutOffTopic(row.Feed, row.FileType, row.Ecosystem) {
+			!falloutOffTopic(row.Feed, row.Ecosystem) {
 			n++
 		}
 	}
@@ -636,45 +636,40 @@ var malwareCorpusFeeds = map[string]bool{
 	"vxug":         true,
 }
 
-// offTopicFileTypes are the types a commodity corpus is mostly made of and a
-// supply-chain compromise almost never is: native Windows payloads and
-// weaponized documents. A crimeware dropper or a maldoc is real malware, but
-// it tells the reader nothing about what a dependency did on install, so it
-// stays out of the log rather than crowding out the catches that do.
-var offTopicFileTypes = map[string]bool{
-	// Windows-native payloads, including the script hosts that only Windows
-	// runs. Registry-sourced samples reach the log regardless of type; this
-	// list only ever applies to malwareCorpusFeeds rows.
-	"appx": true, "bat": true, "cab": true, "chm": true, "cmd": true,
-	"cpl": true, "dll": true, "exe": true, "hta": true, "lnk": true,
-	"msi": true, "msp": true, "pe": true, "ps1": true, "psd1": true,
-	"psm1": true, "reg": true, "scr": true, "sys": true, "vba": true,
-	"vbe": true, "vbs": true, "wsf": true,
-	// Documents: PDFs and the office family, plus the OLE/CFB container they
-	// ship inside and the mail formats they arrive in.
-	"cfb": true, "doc": true, "docm": true, "docx": true, "dot": true,
-	"dotm": true, "eml": true, "msg": true, "odp": true, "ods": true,
-	"odt": true, "ole": true, "one": true, "pdf": true, "ppt": true,
-	"pptm": true, "pptx": true, "pub": true, "rtf": true, "vsd": true,
-	"xls": true, "xlsb": true, "xlsm": true, "xlsx": true,
+// offTopicEcosystems are the platforms a commodity corpus is mostly made of
+// and a supply-chain compromise almost never is. A crimeware dropper or a
+// maldoc is real malware, but it says nothing about what a dependency did on
+// install, so it stays out of the log rather than crowding out the catches
+// that do.
+//
+// These four are what a sample gets when there is no registry to name it:
+// forager tags a hash-corpus sample by its file type, and hopper's pkgparse
+// resolves that to the platform running the bytes ("dll" → windows, "macho" →
+// macos, "docx" → document). The taxonomy itself stays in pkgparse; this is
+// only the policy of which of its answers the log has no use for.
+//
+// Note that the Windows package managers (winget, scoop, chocolatey) also
+// resolve to "windows" — which is why the feed check comes first. A poisoned
+// winget package is exactly the story the log exists to tell.
+var offTopicEcosystems = map[string]bool{
+	"windows":  true,
+	"document": true,
+	"macos":    true,
+	"android":  true,
 }
 
 // falloutOffTopic reports a catch that is malware but not supply-chain
-// malware: a Windows payload or a document from a commodity-malware corpus.
+// malware: a Windows payload, a maldoc, or another loose OS binary lifted from
+// a commodity-malware corpus.
 //
-// ecosystem is checked alongside the analyzer's own typing because a
-// hash-corpus provider has no registry to name — forager records the
-// provider's file-type tag ("exe", "doc") in the ecosystem column instead, and
-// for a sample hopper never managed to type that tag is all there is.
-func falloutOffTopic(feed, fileType, ecosystem string) bool {
+// A corpus sample whose ecosystem hopper has not typed yet reads as on-topic
+// and stays in the log — the gate errs toward showing a catch rather than
+// hiding one. `hopper backfill-ecosystems` is what fills those rows in.
+func falloutOffTopic(feed, ecosystem string) bool {
 	if !malwareCorpusFeeds[strings.ToLower(strings.TrimSpace(feed))] {
 		return false
 	}
-	return offTopicFileType(fileType) || offTopicFileType(ecosystem)
-}
-
-func offTopicFileType(s string) bool {
-	return offTopicFileTypes[strings.ToLower(strings.TrimSpace(s))]
+	return offTopicEcosystems[strings.ToLower(strings.TrimSpace(ecosystem))]
 }
 
 // falloutView is the assembled log: what buildFalloutView hands the handler.
@@ -774,7 +769,7 @@ func falloutRowsInWindow(rows []feedRow, week falloutWeek, verified falloutVerif
 		if row.Classification == "hostile" &&
 			!row.AnalyzedAt.Before(week.Start) && row.AnalyzedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) && verified.matches(row.Corroborated) &&
-			!falloutOffTopic(row.Feed, row.FileType, row.Ecosystem) {
+			!falloutOffTopic(row.Feed, row.Ecosystem) {
 			out = append(out, row)
 		}
 	}
