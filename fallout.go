@@ -679,18 +679,35 @@ var offTopicFileTypes = map[string]bool{
 	"cfb":   true,
 }
 
+// offTopicFeeds are the collector channels the log has no use for at all,
+// whatever a sample from them turns out to be. tria.ge is a sandbox
+// submission queue: what arrives is whatever an analyst somewhere pushed at a
+// detonation service that hour, and none of it is a claim about a dependency
+// — an archive from it is an archive someone wanted detonated, not a package
+// a registry served. The other corpora are worth reading through the two
+// filters below; this one is not worth reading at all.
+var offTopicFeeds = map[string]bool{
+	"triage": true,
+}
+
 // falloutOffTopic reports a catch that is malware but not supply-chain
-// malware: a Windows payload, a maldoc, or another loose OS binary lifted from
-// a commodity-malware corpus.
+// malware: anything at all from a feed the log has no use for, or a Windows
+// payload, a maldoc, or another loose OS binary lifted from a
+// commodity-malware corpus.
 //
-// The feed check comes first, so a poisoned winget package or a Go module that
+// The feed decides first, so a poisoned winget package or a Go module that
 // ships an ELF is untouched — only a hash-corpus channel can be off-topic at
-// all. Within one, a catch is off-topic when either hopper's ecosystem or the
-// sniffed file type says "loose OS binary"; a corpus sample that is neither
-// (an archive, a script) stays in the log, so the gate still errs toward
-// showing a supply-chain catch rather than hiding one.
+// all. Within one that is worth reading, a catch is off-topic when either
+// hopper's ecosystem or the sniffed file type says "loose OS binary"; a
+// corpus sample that is neither (an archive, a script) stays in the log, so
+// the gate still errs toward showing a supply-chain catch rather than hiding
+// one.
 func falloutOffTopic(feed, ecosystem, fileType string) bool {
-	if !malwareCorpusFeeds[strings.ToLower(strings.TrimSpace(feed))] {
+	feed = strings.ToLower(strings.TrimSpace(feed))
+	if offTopicFeeds[feed] {
+		return true
+	}
+	if !malwareCorpusFeeds[feed] {
 		return false
 	}
 	return offTopicEcosystems[strings.ToLower(strings.TrimSpace(ecosystem))] ||

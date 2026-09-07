@@ -248,7 +248,9 @@ func TestBuildFalloutViewQualifies(t *testing.T) {
 // the log Windows crimeware and maldocs, neither of which says anything about
 // a dependency. A corpus row is off-topic when either its ecosystem or its
 // file type says "loose OS binary" — the file type is what catches the bulk of
-// a corpus, whose rows carry no ecosystem at all. Registry feeds are untouched
+// a corpus, whose rows carry no ecosystem at all. tria.ge is dropped whole —
+// it is a sandbox detonation queue, and an archive someone submitted to it is
+// not a package a registry served. Registry feeds are untouched
 // — including the Windows package managers, which share the "windows"
 // ecosystem and whose catches are exactly what the log is for.
 func TestFalloutOffTopicCorpusCatches(t *testing.T) {
@@ -259,14 +261,16 @@ func TestFalloutOffTopicCorpusCatches(t *testing.T) {
 	}
 	rows := []feedRow{
 		row("bazaar-pe", "windows", "pe", "bazaar"),       // crimeware dropper
-		row("triage-maldoc", "document", "ole", "triage"), // weaponized document
+		row("bazaar-maldoc", "document", "ole", "bazaar"), // weaponized document
 		row("bazaar-dylib", "MacOS", "macho", "bazaar"),   // loose OS binary, mixed case
 		row("malshare-apk", "android", "apk_android", "malshare"),
-		row("triage-untyped-pe", "", "pe", "triage"),       // no ecosystem: the file type still tells
+		row("bazaar-untyped-pe", "", "pe", "bazaar"),       // no ecosystem: the file type still tells
 		row("virussign-untyped-pe", "", "PE", "virussign"), // ditto, mixed case
 		row("corpus-elf", "", "elf", "bazaar"),             // commodity Linux binary
-		row("corpus-tarball", "", "tar.gz", "triage"),      // corpus, but supply-chain shaped
-		row("corpus-js", "javascript", "javascript", "triage"),
+		row("corpus-tarball", "", "tar.gz", "bazaar"),      // corpus, but supply-chain shaped
+		row("corpus-js", "javascript", "javascript", "bazaar"),
+		row("triage-tarball", "", "tar.gz", "triage"), // tria.ge: a detonation queue, so not even these
+		row("triage-js", "javascript", "javascript", "triage"),
 		row("winget-poisoned", "windows", "pe", "winget"),  // registry feed: a real supply-chain catch
 		row("brew-poisoned", "macos", "macho", "homebrew"), // ditto
 		row("npm-squat", "javascript", "npm", "npm"),
@@ -276,8 +280,9 @@ func TestFalloutOffTopicCorpusCatches(t *testing.T) {
 		kept[r.Package] = true
 	}
 	gated := []string{
-		"bazaar-pe", "triage-maldoc", "bazaar-dylib", "malshare-apk",
-		"triage-untyped-pe", "virussign-untyped-pe", "corpus-elf",
+		"bazaar-pe", "bazaar-maldoc", "bazaar-dylib", "malshare-apk",
+		"bazaar-untyped-pe", "virussign-untyped-pe", "corpus-elf",
+		"triage-tarball", "triage-js",
 	}
 	for _, pkg := range gated {
 		if kept[pkg] {
