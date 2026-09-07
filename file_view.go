@@ -137,9 +137,6 @@ func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
 	}
 
 	type ref struct{ file, win, score int }
-	if total <= maxEvidenceBlocks {
-		return 0
-	}
 	refs := make([]ref, 0, total)
 	for d := range datas {
 		for w := range datas[d].lws {
@@ -147,12 +144,38 @@ func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
 		}
 	}
 	slices.SortStableFunc(refs, func(a, b ref) int { return cmp.Compare(b.score, a.score) })
+	// capWindows already keeps one region per behaviour within a file, but the
+	// page is assembled across files and a trait that fired in five members
+	// took all five slots — five copies of one sentence, and no room for the
+	// eval() call or the webshell signature sitting in the same bytes. A third
+	// region of a trait teaches nothing the first two did not, so the rest of
+	// the budget goes to traits not yet seen.
 	keep := make([]map[int]bool, len(datas))
-	for _, r := range refs[:maxEvidenceBlocks] {
-		if keep[r.file] == nil {
-			keep[r.file] = make(map[int]bool)
+	seen := make(map[string]int, maxEvidenceBlocks)
+	taken := 0
+	for pass := range 2 {
+		for _, r := range refs {
+			if taken == maxEvidenceBlocks {
+				break
+			}
+			head := datas[r.file].lws[r.win].headNote(wanted).ID
+			// First pass takes one region per trait, so every distinct trait
+			// on the page is represented before any is repeated; the second
+			// allows a single repeat, which is where a trait that really did
+			// fire in several places earns its second showing.
+			if seen[head] > pass {
+				continue
+			}
+			if keep[r.file] == nil {
+				keep[r.file] = make(map[int]bool)
+			}
+			if keep[r.file][r.win] {
+				continue
+			}
+			keep[r.file][r.win] = true
+			seen[head]++
+			taken++
 		}
-		keep[r.file][r.win] = true
 	}
 	for d := range datas {
 		kept := make([]labeledWindow, 0, len(keep[d]))
@@ -163,7 +186,7 @@ func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
 		}
 		datas[d].lws = kept
 	}
-	return total - maxEvidenceBlocks
+	return total - taken
 }
 
 // buildFileViews assembles the Content tab from cleave's per-file context and
@@ -518,18 +541,6 @@ func capWindows(lws []labeledWindow, wanted map[string]bool) []labeledWindow {
 			kept[at] = lws[i]
 		}
 	}
-	// Show the evidence for the verdict, not every window in the file. When any
-	// region backs one of the headline traits, those are the regions worth a
-	// reader's time and the rest are a second findings list in disguise.
-	backing := make([]labeledWindow, 0, len(kept))
-	for i := range kept {
-		if wanted[kept[i].headNote(wanted).ID] {
-			backing = append(backing, kept[i])
-		}
-	}
-	if len(backing) > 0 {
-		kept = backing
-	}
 	lws = kept
 	if len(lws) <= maxWindowsPerFile {
 		slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(a.Start, b.Start) })
@@ -558,33 +569,42 @@ func traitIsVendor(id string) bool { return strings.HasPrefix(id, "third_party/"
 // are demoted on purpose — the verdict and the badges already name them, and
 // what a reader needs beside the bytes is which matcher hit them.
 func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
-	// Notes arrive strongest-first, so the first match in each tier is the
-	// strongest of that tier. Preference runs: our own trait backing a headline
-	// finding, our own trait, a vendor signature backing a headline finding,
-	// any vendor signature — then, only if nothing atomic landed here, the
-	// composite that did.
-	var tier [4]*ctxNoteRef
+	// Preference, strongest term first: a note that reaches notable outranks
+	// one that does not, then our own traits outrank vendor signatures, then a
+	// note backing a headline finding outranks one that does not, then
+	// severity breaks the tie.
+	//
+	// Notability leads because it is the term that was missing. A headline
+	// composite's legs are marked wanted whatever their severity, and a
+	// composite can rest on a leg that is pure formatting: "extreme leading
+	// whitespace hides source code" (crit 4) is built on a crit-1 metrics
+	// note. Ranking on backing alone let that crit-1 note title regions whose
+	// bytes also carried an eval() call and a hostile webshell signature — the
+	// weakest thing in the window naming the strongest.
+	best, bestScore := (*ctxNoteRef)(nil), -1
 	for i := range lw.Notes {
 		n := &lw.Notes[i]
 		if !n.Atomic {
 			continue
 		}
-		slot := 0
-		if traitIsVendor(n.ID) {
-			slot = 2
+		score := n.Crit
+		if n.Crit >= minNotableCrit {
+			score += 64
 		}
-		if !wanted[n.ID] {
-			slot++
+		if !traitIsVendor(n.ID) {
+			score += 16
 		}
-		if tier[slot] == nil {
-			tier[slot] = n
+		if wanted[n.ID] {
+			score += 8
 		}
-	}
-	for _, n := range tier {
-		if n != nil {
-			return *n
+		if score > bestScore {
+			best, bestScore = n, score
 		}
 	}
+	if best != nil {
+		return *best
+	}
+	// Nothing atomic landed here, so the composite that did has to name it.
 	if len(lw.Notes) > 0 {
 		return lw.Notes[0]
 	}

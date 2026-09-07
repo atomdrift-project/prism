@@ -210,7 +210,9 @@ function composeQueryString(parsed) {
 }
 
 function buildURL(parsed) {
-  const eco = parsed.ecosystem ? `/${encodeURIComponent(parsed.ecosystem)}/` : "/";
+  // No ecosystem means the stream, not "/" — that path is the fallout log,
+  // which ignores every filter below and would silently swallow the search.
+  const eco = parsed.ecosystem ? `/${encodeURIComponent(parsed.ecosystem)}/` : "/stream";
   const url = new URL(window.location.origin + eco);
   if (parsed.crit) url.searchParams.set("criticality", parsed.crit);
   if (parsed.purl) url.searchParams.set("purl", parsed.purl);

@@ -156,7 +156,7 @@ func critFromString(s string) int {
 // then a reader who wants the structure opens the sample.
 func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 	var graph maleculeGraph
-	// Severity per category, from the row's top traits — the only per-atom
+	// Severity per element, from the row's top traits — the only per-atom
 	// severity the feed projection carries.
 	sev := make(map[string]string, len(traits))
 	for _, t := range traits {
@@ -169,6 +169,37 @@ func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 			}
 		}
 	}
+	crit := func(sym string) string {
+		if c := sev[sym]; c != "" {
+			return c
+		}
+		return "notable"
+	}
+	// Atoms are keyed by their path so a symbol appearing under two leads is
+	// one behaviour with two users — which is what makes it a coordination
+	// centre rather than two unrelated dots.
+	index := make(map[string]int, 8)
+	atom := func(key, symbol, crit string, members int) int {
+		if at, ok := index[key]; ok {
+			a := &graph.Atoms[at]
+			a.Members += members
+			if critFromString(crit) > critFromString(a.Crit) {
+				a.Crit = crit
+			}
+			return at
+		}
+		at := len(graph.Atoms)
+		index[key] = at
+		cat := key
+		if ns, _, ok := strings.Cut(key, "/"); ok {
+			cat = ns
+		}
+		graph.Atoms = append(graph.Atoms, maleculeAtom{
+			Key: key, Category: cat, Symbol: symbol, Crit: crit, Members: members,
+		})
+		return at
+	}
+
 	for _, group := range parseFormulaGroups(formula) {
 		counts := map[string]int{}
 		order := []string{}
@@ -178,15 +209,40 @@ func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 			}
 			counts[sym]++
 		}
+		// A lead element names the composite the group belongs to — the same
+		// composite-depends-on-atomic relation the sample page reads off
+		// cleave's uses edges. Spending it here is what gives a feed row a
+		// skeleton instead of a flat star of unrelated dots.
+		lead := -1
+		leadPath := ""
+		if group.Lead != "" {
+			leadPath = elementCategory(group.Lead)
+			lead = atom(leadPath, group.Lead, crit(group.Lead), 1)
+			graph.Atoms[lead].IsRule = true
+		}
 		for _, sym := range order {
-			crit := sev[sym]
-			if crit == "" {
-				crit = "notable"
+			key := elementCategory(sym)
+			if leadPath != "" {
+				// Two segments, so the drawing gets the namespace ranking and
+				// the branch depth the sample page has.
+				key = leadPath + "/" + key
 			}
-			cat := elementCategory(sym)
-			graph.Atoms = append(graph.Atoms, maleculeAtom{
-				Key: cat, Category: cat, Symbol: sym, Crit: crit, Members: counts[sym],
-			})
+			at := atom(key, sym, crit(sym), counts[sym])
+			if lead < 0 || at == lead {
+				continue
+			}
+			if !slices.Contains(graph.Atoms[lead].Uses, at) {
+				graph.Atoms[lead].Uses = append(graph.Atoms[lead].Uses, at)
+				graph.Atoms[at].UsedBy = append(graph.Atoms[at].UsedBy, lead)
+			}
+		}
+		// A composite is at least as bad as the worst thing under it.
+		if lead >= 0 {
+			for _, at := range graph.Atoms[lead].Uses {
+				if critFromString(graph.Atoms[at].Crit) > critFromString(graph.Atoms[lead].Crit) {
+					graph.Atoms[lead].Crit = graph.Atoms[at].Crit
+				}
+			}
 		}
 	}
 	return graph

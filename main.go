@@ -2230,7 +2230,20 @@ func newMux() *http.ServeMux {
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
-	mux.HandleFunc("GET /{$}", handleFallout)
+	// The fallout log is the front page, but "/" was the stream's home for
+	// long enough that links and bookmarks still carry feed queries there.
+	// A query the log cannot answer is forwarded to the page that can, rather
+	// than being dropped on the floor — which is what a search for
+	// "/?q=lodash@1.0.0" used to do. Parameters the log does use (week,
+	// ecosystem, verified) are its own and stay put.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query(); feedQueryPresent(q) {
+			target := url.URL{Path: "/stream", RawQuery: q.Encode()}
+			http.Redirect(w, r, target.String(), http.StatusMovedPermanently)
+			return
+		}
+		handleFallout(w, r)
+	})
 	mux.HandleFunc("GET /stream", handleIndex)
 	// /index was the stream's name until it got one that says what it is.
 	// Bookmarks and external links keep working.
@@ -4324,6 +4337,49 @@ func claimTokenFromSearchQuery(q string) (key, value string, ok bool) {
 	return "", "", false
 }
 
+// packageVersionSearch reads a bare `name@version` coordinate out of the
+// search box. It is what a reader actually types or pastes — "lodash@4.17.21",
+// or a scoped "@scope/pkg@1.2.3" — and it carries no ecosystem, so it cannot
+// become a PURL. Matching the name and pinning the version is the closest the
+// feed can get, and it is the difference between that query finding the sample
+// and finding nothing at all.
+//
+// The version must start with a digit or a v-and-digit, which is what keeps an
+// email address ("someone@example.com") from being read as a coordinate. A
+// scoped package's leading "@" is not a separator, so the split is on the last
+// "@" at a non-zero index.
+// feedQueryPresent reports whether a query names a filter only the stream can
+// answer. The fallout log reads week / ecosystem / verified; anything else in
+// this list belongs to the feed.
+func feedQueryPresent(q url.Values) bool {
+	for _, k := range [...]string{"q", "purl", "criticality", "domain", "m", "name", "signer", "feeds", "page"} {
+		if q.Has(k) {
+			return true
+		}
+	}
+	return false
+}
+
+func packageVersionSearch(q string) (name, version string, ok bool) {
+	q = strings.TrimSpace(q)
+	if q == "" || strings.ContainsAny(q, " \t\r\n:") {
+		return "", "", false
+	}
+	at := strings.LastIndex(q, "@")
+	if at <= 0 || at == len(q)-1 {
+		return "", "", false
+	}
+	name, version = q[:at], q[at+1:]
+	rest := version
+	if rest[0] == 'v' || rest[0] == 'V' {
+		rest = rest[1:]
+	}
+	if rest == "" || rest[0] < '0' || rest[0] > '9' {
+		return "", "", false
+	}
+	return name, version, true
+}
+
 func purlFromSearchQuery(q string) (string, bool) {
 	q = strings.TrimSpace(q)
 	if q == "" || strings.ContainsAny(q, " \t\r\n") {
@@ -4777,6 +4833,16 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
 		data.SelectedFormula, data.SelectedQ,
 	)
+	// A bare name@version is a package coordinate without an ecosystem. The
+	// box keeps showing what was typed; the query behind it matches the name
+	// and pins the version, since "lodash@4.17.21" as one literal string
+	// matches no filename, no sha256 and no package.
+	searchTerm := data.SelectedQ
+	if purlBase == "" && purlVersion == "" {
+		if name, version, ok := packageVersionSearch(searchTerm); ok {
+			searchTerm, purlVersion = name, version
+		}
+	}
 	if ecosystem != "" {
 		data.Title = ecosystem + " · Stream"
 	}
@@ -4795,7 +4861,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 				domain:      data.SelectedDomain,
 				criticality: data.SelectedCrit,
 				formula:     data.SelectedFormula,
-				search:      data.SelectedQ,
+				search:      searchTerm,
 				purlBase:    purlBase,
 				purlVersion: purlVersion,
 				claimName:   claimName,

@@ -729,7 +729,7 @@
         </section>
 
         <section class="filters" aria-label="Feed filters">
-            <form method="GET" action="/" class="search-form" id="search-form" role="search">
+            <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
                 <input type="search" name="q" id="search-input"
                     value="{{.SearchQuery}}"
                     placeholder="filename, purl, or sha256"
@@ -739,7 +739,7 @@
                 <a class="search-help" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
             </form>
             <div class="filters-row">
-                <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/{{end}}" class="filter-form" id="filter-form">
+                <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/stream{{end}}" class="filter-form" id="filter-form">
                     <div class="field">
                         <label for="criticality">Crit</label>
                         <select name="criticality" id="criticality">

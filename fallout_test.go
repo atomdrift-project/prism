@@ -522,11 +522,13 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		"and <b>22</b> siblings",
 		"/file/" + testSHAHero,
 		"/fallout?ecosystem=npm",
-		// The malecule. A feed row knows categories and severities but not the
-		// dependency graph, so its atoms carry no bonds and, being one per
-		// category, no kinship ties either.
-		`<title>credential-access</title>`,
+		// The malecule. A feed row has no cleave graph, but the formula's own
+		// lead-and-group structure is the same composite-depends-on-atomic
+		// relation, so the row draws a skeleton with real bonds and full
+		// two-segment paths — the same picture the sample page draws.
+		`<title>objectives/credential-access</title>`,
 		`class="malecule"`,
+		"<line",
 		// The rail: the day anchor.
 		`href="#day-2026-08-04"`,
 		// The week nav: a link back through the archive, and no forward link

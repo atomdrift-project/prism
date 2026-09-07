@@ -226,7 +226,11 @@ func TestFileViewsFileCap(t *testing.T) {
 			ID: i, Depth: 1, SHA256: sha, Path: "a.zip!!f" + itoaTest(i) + ".py", FileType: "python",
 			// Span off byte 0 so the offset-0 sub-suspicious noise filter doesn't
 			// touch these fixtures — this test exercises the file cap, not that.
-			Findings: []finding{{ID: "objectives/execution/eval", Crit: crit, Conf: 0.9, Spans: [][2]int64{{1, 4}}}},
+			// A distinct trait per file for the same reason: one trait repeated
+			// across files is capped page-wide (see
+			// TestEvidenceRegionsDoNotRepeatOneTrait), which would hide the
+			// file cap behind a different rule.
+			Findings: []finding{{ID: "objectives/execution/eval" + itoaTest(i), Crit: crit, Conf: 0.9, Spans: [][2]int64{{1, 4}}}},
 			Ctx: []contextWindow{{
 				Offset: 1, Addr: ptrInt64(0), Data: []byte("eval(x)"),
 			}},
@@ -323,5 +327,90 @@ func TestFileViewsDropsLowCritMembers(t *testing.T) {
 	}
 	if !shown["highmember"] {
 		t.Error("archive member at/above the content-crit floor should render")
+	}
+}
+
+// A headline composite's legs are marked "wanted" whatever their severity, and
+// a composite can rest on a leg that is pure formatting — the live case was
+// "extreme leading whitespace hides source code" (crit 4) built on a crit-1
+// metrics note. Ranking a region's title on backing alone let that crit-1 note
+// name windows whose bytes also carried an eval() call and a hostile webshell
+// signature: the weakest thing in the window naming the strongest.
+func TestHeadNotePrefersNotableOverBacking(t *testing.T) {
+	lw := labeledWindow{Notes: []ctxNoteRef{
+		{ID: "metadata/file/profile/metrics::whitespace", Desc: "Source line has extreme leading whitespace", Crit: 1, Atomic: true},
+		{ID: "micro-behaviors/process/interpreter/eval::eval-call", Desc: "Evaluates PHP source at runtime", Crit: 3, Atomic: true},
+	}}
+	// The crit-1 note is the leg of a headline trait; the eval call is not.
+	wanted := map[string]bool{"metadata/file/profile/metrics::whitespace": true}
+	if got := lw.headNote(wanted); got.Crit != 3 {
+		t.Errorf("region titled %q (crit %d); a formatting note must not outrank a behaviour", got.Desc, got.Crit)
+	}
+
+	// Within notable, our own trait still outranks a vendor signature, which is
+	// the older rule and stays.
+	lw = labeledWindow{Notes: []ctxNoteRef{
+		{ID: "third_party/SigBase/WEBSHELL", Desc: "php webshell", Crit: 5, Atomic: true},
+		{ID: "micro-behaviors/process/interpreter/eval::eval-call", Desc: "Evaluates PHP source at runtime", Crit: 3, Atomic: true},
+	}}
+	if got := lw.headNote(nil); got.ID != "micro-behaviors/process/interpreter/eval::eval-call" {
+		t.Errorf("region titled %q, want our own trait to outrank the vendor signature", got.ID)
+	}
+
+	// With nothing else in the window, a weak note still names it.
+	lw = labeledWindow{Notes: []ctxNoteRef{
+		{ID: "metadata/file/profile/metrics::whitespace", Desc: "whitespace", Crit: 1, Atomic: true},
+	}}
+	if got := lw.headNote(nil); got.Crit != 1 {
+		t.Error("a window carrying only a weak note should still be titled by it")
+	}
+}
+
+// One trait firing across many members used to take every slot on the page:
+// capWindows dedupes within a file, but the evidence list is assembled across
+// files, so five members each contributed the same sentence and there was no
+// room left for the other behaviours in those same bytes.
+func TestEvidenceRegionsDoNotRepeatOneTrait(t *testing.T) {
+	files := []cleaveFile{{ID: 0, Depth: 0, SHA256: "zip", Path: "app.zip", FileType: "zip"}}
+	// Five members, each carrying the same shared trait plus one of its own.
+	own := []struct{ id, desc string }{
+		{"micro-behaviors/process/interpreter/eval::eval", "Evaluates source at runtime"},
+		{"micro-behaviors/os/stdio::echo", "Emits data"},
+		{"micro-behaviors/fs/write::write", "Writes a file"},
+		{"micro-behaviors/net/fetch::fetch", "Fetches a URL"},
+		{"micro-behaviors/os/exec::exec", "Runs a command"},
+	}
+	for i, o := range own {
+		sha := string(rune('a'+i)) + "member"
+		files = append(files, cleaveFile{
+			ID: i + 1, Depth: 1, SHA256: sha, Path: "app.zip!!m" + sha + ".php", FileType: "php",
+			Findings: []finding{
+				{ID: "objectives/backdoor/webshell", Desc: "php webshell", Crit: 5, Conf: 0.9, Spans: [][2]int64{{40, 4}}},
+				{ID: o.id, Desc: o.desc, Crit: 3, Conf: 0.9, Spans: [][2]int64{{80, 4}}},
+			},
+			Ctx: []contextWindow{
+				{Offset: 3, Addr: ptrInt64(40), Data: []byte("shell()")},
+				{Offset: 9, Addr: ptrInt64(80), Data: []byte("other()")},
+			},
+		})
+	}
+
+	views, _, _ := buildFileViews(files)
+	titles := map[string]int{}
+	total := 0
+	for _, v := range views {
+		for _, w := range v.Windows {
+			titles[w.Title]++
+			total++
+		}
+	}
+	if n := titles["php webshell"]; n > 2 {
+		t.Errorf("the shared trait titles %d regions; no trait should repeat more than twice", n)
+	}
+	if len(titles) < 3 {
+		t.Errorf("page shows %d distinct traits (%v); the other behaviours in these bytes are the missing context", len(titles), titles)
+	}
+	if total > maxEvidenceBlocks {
+		t.Errorf("page shows %d regions, over the %d cap", total, maxEvidenceBlocks)
 	}
 }
