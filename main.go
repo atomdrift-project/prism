@@ -958,6 +958,11 @@ type feedRow struct {
 	SHA256         string
 	Ecosystem      string
 	Filename       string
+	// Feed is hopper's samples.feed: which collector channel the sample
+	// arrived on ("bazaar", "triage", "osm", "npm", ...), empty for uploads
+	// and legacy rows. The fallout log reads it to tell a supply-chain
+	// discovery from a commodity-malware corpus (see malwareCorpusFeeds).
+	Feed string
 	// Package/Version are hopper's registry attribution (e.g. "lodash",
 	// "4.17.21"); both empty for uploads and unattributed samples. The
 	// template reads them through Headline and SubID.
@@ -1290,7 +1295,9 @@ type cachedFeedSample struct {
 	Formula        string
 	FileType       string
 	Source         string
-	Ecosystem      string
+	// Feed is hopper's collector channel for the sample; see feedRow.Feed.
+	Feed      string
+	Ecosystem string
 	// Package/Version are hopper's registry attribution; Headline and SubID
 	// derive from them at render time (feedRowsFromSnapshot).
 	Package  string
@@ -2623,7 +2630,7 @@ func feedCacheKey(a *feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v12:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v13:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
 		":cn=" + a.claimName + ":cs=" + a.claimSigner +
@@ -2986,6 +2993,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 			Formula:        res.Formula,
 			FileType:       firstNonEmpty(res.FileType, sample.FileType),
 			Source:         sample.Source,
+			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
@@ -3064,6 +3072,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			Formula:        sample.Formula,
 			FileType:       sample.FileType,
 			Source:         sample.Source,
+			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
@@ -3315,6 +3324,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			Formula:        row.Formula,
 			FileType:       row.FileType,
 			Source:         row.Source,
+			Feed:           row.Feed,
 			Ecosystem:      row.Ecosystem,
 			Package:        row.Package,
 			Version:        row.Version,

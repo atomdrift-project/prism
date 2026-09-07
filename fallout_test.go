@@ -244,6 +244,42 @@ func TestBuildFalloutViewQualifies(t *testing.T) {
 	}
 }
 
+// Commodity-malware corpora (abuse.ch, tria.ge, ...) keep feeding the log
+// Windows crimeware and maldocs, neither of which says anything about a
+// dependency. Registry feeds are untouched, and a corpus sample that is a
+// script or an archive — the shape a supply-chain sample actually takes —
+// still qualifies.
+func TestFalloutOffTopicCorpusCatches(t *testing.T) {
+	corpus := func(pkg, fileType, eco, feed string) feedRow {
+		r := hostileRow(shaN(byte(len(pkg))), eco, fileType, "O1(C)", pkg, time.Hour)
+		r.Feed = feed
+		return r
+	}
+	rows := []feedRow{
+		corpus("bazaar-exe", "pe", "exe", "bazaar"),           // Windows payload
+		corpus("triage-doc", "ole", "doc", "triage"),          // maldoc
+		corpus("triage-pdf", "pdf", "pdf", "triage"),          // document
+		corpus("bazaar-untyped", "", "DLL", "bazaar"),         // provider tag only, mixed case
+		corpus("corpus-script", "javascript", "js", "bazaar"), // corpus, but supply-chain shaped
+		corpus("npm-installer", "pe", "npm", "npm"),           // registry feed: a PE still counts
+		corpus("osm-pypi", "pdf", "pypi", "osm"),              // registry feed: so does a PDF
+	}
+	kept := map[string]bool{}
+	for _, row := range falloutRowsInWindow(rows, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny) {
+		kept[row.Package] = true
+	}
+	for _, pkg := range []string{"bazaar-exe", "triage-doc", "triage-pdf", "bazaar-untyped"} {
+		if kept[pkg] {
+			t.Errorf("%q is off-topic for fallout and should have been gated out", pkg)
+		}
+	}
+	for _, pkg := range []string{"corpus-script", "npm-installer", "osm-pypi"} {
+		if !kept[pkg] {
+			t.Errorf("%q should have stayed in the log", pkg)
+		}
+	}
+}
+
 func TestBuildFalloutViewWindowLabel(t *testing.T) {
 	rows := []feedRow{
 		hostileRow(testSHAHero, "npm", "javascript", "O1(C)", "new", time.Hour),
