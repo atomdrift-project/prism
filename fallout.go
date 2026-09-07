@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -416,6 +417,11 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		// that forgiving behavior; the JSON endpoint reports a bad parameter.
 		verified, verifiedRaw = falloutAny, ""
 	}
+	// Phase timing, mirroring the detail page's: an archive week renders cold
+	// for whoever arrives first, and without this a slow one is invisible.
+	start := time.Now()
+	var snapshotMS, convertMS, viewMS int64
+	var rowCount int
 	now := time.Now().In(viewerLocation(r))
 	week, weekErr := parseFalloutWeek(r.URL.Query().Get("week"), now)
 	if weekErr != nil {
@@ -453,18 +459,26 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 	var diags []queryDiag
 	if data.HasHopper {
 		args := week.snapshotArgs()
+		snapStart := time.Now()
 		snapshot, diag, err := loadFeedSnapshot(
 			r.Context(), &args, logger, isHardRefresh(r),
 		)
+		snapshotMS = time.Since(snapStart).Milliseconds()
 		if err != nil {
 			logger.Warn("failed to load fallout rows", "error", err)
 			data.FeedDegraded = true
 		} else {
 			diags = append(diags, diag)
 			data.FeedDegraded = diag.Source == "stale"
+			convStart := time.Now()
+			rows := feedRowsFromSnapshot(snapshot)
+			rowCount = len(rows)
+			convertMS = time.Since(convStart).Milliseconds()
+			viewStart := time.Now()
 			view := buildFalloutView(
-				feedRowsFromSnapshot(snapshot), snapshot.Truncated, now, week, eco, verified,
+				rows, snapshot.Truncated, now, week, eco, verified,
 			)
+			viewMS = time.Since(viewStart).Milliseconds()
 			data.Days = view.Days
 			data.Spark = sparkline(view.Days)
 			data.Sectors = view.Sectors
@@ -482,10 +496,25 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Link", fontPreloadLink)
+	tmplStart := time.Now()
 	if err := falloutTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed", "template", "fallout", "error", err)
 		return
 	}
+	level := slog.LevelDebug
+	if time.Since(start) >= slowDetailThreshold {
+		level = slog.LevelWarn
+	}
+	logger.Log(r.Context(), level, "fallout render timing",
+		"week", week.param(),
+		"current", week.Current,
+		"rows", rowCount,
+		"snapshot_ms", snapshotMS,
+		"convert_ms", convertMS,
+		"view_ms", viewMS,
+		"template_ms", time.Since(tmplStart).Milliseconds(),
+		"total_ms", time.Since(start).Milliseconds(),
+	)
 	writeQueryDiags(w, diags)
 }
 

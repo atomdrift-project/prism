@@ -3127,6 +3127,16 @@ func refreshFeedCacheLoop(ctx context.Context) {
 	feedStaticPrecacheLoop(ctx)
 }
 
+// falloutPrecacheWeeks is how many weeks of the log are kept warm: the current
+// one plus the ones a reader reaches by walking back. Beyond a few the odds of
+// a visit stop justifying a 14-second query per sweep.
+const falloutPrecacheWeeks = 4
+
+// falloutArchiveWarmAge is how stale a finished week's snapshot may get before
+// the sweep rebuilds it. Long, because the rows behind it are settled; the
+// point of the refresh is to survive a cache eviction, not to see new data.
+const falloutArchiveWarmAge = 12 * time.Hour
+
 // feedStaticPrecacheLoop sweeps feedPrecacheVariants — the frontpage, the
 // criticality views, and the static ecosystem list — every
 // feedStaticPrecacheInterval, refreshing any entry older than that. Runs once
@@ -3144,10 +3154,28 @@ func feedStaticPrecacheLoop(ctx context.Context) {
 		// the index page's badge read the count out of cache instead of
 		// building a week of rows on the request path — and what keeps the
 		// first visitor to the log off a cold loader.
+		// The current week and the handful behind it. The week query is the
+		// whole cost of a fallout render (14s cold on a busy archive week,
+		// against 6ms to build the view from its rows), and "‹ Older week" is
+		// the one link the page offers — so the reader who follows it should
+		// not be the one who pays for the query.
 		now := time.Now().UTC()
-		current := falloutWeekOf(now, now).snapshotArgs()
-		if err := refreshFeedCacheEntry(ctx, &current, feedStaticPrecacheInterval); err != nil {
-			logger.Warn("fallout week pre-cache refresh failed", "key", feedCacheKey(&current), "error", err)
+		week := falloutWeekOf(now, now)
+		for i := range falloutPrecacheWeeks {
+			// The week in progress still gains rows, so it refreshes on the
+			// sweep interval. A finished week does not change, and its query
+			// costs 15-30 seconds, so it is warmed once and then left alone —
+			// re-running it every sweep would be pure load for an identical
+			// answer.
+			maxAge := feedStaticPrecacheInterval
+			if i > 0 {
+				maxAge = falloutArchiveWarmAge
+			}
+			args := week.snapshotArgs()
+			if err := refreshFeedCacheEntry(ctx, &args, maxAge); err != nil {
+				logger.Warn("fallout week pre-cache refresh failed", "key", feedCacheKey(&args), "error", err)
+			}
+			week = falloutWeekOf(week.Start.AddDate(0, 0, -1), now)
 		}
 	}
 	sweep()
