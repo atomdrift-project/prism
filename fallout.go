@@ -600,7 +600,7 @@ func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
 		if row.Classification == "hostile" &&
 			!row.CreatedAt.Before(week.Start) && row.CreatedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) &&
-			!falloutOffTopic(row.Feed, row.Ecosystem) {
+			!falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			n++
 		}
 	}
@@ -658,18 +658,43 @@ var offTopicEcosystems = map[string]bool{
 	"android":  true,
 }
 
+// offTopicFileTypes are the executable formats that carry no registry
+// artifact of their own: a bare OS binary is the shape a commodity corpus
+// publishes and the shape a poisoned dependency almost never has, since a
+// package arrives as an archive (npm tarball, wheel, crx, jar) even when it
+// drops a binary later.
+//
+// This is the same policy as offTopicEcosystems, read off the bytes instead
+// of off hopper's ecosystem resolution — which is what catches the bulk of a
+// corpus, whose rows carry no ecosystem at all. Archives stay on-topic
+// wherever they come from: an unpacked-in-place tarball from a corpus feed is
+// still the supply-chain story.
+var offTopicFileTypes = map[string]bool{
+	"pe":    true,
+	"macho": true,
+	"elf":   true,
+	"lnk":   true,
+	"msi":   true,
+	"ole":   true,
+	"cfb":   true,
+}
+
 // falloutOffTopic reports a catch that is malware but not supply-chain
 // malware: a Windows payload, a maldoc, or another loose OS binary lifted from
 // a commodity-malware corpus.
 //
-// A corpus sample whose ecosystem hopper has not typed yet reads as on-topic
-// and stays in the log — the gate errs toward showing a catch rather than
-// hiding one. `hopper backfill-ecosystems` is what fills those rows in.
-func falloutOffTopic(feed, ecosystem string) bool {
+// The feed check comes first, so a poisoned winget package or a Go module that
+// ships an ELF is untouched — only a hash-corpus channel can be off-topic at
+// all. Within one, a catch is off-topic when either hopper's ecosystem or the
+// sniffed file type says "loose OS binary"; a corpus sample that is neither
+// (an archive, a script) stays in the log, so the gate still errs toward
+// showing a supply-chain catch rather than hiding one.
+func falloutOffTopic(feed, ecosystem, fileType string) bool {
 	if !malwareCorpusFeeds[strings.ToLower(strings.TrimSpace(feed))] {
 		return false
 	}
-	return offTopicEcosystems[strings.ToLower(strings.TrimSpace(ecosystem))]
+	return offTopicEcosystems[strings.ToLower(strings.TrimSpace(ecosystem))] ||
+		offTopicFileTypes[strings.ToLower(strings.TrimSpace(fileType))]
 }
 
 // falloutView is the assembled log: what buildFalloutView hands the handler.
@@ -769,7 +794,7 @@ func falloutRowsInWindow(rows []feedRow, week falloutWeek, verified falloutVerif
 		if row.Classification == "hostile" &&
 			!row.AnalyzedAt.Before(week.Start) && row.AnalyzedAt.Before(week.End) &&
 			falloutQualifies(row.Why, row.LLMGrade) && verified.matches(row.Corroborated) &&
-			!falloutOffTopic(row.Feed, row.Ecosystem) {
+			!falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			out = append(out, row)
 		}
 	}

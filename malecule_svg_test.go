@@ -266,3 +266,84 @@ func TestMaleculeSVGRendersBothSizes(t *testing.T) {
 		}
 	}
 }
+
+// The row splits the circle: what the report reasoned its way to goes above
+// the core, the taxonomy graft below it. Interleaved, the graft's larger
+// population buries the dependency limbs and a page of samples that share a
+// file type comes out as a page of the same sunburst.
+func TestMaleculeSVGRowSplitsDependenciesFromTaxonomy(t *testing.T) {
+	g := maleculeTestGraph(
+		[]string{
+			"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/dns",
+			"objectives/discovery/host", "objectives/collection/screenshot",
+			"micro-behaviors/fs/write", "metadata/file/profile",
+		},
+		[]string{"hostile", "suspicious", "suspicious", "notable", "notable", "notable", "baseline"},
+		[][2]int{{0, 1}, {1, 2}},
+	)
+	const w, h = 132, 62
+	svg := maleculeSVG(g, w, h)
+	above, below := 0, 0
+	for _, p := range maleculeVertices(svg) {
+		if math.Abs(p.Y-h/2) < 0.5 {
+			continue // the core itself
+		}
+		if p.Y < h/2 {
+			above++
+		} else {
+			below++
+		}
+	}
+	if above == 0 || below == 0 {
+		t.Fatalf("row drew %d vertices above the core and %d below; want both halves used", above, below)
+	}
+	// The dependency chain is three atoms deep and the graft has four leaves,
+	// so a drawing that split by anything but kind would not land 3 above.
+	if above != 3 {
+		t.Errorf("above the core = %d vertices, want the 3 of the dependency chain", above)
+	}
+}
+
+// A molecule with nothing to separate keeps the whole circle: half a drawing
+// would say something about the sample that is not true.
+func TestMaleculeSVGRowKeepsWholeCircleWithoutGraft(t *testing.T) {
+	g := maleculeTestGraph(
+		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/dns"},
+		[]string{"hostile", "suspicious", "suspicious"},
+		[][2]int{{0, 1}, {0, 2}},
+	)
+	const w, h = 132, 62
+	below := 0
+	for _, p := range maleculeVertices(maleculeSVG(g, w, h)) {
+		if p.Y > h/2+0.5 {
+			below++
+		}
+	}
+	if below == 0 {
+		t.Error("an all-dependency molecule was squeezed into the top half")
+	}
+}
+
+// Bond lengths come from depth and from the arc a child needs, neither of
+// which knows how far the deepest limb ended up — so the finished layout is
+// scaled to the frame rather than trusted to have landed inside it.
+func TestMaleculeSVGStaysInsideTheFrame(t *testing.T) {
+	keys := make([]string, 0, 24)
+	crits := make([]string, 0, 24)
+	edges := make([][2]int, 0, 12)
+	for i := range 24 {
+		keys = append(keys, "objectives/exfil/dns"+strconv.Itoa(i))
+		crits = append(crits, "hostile")
+		if i > 0 && i%2 == 0 {
+			edges = append(edges, [2]int{i - 2, i})
+		}
+	}
+	g := maleculeTestGraph(keys, crits, edges)
+	for _, size := range []struct{ w, h float64 }{{196, 168}, {132, 62}} {
+		for _, p := range maleculeVertices(maleculeSVG(g, size.w, size.h)) {
+			if p.X < 0 || p.X > size.w || p.Y < 0 || p.Y > size.h {
+				t.Errorf("%.0fx%.0f: vertex (%.1f, %.1f) fell outside the frame", size.w, size.h, p.X, p.Y)
+			}
+		}
+	}
+}
