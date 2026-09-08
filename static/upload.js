@@ -13,39 +13,6 @@ document.querySelectorAll("[data-gradient]").forEach((el) => {
   el.style.background = el.getAttribute("data-gradient");
 });
 
-// When the user clicks into a file from the feed, capture the visible
-// result set into sessionStorage so the result page can render prev/next
-// arrows that iterate through whatever query the user is browsing. Per-tab
-// (sessionStorage) so independent tabs don't trample each other; cleared
-// implicitly when the tab closes or the user lands on another feed page
-// and re-clicks (overwrites the entry).
-document.addEventListener("click", (ev) => {
-  const link = ev.target.closest('a.file-link[href^="/file/"]');
-  if (!link) return;
-  const all = Array.from(document.querySelectorAll('a.file-link[href^="/file/"]'));
-  const samples = all
-    .map((a) => ({
-      sha: (a.getAttribute("href") || "").replace(/^\/file\//, ""),
-      label: (a.textContent || "").trim(),
-    }))
-    .filter((s) => /^[0-9a-f]{8,64}$/i.test(s.sha));
-  try {
-    sessionStorage.setItem(
-      "prism_nav",
-      JSON.stringify({
-        returnUrl: location.pathname + location.search,
-        // Fewer than 2 samples means nothing to iterate through, so the
-        // result page renders no prev/next arrows — but we still record
-        // returnUrl so the `x` shortcut returns to this exact feed view.
-        samples: samples.length >= 2 ? samples : [],
-        savedAt: Date.now(),
-      })
-    );
-  } catch (_) {
-    /* private mode / quota — ignore, fall back to no arrows */
-  }
-});
-
 function setStatusText(message, className = "") {
   uploadStatus.className = `top-upload-status${className ? ` ${className}` : ""}`;
   uploadStatus.textContent = message;

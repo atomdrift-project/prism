@@ -848,6 +848,7 @@
 
     </main>
     {{template "footer" .}}
+    <script nonce="{{.Nonce}}" src="/static/js/nav-stash.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
 </body>
 </html>

@@ -47,36 +47,67 @@ func TestStaticServesShortcuts(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "prism_nav") {
 		t.Error("served shortcuts.js does not read the feed's saved order")
 	}
+	req = httptest.NewRequest(http.MethodGet, "/static/js/nav-stash.js", http.NoBody)
+	rec = httptest.NewRecorder()
+	newMux().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /static/js/nav-stash.js = %d, want 200", rec.Code)
+	}
 }
 
-// j and k are only as good as the list upload.js stashed on the way out of the
-// feed. The two files are the two halves of one contract and nothing in the
-// compiler checks it, so the shape is asserted here: same storage key, same
-// field names, same sha shape.
+// j and k are only as good as the list the feed stashed on the way out. The
+// two files are the two halves of one contract and nothing in the compiler
+// checks it, so the shape is asserted here: same storage key, same field
+// names, same sha shape.
 func TestNavStashContractMatches(t *testing.T) {
-	writer := readStatic(t, "static/upload.js")
+	writer := readStatic(t, "static/js/nav-stash.js")
 	reader := readStatic(t, "static/js/shortcuts.js")
 	for _, want := range []string{`"prism_nav"`, "samples", "sha"} {
 		if !strings.Contains(writer, want) {
-			t.Errorf("upload.js no longer writes %s; shortcuts.js still expects it", want)
+			t.Errorf("nav-stash.js no longer writes %s; shortcuts.js still expects it", want)
 		}
 		if !strings.Contains(reader, want) {
 			t.Errorf("shortcuts.js no longer reads %s", want)
 		}
 	}
-	// upload.js only records a sha that looks like one, and shortcuts.js
+	// nav-stash.js only records a sha that looks like one, and shortcuts.js
 	// re-checks the same shape before putting it in a URL.
 	shaRE := regexp.MustCompile(`\[0-9a-f\]\{8,64\}`)
 	if !shaRE.MatchString(writer) || !shaRE.MatchString(reader) {
 		t.Error("the two halves of the nav stash disagree about what a sha looks like")
 	}
-	// The feed's link class is what upload.js keys off; if the templates
-	// rename it, the stash silently stops being written.
 	if !strings.Contains(writer, "a.file-link") {
-		t.Fatal("upload.js no longer keys off a.file-link")
+		t.Fatal("nav-stash.js no longer keys off a.file-link")
 	}
-	if !strings.Contains(readStatic(t, "templates/fallout.html"), `class="file-link"`) {
-		t.Error("the feed no longer renders a.file-link, so nothing stashes the order")
+}
+
+// The bug this test exists for: j/k worked from /stream and did nothing from
+// the fallout feed, because the stash lived inside upload.js and only the
+// upload page loaded it. A feed that renders sample links but never records
+// their order is a feed whose samples have no neighbours — and it fails
+// silently, with nothing in the console to find.
+func TestEveryFeedStashesItsOrder(t *testing.T) {
+	pages, err := templatesFS.ReadDir("templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checked int
+	for _, page := range pages {
+		if page.IsDir() {
+			continue
+		}
+		body := readStatic(t, "templates/"+page.Name())
+		if !strings.Contains(body, `class="file-link"`) {
+			continue // not a feed: nothing to stash
+		}
+		checked++
+		if !strings.Contains(body, "/static/js/nav-stash.js") {
+			t.Errorf("%s links to samples but never loads nav-stash.js, so j/k is dead there",
+				page.Name())
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no feed template rendering a.file-link; the selector has moved")
 	}
 }
 
