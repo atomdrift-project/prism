@@ -312,8 +312,10 @@
         </aside>
     </div>
     {{template "footer" .}}
+    <p class="sr-only">Keyboard shortcuts on this page: j for the next sample, k for the previous one, d to download the original bytes, r to re-queue the sample for analysis.</p>
     <div id="a11y-live" class="sr-only" aria-live="polite"></div>
     <script nonce="{{.Nonce}}" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>
     {{if .DeferredMembers}}
     <script nonce="{{.Nonce}}">
     // A compacted archive stores its members separately; fetch them once and
