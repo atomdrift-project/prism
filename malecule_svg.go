@@ -1,24 +1,28 @@
 package main
 
-// Drawing the malecule. The picture is a molecule built from the sample's own
-// structure, so two samples differ in shape rather than only in colour.
+// Drawing the malecule as a ball-and-stick model. The picture is a molecule
+// built from the sample's own structure, so two samples differ in shape rather
+// than only in colour.
 //
-// Two hierarchies go into it, and they are not equals. The explicit one — a
-// composite rule depending on an atomic behaviour — builds the skeleton: each
-// rule nothing else depends on becomes a limb, and its dependency subtree is
-// the chain of behaviours it actually needed. The implicit one — the trait id's
-// own path, objectives/credential-access/browser — only fills what dependencies
-// never reach, drawn thinner and paler so the eye reads the real structure
-// first. Measured across live samples, dependency edges cover 0-75% of a
-// sample's behaviours (one carries none at all), so the taxonomy has to remain
-// a genuine fallback rather than a decoration.
+// Two relations go into it and they are not equals. The explicit one — a
+// composite rule depending on an atomic behaviour — is a covalent bond: a
+// solid double stick, split at the midpoint so each half carries its own
+// atom's severity. The implicit one — the trait id's own path,
+// objectives/credential-access/browser — is a contact rather than a bond, a
+// single dashed stick in neutral grey, because a shared family says two
+// behaviours are alike and says nothing about which came first.
 //
-// The one relation a spanning tree cannot express is a behaviour that several
-// rules share, and that is spent on layout rather than ink: such a behaviour
-// becomes a coordination centre and moves toward the centroid of everything
-// that needs it, bending its limbs together. A sample whose rules keep reaching
-// for the same behaviour visibly leans inward; one whose rules are independent
-// stays spread.
+// Both channels change at once between them, count and continuity, and that
+// is deliberate: measured across live samples the implicit relation is the
+// larger population by up to three to one, so a single channel that separates
+// them at card size disappears at row size.
+//
+// Depth is the verdict. The worst finding sits on the near plane and the rest
+// recede, which makes the one thing the card exists to say the one thing
+// nothing can be painted in front of. Distance is carried by colour rather
+// than by scale — near atoms stay saturated, far ones wash toward the page —
+// so sphere size is left free to mean only how many findings folded into the
+// atom.
 
 import (
 	"cmp"
@@ -46,65 +50,64 @@ func critColor(crit string) string {
 
 type maleculePoint struct{ X, Y float64 }
 
+// maleculeEdge is one dependency: the composite required the behaviour.
+type maleculeEdge struct{ From, To int }
+
+// maleculeKin is one family link. Share is the number of leading path segments
+// the two behaviours have in common — the depth of the taxonomy node they last
+// shared. Sib says they are siblings under it rather than two families joined
+// at their representatives, which is the distinction that decides whether the
+// link is worth ink: a sample page's keys are three segments deep and a feed
+// row's are two, so an absolute depth would draw every contact on one and none
+// on the other.
+type maleculeKin struct {
+	A, B, Share int
+	Sib         bool
+}
+
 const (
-	// maleculeFont is the vertex face: an element symbol wants the same
-	// monospace the rest of the page uses for identifiers.
-	maleculeFont = "SF Mono, Menlo, monospace"
+	// maleculeFont is the glyph face. An element symbol on a sphere wants a
+	// bold grotesque, which is what every molecular viewer uses.
+	maleculeFont = "Helvetica Neue, Helvetica, Arial, sans-serif"
 	// maleculeRowHeight is the size below which we are drawing a feed row
-	// rather than a detail card, and everything scales off that: fewer atoms,
-	// no labels, tighter shells.
+	// rather than a detail card: fewer atoms and no labels.
 	maleculeRowHeight = 80
 	// maleculeDetailBudget caps the atoms drawn on the detail card and
 	// maleculeRowBudget on a feed row. Past these the drawing stops being read
 	// and starts being decoration, so the remainder is counted instead. Live
 	// samples reach 163 behaviours; drawing all of them cost 108KB of SVG and
-	// put neighbouring atoms 3.9px apart. The row's is the smaller question:
-	// not how many atoms fit, but how many a reader can tell from the next
-	// row's at 132x62 — which is fewer than fit.
+	// put neighbouring atoms 3.9px apart.
 	maleculeDetailBudget = 30
 	maleculeRowBudget    = 11
-	// maleculeWedge is the arc, in px, a child is guaranteed at the radius it
-	// lands on. Deep siblings share a narrow angular span, and a bond that
-	// also shortens with depth stacks them on top of each other; pushing the
-	// bond out until its wedge is this wide is what keeps them apart.
-	maleculeWedge = 7
-	// maleculeHubAtoms is how many behaviours must be drawn before another
-	// coordination centre is allowed. Without it a small molecule becomes
-	// mostly hubs — one live sample had four among eight behaviours, which put
-	// ten vertices inside a shell that was not theirs.
-	maleculeHubAtoms = 6
-	// maleculeSphere is how far a coordination centre travels toward the
-	// centroid of the behaviours that need it. Short of 1 so it leans toward
-	// its partners while keeping enough of its own limb to stay legible.
-	maleculeSphere = 0.55
-	// maleculeDecay is how much shorter each successive bond is than its
-	// parent, so a deep graft still lands inside the frame.
-	maleculeDecay = 0.78
-	// The row rendering's own dial settings. A feed row is 132x62 and carries
-	// no labels, so the only thing telling two of them apart is the
-	// silhouette — and a page of samples is mostly one file type, whose
-	// taxonomy fringe is the same fringe every time. Drawn on the card's
-	// settings the fringe wins the row: it is the larger population, it fans
-	// across the whole circle at nearly full bond length, and what is left of
-	// the sample's own dependency chains is a few short spokes lost in it.
-	// These three put the chains back in front of it.
-	//
-	// Weight is an explicit leaf's claim on the circle against an implied
-	// one's 1. The card has labels and room to show the taxonomy in
-	// proportion; the row gives the chains most of the angle.
-	//
-	// Implied is the length an implied bond keeps of its explicit sibling's,
-	// which settles the fringe into a skirt near the core rather than a
-	// second set of arms competing with the first.
-	//
-	// Dots scales every vertex and bond. A row that draws its whole budget at
-	// card weights is texture, and texture at this density looks the same
-	// whatever it is made of; fewer, larger vertices are a shape the eye can
-	// actually compare against the next row's.
-	maleculeCardWeight, maleculeRowWeight   = 2, 5
-	maleculeCardImplied, maleculeRowImplied = 0.72, 0.62
-	maleculeRowDots                         = 1.3
+	// maleculeKinDepth is the shallowest family-to-family link worth a drawn
+	// contact. Two behaviours joined only under a shared namespace
+	// ("everything reads files") are barely related; the spring still gathers
+	// them, but drawing the line costs more than it says. Siblings are drawn
+	// whatever their depth.
+	maleculeKinDepth = 2
+	// maleculeBall is the sphere radius as a fraction of bond length. Ball and
+	// stick only works when the stick shows: at four tenths, two bonded atoms
+	// nearly touch and the bond between them is a stub, which makes every bond
+	// rule unreadable because there is almost no bond to read.
+	maleculeBall = 0.29
+	// maleculeStick is stick width as a fraction of bond length, and
+	// maleculeDouble the offset of each line of a double bond from the axis.
+	maleculeStick  = 0.155
+	maleculeDouble = 0.62
+	// maleculePersp is how much the near plane is enlarged. Shallow on
+	// purpose: depth is spent on colour here, and scale would confound the
+	// sphere size that carries the member count.
+	maleculePersp = 0.28
+	// maleculeHaze is how far the furthest atoms wash toward the ground, and
+	// maleculeGround is that ground: the mist the rail card and the feed row
+	// are both drawn on. Distance washes colour toward the paper the drawing
+	// sits on, so the card's own background is the far plane and the drawing
+	// needs no ground of its own.
+	maleculeHaze = 0.62
 )
+
+// maleculeGround is --mist from the page's palette, as an RGB triple.
+var maleculeGround = [3]int{0xfd, 0xf5, 0xfc}
 
 // maleculeNamespace ranks a trait's top-level namespace. Every sample reads
 // files, spawns processes and touches the OS, so micro-behaviours are the
@@ -131,7 +134,7 @@ func maleculeNamespace(key string) int {
 // stands for. Deterministic to the key, so the same report always draws the
 // same molecule.
 //
-// Severity stays first because colour is how the row states its verdict. The
+// Severity stays first because colour is how the card states its verdict. The
 // tie-break under it is the drawing's whole argument: among behaviours the
 // verdict weighs the same, one the report reached by a dependency edge is a
 // step in a chain of reasoning and one it did not is a lone observation, and
@@ -155,162 +158,6 @@ func maleculeRank(g *maleculeGraph) []int {
 	return rank
 }
 
-// maleculeNode is one vertex of the skeleton: either an atom, or a taxonomy
-// stub standing in for a path segment the dependency graph never mentioned.
-type maleculeNode struct {
-	name    string
-	crit    string
-	kids    []*maleculeNode
-	atom    int  // index into maleculeGraph.Atoms, -1 for a stub
-	implied bool // reached by taxonomy rather than by a dependency edge
-	weight  int  // subtree weight, for dividing the angular span
-}
-
-// maleculeSkeleton walks the dependency edges into a spanning forest and
-// grafts everything they miss on by taxonomy. Returns the forest's root, whose
-// children are the limbs.
-func maleculeSkeleton(graph *maleculeGraph, budget, leafWeight int) *maleculeNode {
-	rank := maleculeRank(graph)
-	if len(rank) > budget {
-		rank = rank[:budget]
-	}
-	keep := make(map[int]bool, len(rank))
-	for _, i := range rank {
-		keep[i] = true
-	}
-	usedBy := make(map[int]int, len(rank))
-	for i := range graph.Atoms {
-		if !keep[i] {
-			continue
-		}
-		for _, j := range graph.Atoms[i].Uses {
-			if j >= 0 && j < len(graph.Atoms) && keep[j] {
-				usedBy[j]++
-			}
-		}
-	}
-
-	root := &maleculeNode{atom: -1, crit: "baseline"}
-	placed := make(map[int]bool, len(rank))
-	var build func(i int) *maleculeNode
-	build = func(i int) *maleculeNode {
-		placed[i] = true
-		n := &maleculeNode{atom: i, name: graph.Atoms[i].Key, crit: graph.Atoms[i].Crit}
-		kids := slices.Clone(graph.Atoms[i].Uses)
-		slices.SortStableFunc(kids, func(a, b int) int {
-			if a < 0 || b < 0 || a >= len(graph.Atoms) || b >= len(graph.Atoms) {
-				return cmp.Compare(a, b)
-			}
-			return cmp.Or(
-				cmp.Compare(critFromString(graph.Atoms[b].Crit), critFromString(graph.Atoms[a].Crit)),
-				cmp.Compare(graph.Atoms[a].Key, graph.Atoms[b].Key))
-		})
-		for _, j := range kids {
-			// An edge back to something already placed is the shared
-			// dependency the tree cannot hold; it is drawn later as a
-			// coordination bond rather than duplicated here.
-			if j < 0 || j >= len(graph.Atoms) || !keep[j] || placed[j] {
-				continue
-			}
-			n.kids = append(n.kids, build(j))
-		}
-		return n
-	}
-	// A composite nothing else depends on is the top of a real chain of
-	// reasoning, so it earns its own limb.
-	for _, i := range rank {
-		if usedBy[i] == 0 && len(graph.Atoms[i].Uses) > 0 && !placed[i] {
-			root.kids = append(root.kids, build(i))
-		}
-	}
-
-	// The graft. Nesting it by path segment matters: a flat one stub per
-	// category gave every sample the same uniform outer fringe, and the
-	// silhouette stopped saying anything about the sample.
-	stubs := map[string]*maleculeNode{}
-	for _, i := range rank {
-		if placed[i] {
-			continue
-		}
-		node := root
-		parts := strings.Split(graph.Atoms[i].Key, "/")
-		for d, seg := range parts {
-			if d == len(parts)-1 {
-				node.kids = append(node.kids, &maleculeNode{
-					atom: i, name: graph.Atoms[i].Key, crit: graph.Atoms[i].Crit, implied: true,
-				})
-				break
-			}
-			// Keyed by the path so far, so two behaviours under one category
-			// share the branch point rather than each growing their own.
-			path := strings.Join(parts[:d+1], "/")
-			next, ok := stubs[path]
-			if !ok {
-				next = &maleculeNode{atom: -1, name: seg, crit: graph.Atoms[i].Crit, implied: true}
-				stubs[path] = next
-				node.kids = append(node.kids, next)
-			}
-			if critFromString(graph.Atoms[i].Crit) > critFromString(next.crit) {
-				next.crit = graph.Atoms[i].Crit
-			}
-			node = next
-		}
-	}
-	maleculeWeigh(root, leafWeight)
-	return root
-}
-
-// maleculeWeigh sizes each subtree's claim on the circle and orders siblings.
-// An explicit leaf counts leafWeight against an implied one's 1: dependency
-// edges cover well under half a sample's behaviours, and weighting by
-// population alone lets the filler win the drawing. The card and the row
-// disagree about how much more (maleculeCardWeight, maleculeRowWeight).
-func maleculeWeigh(n *maleculeNode, leafWeight int) int {
-	if len(n.kids) == 0 {
-		n.weight = leafWeight
-		if n.implied {
-			n.weight = 1
-		}
-		return n.weight
-	}
-	total := 0
-	for _, k := range n.kids {
-		total += maleculeWeigh(k, leafWeight)
-	}
-	slices.SortStableFunc(n.kids, func(a, b *maleculeNode) int {
-		return cmp.Or(
-			cmp.Compare(boolRank(a.implied), boolRank(b.implied)), // explicit limbs first
-			cmp.Compare(critFromString(b.crit), critFromString(a.crit)),
-			cmp.Compare(b.weight, a.weight),
-			cmp.Compare(a.name, b.name))
-	})
-	n.weight = total
-	return total
-}
-
-// maleculeSplit is where the root's explicit limbs end and its grafted ones
-// begin — maleculeWeigh has already sorted them that way. Zero when the
-// caller is not laying the two out separately.
-func maleculeSplit(root *maleculeNode, half bool) int {
-	if !half {
-		return 0
-	}
-	for i, k := range root.kids {
-		if k.implied {
-			return i
-		}
-	}
-	return len(root.kids)
-}
-
-func maleculeWeightOf(kids []*maleculeNode) int {
-	total := 0
-	for _, k := range kids {
-		total += k.weight
-	}
-	return total
-}
-
 func boolRank(b bool) int {
 	if b {
 		return 1
@@ -318,277 +165,468 @@ func boolRank(b bool) int {
 	return 0
 }
 
-// maleculeHub is a behaviour at least two drawn rules depend on, with the users
-// the skeleton did not already connect it to.
-type maleculeHub struct {
-	node   *maleculeNode
-	extras []*maleculeNode
-	atom   int
+// maleculeBudget picks the atoms that earn ink and the dependency edges
+// between them.
+func maleculeBudget(g *maleculeGraph, budget int) ([]int, []maleculeEdge) {
+	rank := maleculeRank(g)
+	if len(rank) > budget {
+		rank = rank[:budget]
+	}
+	keep := make(map[int]bool, len(rank))
+	for _, i := range rank {
+		keep[i] = true
+	}
+	var edges []maleculeEdge
+	for _, i := range rank {
+		for _, j := range g.Atoms[i].Uses {
+			if j >= 0 && j < len(g.Atoms) && keep[j] && j != i {
+				edges = append(edges, maleculeEdge{i, j})
+			}
+		}
+	}
+	return rank, edges
 }
 
-// maleculeSVG draws the graph at w×h. Returns "" when there is nothing to say,
-// so the template can drop the card rather than frame an empty box.
-func maleculeSVG(graph maleculeGraph, width, height float64) string {
-	if len(graph.Atoms) == 0 {
-		return ""
-	}
-	// A feed row and a detail card draw the same graph with different
-	// priorities: the card has labels and room to show the taxonomy in
-	// proportion, the row has neither and spends what it has on the skeleton.
-	budget, leafWeight, impliedLen := maleculeDetailBudget, maleculeCardWeight, maleculeCardImplied
-	half, dotScale := false, 1.0
-	if math.Min(width, height) < maleculeRowHeight {
-		budget, leafWeight, impliedLen = maleculeRowBudget, maleculeRowWeight, maleculeRowImplied
-		half, dotScale = true, maleculeRowDots
-	}
-	root := maleculeSkeleton(&graph, budget, leafWeight)
-
-	cx, cy := width/2, height/2
-	// The card is wider than it is tall, so the circle is drawn as an ellipse
-	// rather than leaving the sides empty.
-	aspect := (width / height) * 0.66
-	unit := math.Min(width/aspect, height) * 0.185
-
-	pos := map[*maleculeNode]maleculePoint{root: {cx, cy}}
-	var drawn []*maleculeNode
-	// fan lays a set of siblings out across an angular range, each taking the
-	// share of it their subtree weighs. Called on a node's own children
-	// everywhere but the root, where the row rendering splits the two kinds
-	// of limb into their own halves of the circle.
-	var fan func(kids []*maleculeNode, total int, px, py, a0, a1 float64, depth int)
-	fan = func(kids []*maleculeNode, total int, px, py, a0, a1 float64, depth int) {
-		span := a1 - a0
-		at := a0
-		for _, k := range kids {
-			frac := float64(k.weight) / math.Max(float64(total), 1)
-			mid := at + span*frac/2
-			length := unit * math.Pow(maleculeDecay, float64(depth))
-			if k.implied {
-				length *= impliedLen // the taxonomy is filling in; say so
-			}
-			if arc := span * frac; arc > 0 {
-				length = math.Max(length, math.Min(maleculeWedge/arc, unit*1.9))
-			}
-			q := maleculePoint{px + length*math.Cos(mid)*aspect, py + length*math.Sin(mid)}
-			pos[k] = q
-			drawn = append(drawn, k)
-			fan(k.kids, k.weight, q.X, q.Y, at+span*frac*0.08, at+span*frac*0.92, depth+1)
-			at += span * frac
+func maleculeIsComposite(i int, edges []maleculeEdge) bool {
+	for _, e := range edges {
+		if e.From == i {
+			return true
 		}
 	}
-	// Splitting the root gives the row its silhouette. Laid out together, the
-	// grafted fringe and the dependency limbs interleave into one even
-	// sunburst, and a page of samples that share a file type comes out as a
-	// page of the same sunburst. Above the core is what the report actually
-	// reasoned its way to; below it is the taxonomy filling in the rest. The
-	// top half is then the sample's own shape, and it is not competing with
-	// anything. A molecule that is all one kind keeps the whole circle: half
-	// a drawing would say something about the sample that isn't true.
-	if split := maleculeSplit(root, half); split > 0 && split < len(root.kids) {
-		fan(root.kids[:split], maleculeWeightOf(root.kids[:split]), cx, cy, -math.Pi, 0, 0)
-		fan(root.kids[split:], maleculeWeightOf(root.kids[split:]), cx, cy, 0, math.Pi, 0)
-	} else {
-		fan(root.kids, root.weight, cx, cy, -math.Pi, math.Pi, 0)
-	}
-
-	hubs, parent := maleculeHubs(&graph, root, len(drawn))
-	// Coordination: each centre leans toward the centroid of everything that
-	// needs it, taking its own subtree along.
-	for _, hub := range hubs {
-		sx, sy, n := 0.0, 0.0, 0.0
-		for _, u := range hub.extras {
-			sx, sy, n = sx+pos[u].X, sy+pos[u].Y, n+1
-		}
-		if p, ok := parent[hub.node]; ok {
-			sx, sy, n = sx+pos[p].X, sy+pos[p].Y, n+1
-		}
-		if n == 0 {
-			continue
-		}
-		q := pos[hub.node]
-		maleculeShift(hub.node, pos, (sx/n-q.X)*maleculeSphere, (sy/n-q.Y)*maleculeSphere)
-	}
-	// That move happens after the layout, so it can drop a centre on a vertex
-	// the layout had already spaced — relax whatever it landed on.
-	maleculeRelax(pos, drawn, math.Max(4.2, math.Min(width, height)*0.042))
-	maleculeFit(pos, drawn, cx, cy, width, height)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, `<svg viewBox="0 0 %.0f %.0f" class="malecule" role="img" aria-label="malecule">`,
-		width, height)
-
-	// Bonds first, so vertices sit on top of them.
-	var bonds func(n *maleculeNode, depth int)
-	bonds = func(n *maleculeNode, depth int) {
-		p := pos[n]
-		for _, k := range n.kids {
-			q := pos[k]
-			stroke := math.Max(0.75, 1.75-float64(depth)*0.3) * dotScale
-			opacity := 0.95 - float64(depth)*0.1
-			if k.implied {
-				stroke, opacity = math.Max(0.6, stroke*0.6), opacity*0.55
-			}
-			fmt.Fprintf(&b, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"`+
-				` stroke-width="%.2f" stroke-opacity="%.2f" stroke-linecap="round"/>`,
-				p.X, p.Y, q.X, q.Y, critColor(k.crit), stroke, opacity)
-			bonds(k, depth+1)
-		}
-	}
-	bonds(root, 0)
-
-	for _, hub := range hubs {
-		q := pos[hub.node]
-		col := critColor(graph.Atoms[hub.atom].Crit)
-		for _, u := range hub.extras {
-			p := pos[u]
-			dx, dy := q.X-p.X, q.Y-p.Y
-			l := math.Hypot(dx, dy)
-			if l < 1 {
-				continue
-			}
-			// Stop short of the centre so its shell stays readable.
-			fmt.Fprintf(&b, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"`+
-				` stroke-width="0.9" stroke-opacity="0.65" stroke-dasharray="1.8 1.5"><title>%s</title></line>`,
-				p.X, p.Y, q.X-dx/l*4.4, q.Y-dy/l*4.4, col, html.EscapeString(graph.Atoms[hub.atom].Key))
-		}
-		fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="%.1f" fill="none" stroke="%s"`+
-			` stroke-width="0.85" stroke-opacity="0.5"/>`,
-			q.X, q.Y, maleculeShellR(hub, hubs, pos, drawn, math.Min(5.6, height*0.068)), col)
-	}
-
-	labels := height > maleculeRowHeight
-	for _, k := range drawn {
-		b.WriteString(maleculeVertexSVG(&graph, k, pos[k], labels, dotScale))
-	}
-	// The core anchors the drawing even when every limb is a graft.
-	fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#ffffff" stroke="%s" stroke-width="1.5"/>`,
-		cx, cy, math.Min(height*0.05, 4.2), critColor(root.crit))
-
-	if hidden := len(graph.Atoms) - min(len(graph.Atoms), budget); hidden > 0 {
-		fmt.Fprintf(&b, `<text x="%.1f" y="%.1f" text-anchor="end" font-family="%s" font-size="7.5" fill="#8A6080">+%d</text>`,
-			width-3, height-3, maleculeFont, hidden)
-	}
-	b.WriteString(`</svg>`)
-	return b.String()
+	return false
 }
 
-// maleculeHubs finds the coordination centres: behaviours at least two drawn
-// rules depend on. The user the skeleton already draws as a solid bond is
-// skipped — including it laid a dashed line exactly over the bond it repeated,
-// which was about half the coordination ink.
-func maleculeHubs(graph *maleculeGraph, root *maleculeNode, drawn int) (hubs []maleculeHub, parent map[*maleculeNode]*maleculeNode) {
-	byAtom := map[int]*maleculeNode{}
-	parent = map[*maleculeNode]*maleculeNode{}
-	var walk func(n *maleculeNode)
-	walk = func(n *maleculeNode) {
-		if n.atom >= 0 {
-			byAtom[n.atom] = n
-		}
-		for _, k := range n.kids {
-			parent[k] = n
-			walk(k)
-		}
+func maleculeConnected(edges []maleculeEdge) map[int]bool {
+	m := make(map[int]bool, len(edges)*2)
+	for _, e := range edges {
+		m[e.From], m[e.To] = true, true
 	}
-	walk(root)
+	return m
+}
 
-	for i := range graph.Atoms {
-		n, ok := byAtom[i]
-		if !ok || len(graph.Atoms[i].UsedBy) < 2 {
-			continue
-		}
-		hub := maleculeHub{atom: i, node: n}
-		for _, u := range graph.Atoms[i].UsedBy {
-			if un, ok := byAtom[u]; ok && un != parent[n] {
-				hub.extras = append(hub.extras, un)
+// maleculeKinEdges reads the taxonomy as the tree it is, contracted onto the
+// atoms being drawn. Every family — every path prefix — nominates its
+// strongest member as the point the rest of the family hangs off, and a family
+// hangs off its parent family the same way.
+//
+// Within a family the members branch rather than radiate. Attaching all eleven
+// of them to the first gives that atom eleven bonds and the drawing comes out
+// as a sea urchin; attaching each to an earlier one caps any atom at three or
+// four and produces the branched chains a molecule actually has. Chemists call
+// the constraint valence and it is the single change that made this read as a
+// molecule rather than as a graph.
+func maleculeKinEdges(g *maleculeGraph, rank []int) []maleculeKin {
+	order := make(map[int]int, len(rank))
+	for n, i := range rank {
+		order[i] = n
+	}
+	rep := make(map[string]int, len(rank)*2)
+	for _, i := range rank {
+		parts := strings.Split(g.Atoms[i].Key, "/")
+		for d := 1; d <= len(parts); d++ {
+			p := strings.Join(parts[:d], "/")
+			if cur, ok := rep[p]; !ok || order[i] < order[cur] {
+				rep[p] = i
 			}
 		}
-		if len(hub.extras) > 0 {
-			hubs = append(hubs, hub)
+	}
+	best := map[[2]int]maleculeKin{}
+	add := func(a, b, share int, sib bool) {
+		if a == b {
+			return
+		}
+		key := [2]int{min(a, b), max(a, b)}
+		cur, ok := best[key]
+		if !ok || share > cur.Share {
+			cur.A, cur.B, cur.Share = key[0], key[1], share
+		}
+		cur.Sib = cur.Sib || sib
+		best[key] = cur
+	}
+	families := map[string][]int{}
+	for _, i := range rank {
+		parts := strings.Split(g.Atoms[i].Key, "/")
+		if len(parts) < 2 {
+			continue
+		}
+		p := strings.Join(parts[:len(parts)-1], "/")
+		families[p] = append(families[p], i)
+	}
+	names := make([]string, 0, len(families))
+	for p := range families {
+		names = append(names, p)
+	}
+	slices.Sort(names) // map order is not a drawing decision
+	for _, p := range names {
+		m := families[p]
+		slices.SortStableFunc(m, func(a, b int) int { return cmp.Compare(order[a], order[b]) })
+		share := len(strings.Split(p, "/"))
+		for i := 1; i < len(m); i++ {
+			add(m[(i-1)/2], m[i], share, true)
 		}
 	}
-	slices.SortStableFunc(hubs, func(a, b maleculeHub) int {
-		return cmp.Or(
-			cmp.Compare(len(b.extras), len(a.extras)),
-			cmp.Compare(critFromString(graph.Atoms[b.atom].Crit), critFromString(graph.Atoms[a.atom].Crit)),
-			cmp.Compare(graph.Atoms[a.atom].Key, graph.Atoms[b.atom].Key))
+	seen := map[string]bool{}
+	for _, i := range rank {
+		parts := strings.Split(g.Atoms[i].Key, "/")
+		for d := len(parts) - 1; d >= 2; d-- {
+			p := strings.Join(parts[:d], "/")
+			if seen[p] {
+				break
+			}
+			seen[p] = true
+			add(rep[strings.Join(parts[:d-1], "/")], rep[p], d-1, false)
+		}
+	}
+	kin := make([]maleculeKin, 0, len(best))
+	for _, k := range best {
+		kin = append(kin, k)
+	}
+	slices.SortFunc(kin, func(a, b maleculeKin) int {
+		return cmp.Or(cmp.Compare(a.A, b.A), cmp.Compare(a.B, b.B))
 	})
-	if limit := max(2, drawn/maleculeHubAtoms); len(hubs) > limit {
-		hubs = hubs[:limit]
-	}
-	return hubs, parent
+	return kin
 }
 
-// maleculeShellR fits a coordination shell to its neighbourhood, so a centre
-// never swallows a vertex that has nothing to do with it and two centres
-// sitting close together never draw intersecting shells.
-func maleculeShellR(hub maleculeHub, hubs []maleculeHub, pos map[*maleculeNode]maleculePoint,
-	drawn []*maleculeNode, base float64,
-) float64 {
-	q := pos[hub.node]
-	fit := base
-	for _, n := range drawn {
-		p := pos[n]
-		if d := math.Hypot(p.X-q.X, p.Y-q.Y); d > 0.5 && d-1.3 < fit {
-			fit = d - 1.3
-		}
-	}
-	for _, other := range hubs {
-		if other.node == hub.node {
-			continue
-		}
-		p := pos[other.node]
-		if d := math.Hypot(p.X-q.X, p.Y-q.Y); d/2 < fit {
-			fit = d / 2
-		}
-	}
-	return math.Max(fit, 2.6)
+// maleculeSpring is one bond the layout honours. Stiff and short for a
+// dependency, slack and long for a family link: the two relations pull on the
+// same layout with different authority, which is the whole idea.
+type maleculeSpring struct {
+	a, b    int
+	rest, k float64
 }
 
-// maleculeFit scales the finished layout about the core so the drawing uses
-// the frame it was given. Bond lengths are chosen from depth and from the arc
-// a child needs, neither of which knows how far the deepest limb ended up, so
-// without this a sparse molecule sits in the middle of an empty box and a
-// crowded one runs off the edge. Scaling only ever shrinks or grows the whole
-// picture, so every relative distance the layout worked out survives.
-func maleculeFit(pos map[*maleculeNode]maleculePoint, nodes []*maleculeNode, cx, cy, width, height float64) {
-	// Margin covers the vertex radius and, on the card, the glyph drawn over
-	// it; the +N counter lives in the corner and is allowed to overlap.
-	const margin = 7.5
-	reach := 0.0
+// maleculeKinSpring grades a family link by how much taxonomy the two
+// behaviours share. A shared namespace is the loosest tie there is — long and
+// nearly slack, so it gathers without dragging anything across the frame.
+func maleculeKinSpring(k maleculeKin) (rest, stiff float64) {
+	switch {
+	case !maleculeKinDrawn(k):
+		return 26, 0.016
+	case k.Share >= 3:
+		return 10, 0.16
+	default:
+		return 10.5, 0.13
+	}
+}
+
+// maleculeKinDrawn reports whether a family link earns a contact. Siblings
+// always do; two families joined at their representatives do only once the
+// shared path is more than a namespace.
+func maleculeKinDrawn(k maleculeKin) bool { return k.Sib || k.Share >= maleculeKinDepth }
+
+// maleculeSolve settles atoms under spring, repulsion and a pin. A pinned atom
+// is sprung to where the chain layout put it rather than nailed there, so the
+// skeleton keeps its shape while still yielding a little to what hangs off it.
+// Bounded rather than run to convergence: a drawing is not worth an unbounded
+// loop on the request path.
+func maleculeSolve(x, y []float64, springs []maleculeSpring, pinX, pinY, pinK []float64) {
+	const iters, repel = 460, 190.0
+	n := len(x)
+	fx, fy := make([]float64, n), make([]float64, n)
+	for step := range iters {
+		cool := 1 - float64(step)/float64(iters+40)
+		clear(fx)
+		clear(fy)
+		for a := range n {
+			for b := a + 1; b < n; b++ {
+				dx, dy := x[b]-x[a], y[b]-y[a]
+				d2 := dx*dx + dy*dy + 0.01
+				d := math.Sqrt(d2)
+				f := repel / d2
+				fx[a] -= dx / d * f
+				fy[a] -= dy / d * f
+				fx[b] += dx / d * f
+				fy[b] += dy / d * f
+			}
+		}
+		for _, s := range springs {
+			dx, dy := x[s.b]-x[s.a], y[s.b]-y[s.a]
+			d := math.Hypot(dx, dy) + 0.01
+			f := (d - s.rest) * s.k
+			fx[s.a] += dx / d * f
+			fy[s.a] += dy / d * f
+			fx[s.b] -= dx / d * f
+			fy[s.b] -= dy / d * f
+		}
+		for a := range n {
+			if pinK[a] > 0 {
+				fx[a] += (pinX[a] - x[a]) * pinK[a]
+				fy[a] += (pinY[a] - y[a]) * pinK[a]
+			} else {
+				fx[a] -= x[a] * 0.012 // nothing holds it; drift home slowly
+				fy[a] -= y[a] * 0.012
+			}
+			if m := math.Hypot(fx[a], fy[a]); m > 3*cool {
+				fx[a], fy[a] = fx[a]/m*3*cool, fy[a]/m*3*cool
+			}
+			x[a] += fx[a]
+			y[a] += fy[a]
+		}
+	}
+}
+
+// maleculeChains lays out the explicit structure alone: each connected run of
+// dependencies becomes its own little molecule, packed toward the middle.
+// Nothing is rooted at a shared centre, so a composite sits at the head of the
+// chain it actually required rather than on the rim of a sunburst.
+// maleculeCluster is one connected run of dependencies, laid out on its own.
+type maleculeCluster struct {
+	nodes  []int
+	crit   int
+	r      float64
+	cx, cy float64
+}
+
+// maleculeComponents groups the drawn atoms into connected runs of the
+// dependency relation, so each can be laid out as its own little molecule.
+func maleculeComponents(core []int, edges []maleculeEdge) map[int][]int {
+	parent := make(map[int]int, len(core))
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	for _, i := range core {
+		parent[i] = i
+	}
+	for _, e := range edges {
+		if a, b := find(e.From), find(e.To); a != b {
+			parent[a] = b
+		}
+	}
+	comps := map[int][]int{}
+	for _, i := range core {
+		comps[find(i)] = append(comps[find(i)], i)
+	}
+	return comps
+}
+
+// maleculeGrow lays one component out about its own centroid. A composite fans
+// its dependencies downward, so the chain reads the way it is written: what
+// required, then what was required.
+func maleculeGrow(g *maleculeGraph, nodes []int, kids map[int][]int, indeg map[int]int,
+	inCore map[int]bool, pos map[int]maleculePoint,
+) maleculeCluster {
+	slices.Sort(nodes)
+	placed := make(map[int]bool, len(nodes))
+	var roots []int
+	for _, n := range nodes {
+		if indeg[n] == 0 {
+			roots = append(roots, n)
+		}
+	}
+	if len(roots) == 0 {
+		roots = nodes[:1] // a cycle: start anywhere, deterministically
+	}
+	var place func(n int, x, y, a0, a1 float64)
+	place = func(n int, x, y, a0, a1 float64) {
+		placed[n] = true
+		pos[n] = maleculePoint{x, y}
+		var ch []int
+		for _, k := range kids[n] {
+			if !placed[k] && inCore[k] {
+				ch = append(ch, k)
+			}
+		}
+		if len(ch) == 0 {
+			return
+		}
+		slices.SortStableFunc(ch, func(a, b int) int {
+			return cmp.Or(
+				cmp.Compare(critFromString(g.Atoms[b].Crit), critFromString(g.Atoms[a].Crit)),
+				cmp.Compare(g.Atoms[a].Key, g.Atoms[b].Key))
+		})
+		span := (a1 - a0) / float64(len(ch))
+		for ci, k := range ch {
+			mid := a0 + span*(float64(ci)+0.5)
+			place(k, x+math.Cos(mid), y+math.Sin(mid), mid-0.75, mid+0.75)
+		}
+	}
+	for ri, rt := range roots {
+		if !placed[rt] {
+			place(rt, (float64(ri)-float64(len(roots)-1)/2)*1.5, 0, math.Pi/2-1.15, math.Pi/2+1.15)
+		}
+	}
+	c := maleculeCluster{nodes: nodes}
+	var mx, my float64
+	for _, n := range nodes {
+		if _, ok := pos[n]; !ok {
+			pos[n] = maleculePoint{} // unreachable from any root
+		}
+		mx, my = mx+pos[n].X, my+pos[n].Y
+		c.crit = max(c.crit, critFromString(g.Atoms[n].Crit))
+	}
+	mx, my = mx/float64(len(nodes)), my/float64(len(nodes))
 	for _, n := range nodes {
 		p := pos[n]
-		reach = math.Max(reach, math.Abs(p.X-cx)/math.Max(width/2-margin, 1))
-		reach = math.Max(reach, math.Abs(p.Y-cy)/math.Max(height/2-margin, 1))
+		pos[n] = maleculePoint{p.X - mx, p.Y - my}
+		c.r = math.Max(c.r, math.Hypot(p.X-mx, p.Y-my))
 	}
-	if reach < 0.01 {
+	c.r += 0.5
+	return c
+}
+
+// maleculePack places the clusters in the frame. Push apart, then pull in:
+// repulsion alone settles into whatever the seeding happened to spread, and
+// the drawing wants the chains touching rather than marooned in their own
+// corners of the frame.
+func maleculePack(clusters []maleculeCluster, aspect float64) {
+	for i := range clusters {
+		t := 2.39996 * float64(i) // phyllotaxis: no two clusters start together
+		rad := 1.5 * math.Sqrt(float64(i))
+		clusters[i].cx, clusters[i].cy = rad*math.Cos(t)*aspect, rad*math.Sin(t)
+	}
+	for range 300 {
+		for i := range clusters {
+			for j := i + 1; j < len(clusters); j++ {
+				dx := clusters[j].cx - clusters[i].cx
+				dy := (clusters[j].cy - clusters[i].cy) * aspect
+				d := math.Hypot(dx, dy)
+				want := clusters[i].r + clusters[j].r + 0.5
+				if d >= want {
+					continue
+				}
+				if d < 0.01 {
+					dx, dy, d = 1, 0, 1 // coincident: separate along x
+				}
+				push := (want - d) / 2
+				clusters[i].cx -= dx / d * push
+				clusters[i].cy -= dy / d * push / aspect
+				clusters[j].cx += dx / d * push
+				clusters[j].cy += dy / d * push / aspect
+			}
+		}
+		for i := range clusters {
+			clusters[i].cx *= 0.985
+			clusters[i].cy *= 0.985
+		}
+	}
+}
+
+// maleculeChains lays out the explicit structure alone: each connected run of
+// dependencies becomes its own little molecule, packed toward the middle.
+// Nothing is rooted at a shared centre, so a composite sits at the head of the
+// chain it actually required rather than on the rim of a sunburst.
+func maleculeChains(g *maleculeGraph, core []int, edges []maleculeEdge, aspect float64) map[int]maleculePoint {
+	kids := map[int][]int{}
+	indeg := map[int]int{}
+	inCore := make(map[int]bool, len(core))
+	for _, i := range core {
+		inCore[i] = true
+	}
+	for _, e := range edges {
+		kids[e.From] = append(kids[e.From], e.To)
+		indeg[e.To]++
+	}
+	comps := maleculeComponents(core, edges)
+	pos := make(map[int]maleculePoint, len(core))
+	clusters := make([]maleculeCluster, 0, len(comps))
+	for _, nodes := range comps {
+		clusters = append(clusters, maleculeGrow(g, nodes, kids, indeg, inCore, pos))
+	}
+	// Worst and largest first, so the sample's verdict sits near the middle.
+	slices.SortStableFunc(clusters, func(a, b maleculeCluster) int {
+		return cmp.Or(cmp.Compare(b.crit, a.crit), cmp.Compare(len(b.nodes), len(a.nodes)),
+			cmp.Compare(a.nodes[0], b.nodes[0]))
+	})
+	maleculePack(clusters, aspect)
+	for _, c := range clusters {
+		for _, n := range c.nodes {
+			p := pos[n]
+			pos[n] = maleculePoint{c.cx + p.X, c.cy + p.Y}
+		}
+	}
+	return pos
+}
+
+// maleculeLayout places every drawn atom. The dependency runs are laid out
+// first and pinned; the taxonomy is then hung off them by weak springs. The
+// pin is stiffer than any family spring, so the implicit hierarchy fills the
+// frame without ever bending the explicit one out of shape.
+func maleculeLayout(g *maleculeGraph, rank []int, edges []maleculeEdge, kin []maleculeKin,
+	aspect float64,
+) map[int]maleculePoint {
+	conn := maleculeConnected(edges)
+	core := make([]int, 0, len(rank))
+	for _, i := range rank {
+		if conn[i] || critFromString(g.Atoms[i].Crit) >= 4 {
+			core = append(core, i)
+		}
+	}
+	chain := maleculeChains(g, core, edges, aspect)
+
+	idx := make(map[int]int, len(rank))
+	for n, i := range rank {
+		idx[i] = n
+	}
+	n := len(rank)
+	x, y := make([]float64, n), make([]float64, n)
+	pinX, pinY, pinK := make([]float64, n), make([]float64, n), make([]float64, n)
+	for i, a := range rank {
+		if p, ok := chain[a]; ok {
+			// The chain layout works in bond lengths; the solver works in px.
+			x[i], y[i] = p.X*10, p.Y*10
+			pinX[i], pinY[i], pinK[i] = x[i], y[i], 0.22
+			continue
+		}
+		t := 2.39996 * float64(i)
+		r := 4 * math.Sqrt(float64(i)+0.5)
+		x[i], y[i] = r*math.Cos(t), r*math.Sin(t)
+	}
+	springs := make([]maleculeSpring, 0, len(edges)+len(kin))
+	for _, e := range edges {
+		springs = append(springs, maleculeSpring{idx[e.From], idx[e.To], 10, 0.42})
+	}
+	for _, k := range kin {
+		rest, stiff := maleculeKinSpring(k)
+		springs = append(springs, maleculeSpring{idx[k.A], idx[k.B], rest, stiff})
+	}
+	maleculeSolve(x, y, springs, pinX, pinY, pinK)
+
+	pos := make(map[int]maleculePoint, n)
+	for i, a := range rank {
+		pos[a] = maleculePoint{x[i], y[i]}
+	}
+	return pos
+}
+
+// maleculeFit scales and centres the finished layout so the drawing uses the
+// frame it was given. Spring rest lengths do not know how far the outermost
+// atom ended up, so without this a sparse molecule sits in the middle of an
+// empty box and a crowded one runs off the edge. Scaling is uniform, so every
+// relative distance the layout worked out survives.
+func maleculeFit(pos map[int]maleculePoint, order []int, w, h, margin float64) {
+	if len(order) == 0 {
 		return
 	}
-	// Grow only up to a point: a two-atom molecule blown up to fill the frame
-	// reads as a bigger claim than it is.
-	scale := math.Min(1/reach, 1.35)
-	for _, n := range nodes {
-		p := pos[n]
-		pos[n] = maleculePoint{cx + (p.X-cx)*scale, cy + (p.Y-cy)*scale}
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, i := range order {
+		p := pos[i]
+		minX, maxX = math.Min(minX, p.X), math.Max(maxX, p.X)
+		minY, maxY = math.Min(minY, p.Y), math.Max(maxY, p.Y)
+	}
+	s := math.Min((w-2*margin)/math.Max(maxX-minX, 1e-6), (h-2*margin)/math.Max(maxY-minY, 1e-6))
+	ox, oy := (w-(maxX-minX)*s)/2, (h-(maxY-minY)*s)/2
+	for _, i := range order {
+		p := pos[i]
+		pos[i] = maleculePoint{ox + (p.X-minX)*s, oy + (p.Y-minY)*s}
 	}
 }
 
-func maleculeShift(n *maleculeNode, pos map[*maleculeNode]maleculePoint, dx, dy float64) {
-	p := pos[n]
-	pos[n] = maleculePoint{p.X + dx, p.Y + dy}
-	for _, k := range n.kids {
-		maleculeShift(k, pos, dx, dy)
-	}
-}
-
-// maleculeRelax pushes overlapping vertices apart. Bounded rather than run to
+// maleculeRelax pushes overlapping spheres apart. The layout settles bond
+// lengths, not clearances, so two atoms in different chains can land on top of
+// each other and hide a behaviour outright. Bounded rather than run to
 // convergence: a handful of passes settles every real graph, and a drawing is
 // not worth an unbounded loop on the request path.
-func maleculeRelax(pos map[*maleculeNode]maleculePoint, nodes []*maleculeNode, minSep float64) {
+func maleculeRelax(pos map[int]maleculePoint, order []int, minSep float64) {
 	for range 24 {
 		moved := false
-		for i := range nodes {
-			for j := i + 1; j < len(nodes); j++ {
-				p, q := pos[nodes[i]], pos[nodes[j]]
+		for a := range order {
+			for b := a + 1; b < len(order); b++ {
+				p, q := pos[order[a]], pos[order[b]]
 				dx, dy := q.X-p.X, q.Y-p.Y
 				d := math.Hypot(dx, dy)
 				if d >= minSep {
@@ -599,8 +637,8 @@ func maleculeRelax(pos map[*maleculeNode]maleculePoint, nodes []*maleculeNode, m
 				}
 				push := (minSep - d) / 2
 				ux, uy := dx/d*push, dy/d*push
-				pos[nodes[i]] = maleculePoint{p.X - ux, p.Y - uy}
-				pos[nodes[j]] = maleculePoint{q.X + ux, q.Y + uy}
+				pos[order[a]] = maleculePoint{p.X - ux, p.Y - uy}
+				pos[order[b]] = maleculePoint{q.X + ux, q.Y + uy}
 				moved = true
 			}
 		}
@@ -610,43 +648,264 @@ func maleculeRelax(pos map[*maleculeNode]maleculePoint, nodes []*maleculeNode, m
 	}
 }
 
-// maleculeVertexSVG draws one vertex: a lettered atom where there is room and
-// the behaviour is worth naming, a plain dot otherwise, and a hollow ring for a
-// taxonomy stub, which stands for a path segment rather than for a finding. An
-// atom assembled from a finer grain of itself carries a second ring.
-func maleculeVertexSVG(g *maleculeGraph, n *maleculeNode, p maleculePoint, labels bool, dotScale float64) string {
-	if n.atom < 0 {
-		return fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#ffffff" stroke="%s"`+
-			` stroke-width="0.9" stroke-opacity="0.7"><title>%s</title></circle>`,
-			p.X, p.Y, 2*dotScale, critColor(n.crit), html.EscapeString(n.name))
+// maleculeBondLen is the median drawn bond length. Every dimension of the
+// drawing is derived from it — stick width, sphere radius, glyph size — which
+// is what keeps the proportions of a molecular model at any density: they are
+// fixed relative to the bond, not to the frame.
+func maleculeBondLen(edges []maleculeEdge, kin []maleculeKin, pos map[int]maleculePoint) float64 {
+	ls := make([]float64, 0, len(edges)+len(kin))
+	for _, e := range edges {
+		p, q := pos[e.From], pos[e.To]
+		ls = append(ls, math.Hypot(q.X-p.X, q.Y-p.Y))
 	}
-	a := &g.Atoms[n.atom]
-	col := critColor(a.Crit)
-	if labels && !n.implied && critFromString(a.Crit) >= 4 {
-		var b strings.Builder
-		if a.Internal > 0 {
-			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="6.2" fill="none" stroke="%s"`+
-				` stroke-width="0.7" stroke-opacity="0.5"/>`, p.X, p.Y, col)
+	for _, k := range kin {
+		if !maleculeKinDrawn(k) {
+			continue
 		}
-		// The glyph is the atom, knocked out of whatever it sits on — the way
-		// a heteroatom reads in a structural formula.
-		fmt.Fprintf(&b, `<text x="%.1f" y="%.1f" text-anchor="middle" font-family="%s" font-size="8.5"`+
-			` font-weight="600" fill="%s" paint-order="stroke" stroke="#ffffff" stroke-width="2.6"`+
-			` stroke-linejoin="round"><title>%s</title>%s</text>`,
-			p.X, p.Y+3.1, maleculeFont, col, html.EscapeString(a.Key), html.EscapeString(a.Symbol))
-		return b.String()
+		p, q := pos[k.A], pos[k.B]
+		ls = append(ls, math.Hypot(q.X-p.X, q.Y-p.Y))
 	}
-	r := 1.7 * dotScale
-	if critFromString(a.Crit) >= 4 {
-		r = 2.6 * dotScale
+	if len(ls) == 0 {
+		return 24 // a molecule with no bonds at all: pick a plausible scale
 	}
-	opacity := 1.0
-	if n.implied {
-		r *= 0.8
-		opacity = 0.65
+	slices.Sort(ls)
+	return ls[len(ls)/2]
+}
+
+// maleculeMix moves a hex colour a fraction of the way toward a target. Used
+// for the three things shading needs: a highlight, a terminator, and the haze
+// that stands in for distance.
+func maleculeMix(hex string, f float64, tr, tg, tb int) string {
+	var r, g, b int
+	if _, err := fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b); err != nil {
+		return hex // the palette is a fixed set of literals; this cannot happen
 	}
-	// fill=%q rather than "%s": the palette is a fixed set of hex literals,
+	m := func(v, t int) int { return max(0, min(255, int(float64(v)+(float64(t)-float64(v))*f))) }
+	return fmt.Sprintf("#%02x%02x%02x", m(r, tr), m(g, tg), m(b, tb))
+}
+
+func maleculeShade(hex string, f float64) string   { return maleculeMix(hex, f, 0, 0, 0) }
+func maleculeLighten(hex string, f float64) string { return maleculeMix(hex, f, 255, 255, 255) }
+
+// maleculeFade pushes a colour toward the ground the drawing sits on, which is
+// what distance does to colour in air.
+func maleculeFade(hex string, f float64) string {
+	return maleculeMix(hex, f, maleculeGround[0], maleculeGround[1], maleculeGround[2])
+}
+
+func maleculeStroke(b *strings.Builder, p, q maleculePoint, col string, wid float64, dash string) {
+	if dash != "" {
+		dash = fmt.Sprintf(` stroke-dasharray=%q`, dash)
+	}
+	// stroke=%q rather than "%s": the palette is a fixed set of hex literals,
 	// so the quoting is identical and the linter stays satisfied.
-	return fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="%.1f" fill=%q fill-opacity="%.2f"><title>%s</title></circle>`,
-		p.X, p.Y, r, col, opacity, html.EscapeString(a.Key))
+	fmt.Fprintf(b, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke=%q`+
+		` stroke-width="%.2f" stroke-linecap="round"%s/>`, p.X, p.Y, q.X, q.Y, col, wid, dash)
+}
+
+// maleculeCylinder is one stick: a shaded body with a lighter core down the
+// middle, which is as much of a lit cylinder as two strokes can manage.
+func maleculeCylinder(b *strings.Builder, p, q maleculePoint, col string, wid float64) {
+	maleculeStroke(b, p, q, maleculeShade(col, 0.22), wid, "")
+	maleculeStroke(b, p, q, maleculeLighten(col, 0.45), wid*0.30, "")
+}
+
+// maleculeCovalent is a dependency: each half in its own atom's colour, the way
+// every ball-and-stick viewer draws a bond between unlike atoms, and doubled,
+// because the relation it stands for is the one the report reasoned its way to.
+func maleculeCovalent(b *strings.Builder, p, q maleculePoint, ca, cb string, wid float64) {
+	gap := wid * maleculeDouble
+	dx, dy := q.X-p.X, q.Y-p.Y
+	l := math.Hypot(dx, dy)
+	if l < 0.5 {
+		return
+	}
+	nx, ny := -dy/l*gap, dx/l*gap
+	for _, s := range [2]float64{1, -1} {
+		a := maleculePoint{p.X + nx*s, p.Y + ny*s}
+		c := maleculePoint{q.X + nx*s, q.Y + ny*s}
+		m := maleculePoint{(a.X + c.X) / 2, (a.Y + c.Y) / 2}
+		maleculeCylinder(b, a, m, ca, wid*0.68)
+		maleculeCylinder(b, m, c, cb, wid*0.68)
+	}
+}
+
+// maleculeVerdictZ puts the worst finding on the near plane. If the drawing is
+// going to put something in front, the verdict is the only defensible
+// candidate: it is what the card exists to say, and the one thing a reader
+// should never have to hunt for behind another sphere.
+func maleculeVerdictZ(crit string) float64 {
+	switch critFromString(crit) {
+	case 5:
+		return 1
+	case 4:
+		return 0.45
+	case 3:
+		return -0.25
+	default:
+		return -1
+	}
+}
+
+// maleculeSVG draws the graph at w×h. Returns "" when there is nothing to say,
+// so the template can drop the card rather than frame an empty box.
+func maleculeSVG(graph maleculeGraph, width, height float64) string {
+	if len(graph.Atoms) == 0 {
+		return ""
+	}
+	budget, labels := maleculeDetailBudget, true
+	if math.Min(width, height) < maleculeRowHeight {
+		budget, labels = maleculeRowBudget, false
+	}
+	rank, edges := maleculeBudget(&graph, budget)
+	kin := maleculeKinEdges(&graph, rank)
+	pos := maleculeLayout(&graph, rank, edges, kin, width/height)
+	maleculeFit(pos, rank, width, height, 13)
+	bond := maleculeBondLen(edges, kin, pos)
+	// Two spheres that touch hide a behaviour between them, so clear them by
+	// rather more than their own diameter, then fit again: relaxing can push
+	// an outlying atom past the edge the first fit had it inside.
+	maleculeRelax(pos, rank, bond*maleculeBall*2.6)
+	maleculeFit(pos, rank, width, height, 13)
+	bond = maleculeBondLen(edges, kin, pos)
+
+	cx, cy := width/2, height/2
+	depth := make(map[int]float64, len(rank))
+	proj := make(map[int]maleculePoint, len(rank))
+	fade := make(map[int]float64, len(rank))
+	scale := make(map[int]float64, len(rank))
+	for _, i := range rank {
+		depth[i] = maleculeVerdictZ(graph.Atoms[i].Crit)
+		s := 3.4 / (3.4 - depth[i]*maleculePersp)
+		scale[i] = s
+		p := pos[i]
+		proj[i] = maleculePoint{cx + (p.X-cx)*s, cy + (p.Y-cy)*s}
+		fade[i] = (1 - depth[i]) / 2 // 0 at the front, 1 at the back
+	}
+	conn := maleculeConnected(edges)
+	radius := func(i int) float64 {
+		a := &graph.Atoms[i]
+		var f float64
+		switch {
+		case maleculeIsComposite(i, edges):
+			f = 1.18 // a composite is the head of a chain of reasoning
+		case conn[i]:
+			f = 1
+		default:
+			f = 0.80 // a lone observation
+		}
+		if critFromString(a.Crit) >= 4 {
+			f *= 1.14
+		}
+		// Mass is how many findings folded into the atom.
+		f *= 0.84 + 0.22*math.Cbrt(float64(a.Members))/1.6
+		return bond * maleculeBall * f * scale[i]
+	}
+	stick := bond * maleculeStick
+	tint := func(i int, hex string) string { return maleculeFade(hex, fade[i]*maleculeHaze) }
+
+	var out strings.Builder
+	fmt.Fprintf(&out, `<svg viewBox="0 0 %.0f %.0f" class="malecule" role="img" aria-label="malecule">`,
+		width, height)
+	// One gradient per severity per depth tier, so a sphere is lit rather than
+	// flat and a distant one is lit in its own hazed colour.
+	out.WriteString(`<defs>`)
+	uid := maleculeGradientID(&graph, rank)
+	for _, c := range [...]string{"hostile", "suspicious", "notable", "baseline", "component"} {
+		for tier := range 3 {
+			col := maleculeFade(critColor(c), float64(tier)*0.31)
+			fmt.Fprintf(&out, `<radialGradient id="m%s%s%d" cx="32%%" cy="28%%" r="76%%">`+
+				`<stop offset="0%%" stop-color="%s"/><stop offset="18%%" stop-color="%s"/>`+
+				`<stop offset="62%%" stop-color="%s"/><stop offset="100%%" stop-color="%s"/>`+
+				`</radialGradient>`,
+				uid, c, tier, maleculeLighten(col, 0.90), maleculeLighten(col, 0.42),
+				col, maleculeShade(col, 0.52))
+		}
+	}
+	out.WriteString(`</defs>`)
+
+	// Everything goes into one list keyed by depth and is painted back to
+	// front, glyphs included. Drawing the labels in a pass of their own let a
+	// distant atom's glyph land on top of a nearer sphere, which is the one
+	// way this drawing can state the wrong verdict.
+	type mark struct {
+		draw func()
+		z    float64
+	}
+	marks := make([]mark, 0, len(rank)*2+len(edges)+len(kin))
+	for _, k := range kin {
+		if !maleculeKinDrawn(k) {
+			continue
+		}
+		p, q := proj[k.A], proj[k.B]
+		f := math.Max(fade[k.A], fade[k.B])
+		wid := stick * (0.34 + 0.10*float64(min(max(k.Share, 2), 3)))
+		marks = append(marks, mark{func() {
+			// A contact, not a bond: the dashed stick a molecular viewer uses
+			// for an interaction that is not covalent.
+			maleculeStroke(&out, p, q, maleculeFade("#b9a6b4", f*maleculeHaze), wid*1.25,
+				fmt.Sprintf("%.1f %.1f", wid*1.4, wid*1.5))
+		}, math.Min(depth[k.A], depth[k.B]) - 0.02})
+	}
+	for _, e := range edges {
+		p, q := proj[e.From], proj[e.To]
+		ca := tint(e.From, critColor(graph.Atoms[e.From].Crit))
+		cb := tint(e.To, critColor(graph.Atoms[e.To].Crit))
+		wid := stick * math.Min(scale[e.From], scale[e.To])
+		marks = append(marks, mark{func() {
+			maleculeCovalent(&out, p, q, ca, cb, wid)
+		}, math.Min(depth[e.From], depth[e.To]) - 0.01})
+	}
+	for _, i := range rank {
+		a := &graph.Atoms[i]
+		p, r := proj[i], radius(i)
+		title := html.EscapeString(a.Key)
+		crit, rim := a.Crit, maleculeShade(tint(i, critColor(a.Crit)), 0.55)
+		tier := min(2, int(fade[i]*3))
+		marks = append(marks, mark{func() {
+			fmt.Fprintf(&out, `<circle cx="%.1f" cy="%.1f" r="%.1f" fill="url(#m%s%s%d)"`+
+				` stroke="%s" stroke-width="%.2f" stroke-opacity="0.55"><title>%s</title></circle>`,
+				p.X, p.Y, r, uid, crit, tier, rim, r*0.055, title)
+			// The specular blob. A plastic ball is only plastic because of it.
+			fmt.Fprintf(&out, `<ellipse cx="%.1f" cy="%.1f" rx="%.2f" ry="%.2f" fill="#ffffff"`+
+				` fill-opacity="0.55" transform="rotate(-34 %.1f %.1f)"/>`,
+				p.X-r*0.34, p.Y-r*0.38, r*0.28, r*0.19, p.X-r*0.34, p.Y-r*0.38)
+		}, depth[i]})
+		if !labels || (!maleculeIsComposite(i, edges) && critFromString(a.Crit) < 4) {
+			continue
+		}
+		font := math.Max(7, math.Min(r*0.95, bond*0.42))
+		sym := html.EscapeString(a.Symbol)
+		marks = append(marks, mark{func() {
+			fmt.Fprintf(&out, `<text x="%.1f" y="%.1f" text-anchor="middle" font-family="%s"`+
+				` font-size="%.1f" font-weight="700" fill="#ffffff" fill-opacity="0.96"`+
+				` paint-order="stroke" stroke="%s" stroke-width="%.1f" stroke-linejoin="round">`+
+				`<title>%s</title>%s</text>`,
+				p.X, p.Y+font*0.35, maleculeFont, font, rim, font*0.22, title, sym)
+		}, depth[i] + 1e-6})
+	}
+	slices.SortStableFunc(marks, func(x, y mark) int { return cmp.Compare(x.z, y.z) })
+	for _, m := range marks {
+		m.draw()
+	}
+
+	if hidden := len(graph.Atoms) - len(rank); hidden > 0 {
+		fmt.Fprintf(&out, `<text x="%.1f" y="%.1f" text-anchor="end" font-family="%s"`+
+			` font-size="7.5" fill="#8A6080">+%d</text>`, width-3, height-3, maleculeFont, hidden)
+	}
+	out.WriteString(`</svg>`)
+	return out.String()
+}
+
+// maleculeGradientID keeps one drawing's gradient ids from colliding with
+// another's when several malecules share a page, as they do on the feed.
+// Derived from the drawn keys so it stays stable for a given report.
+func maleculeGradientID(g *maleculeGraph, rank []int) string {
+	var h uint32 = 2166136261 // FNV-1a
+	for _, i := range rank {
+		for _, c := range []byte(g.Atoms[i].Key) {
+			h = (h ^ uint32(c)) * 16777619
+		}
+	}
+	return fmt.Sprintf("%08x", h)
 }

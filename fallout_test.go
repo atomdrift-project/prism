@@ -250,9 +250,10 @@ func TestBuildFalloutViewQualifies(t *testing.T) {
 // file type says "loose OS binary" — the file type is what catches the bulk of
 // a corpus, whose rows carry no ecosystem at all. tria.ge is dropped whole —
 // it is a sandbox detonation queue, and an archive someone submitted to it is
-// not a package a registry served. Registry feeds are untouched
+// not a package a registry served. Registry and vendor feeds are untouched
 // — including the Windows package managers, which share the "windows"
-// ecosystem and whose catches are exactly what the log is for.
+// ecosystem, and forager's vendor sources, whose whole job is to fetch a PE
+// off the vendor's own download page. Their catches are what the log is for.
 func TestFalloutOffTopicCorpusCatches(t *testing.T) {
 	row := func(pkg, eco, fileType, feed string) feedRow {
 		r := hostileRow(shaN(byte(len(pkg))), eco, fileType, "O1(C)", pkg, time.Hour)
@@ -274,6 +275,12 @@ func TestFalloutOffTopicCorpusCatches(t *testing.T) {
 		row("winget-poisoned", "windows", "pe", "winget"),  // registry feed: a real supply-chain catch
 		row("brew-poisoned", "macos", "macho", "homebrew"), // ditto
 		row("npm-squat", "javascript", "npm", "npm"),
+		// A trojaned installer taken off the vendor's own download page is
+		// the story the log exists to tell, and it is a PE like any other.
+		// forager files a vendor fetch under the source's own name with the
+		// "vendor" ecosystem, so it never reaches the corpus gates.
+		row("ccleaner-trojaned", "vendor", "pe", "ccleaner"),
+		row("nssm-backdoored", "vendor", "pe", "nssm"),
 	}
 	kept := map[string]bool{}
 	for _, r := range falloutRowsInWindow(rows, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny) {
@@ -289,7 +296,11 @@ func TestFalloutOffTopicCorpusCatches(t *testing.T) {
 			t.Errorf("%q is off-topic for fallout and should have been gated out", pkg)
 		}
 	}
-	for _, pkg := range []string{"corpus-tarball", "corpus-js", "winget-poisoned", "brew-poisoned", "npm-squat"} {
+	onTopic := []string{
+		"corpus-tarball", "corpus-js", "winget-poisoned", "brew-poisoned", "npm-squat",
+		"ccleaner-trojaned", "nssm-backdoored",
+	}
+	for _, pkg := range onTopic {
 		if !kept[pkg] {
 			t.Errorf("%q should have stayed in the log", pkg)
 		}

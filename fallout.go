@@ -695,9 +695,12 @@ var offTopicFeeds = map[string]bool{
 // payload, a maldoc, or another loose OS binary lifted from a
 // commodity-malware corpus.
 //
-// The feed decides first, so a poisoned winget package or a Go module that
-// ships an ELF is untouched — only a hash-corpus channel can be off-topic at
-// all. Within one that is worth reading, a catch is off-topic when either
+// The feed decides first, so a trojaned installer taken off a vendor's own
+// download page, a poisoned winget package, or a Go module that ships an ELF
+// is untouched — only a hash-corpus channel can be off-topic at all, and none
+// of the file-type or ecosystem policy below is ever consulted for one of
+// forager's vendor sources (which file under the source's own name, with the
+// "vendor" ecosystem). Within one that is worth reading, a catch is off-topic when either
 // hopper's ecosystem or the sniffed file type says "loose OS binary"; a
 // corpus sample that is neither (an archive, a script) stays in the log, so
 // the gate still errs toward showing a supply-chain catch rather than hiding

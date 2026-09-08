@@ -34,19 +34,16 @@ func maleculeTestGraph(keys []string, crits []string, edges [][2]int) maleculeGr
 }
 
 var (
-	maleculeCircleRE = regexp.MustCompile(`<circle cx="([\d.-]+)" cy="([\d.-]+)" r="([\d.-]+)" fill="(#[0-9a-fA-F]{6}|none|#ffffff)"`)
-	maleculeDashRE   = regexp.MustCompile(`stroke-dasharray="1\.8 1\.5"`)
+	// A sphere is the only <circle> the drawing emits; the specular highlight
+	// is an <ellipse> and there are no rings or shells any more.
+	maleculeSphereRE = regexp.MustCompile(
+		`<circle cx="([\d.-]+)" cy="([\d.-]+)" r="([\d.-]+)" fill="url\(#m[0-9a-f]{8}([a-z]+)(\d)\)"`)
+	maleculeLineRE = regexp.MustCompile(`<line [^>]*?/>`)
 )
 
-// maleculeVertices returns the drawn vertex centres — the filled atom dots and
-// hollow stubs, but not the coordination shells, which are concentric with the
-// centre they belong to.
-func maleculeVertices(svg string) []maleculePoint {
+func maleculeSpheres(svg string) []maleculePoint {
 	var out []maleculePoint
-	for _, m := range maleculeCircleRE.FindAllStringSubmatch(svg, -1) {
-		if m[4] == "none" {
-			continue
-		}
+	for _, m := range maleculeSphereRE.FindAllStringSubmatch(svg, -1) {
 		x, errX := strconv.ParseFloat(m[1], 64)
 		y, errY := strconv.ParseFloat(m[2], 64)
 		if errX != nil || errY != nil {
@@ -57,199 +54,27 @@ func maleculeVertices(svg string) []maleculePoint {
 	return out
 }
 
+// maleculeBonds counts the strokes the drawing laid down, split by whether
+// they are dashed. A dependency is a solid double bond — two offset sticks,
+// each drawn as a shaded half and a lit core, so eight solid strokes. A family
+// link is one dashed stroke.
+func maleculeBonds(svg string) (solid, dashed int) {
+	for _, l := range maleculeLineRE.FindAllString(svg, -1) {
+		if strings.Contains(l, "stroke-dasharray") {
+			dashed++
+			continue
+		}
+		solid++
+	}
+	return solid, dashed
+}
+
 func TestMaleculeSVGEmpty(t *testing.T) {
 	if got := maleculeSVG(maleculeGraph{}, 196, 168); got != "" {
-		t.Errorf("empty graph drew %q, want the empty string so the card can be dropped", got)
+		t.Errorf("empty graph drew %q, want the card dropped", got)
 	}
 }
 
-// The explicit hierarchy builds the skeleton: a composite nothing depends on
-// is a limb, and what it uses hangs beneath it. Its bonds are full strength,
-// which is what separates found structure from taxonomy fill.
-func TestMaleculeSVGDrawsDependencyChain(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/data/encode"},
-		[]string{"hostile", "notable", "notable"},
-		[][2]int{{0, 1}, {1, 2}},
-	)
-	svg := maleculeSVG(g, 196, 168)
-	if n := strings.Count(svg, "<line"); n < 2 {
-		t.Errorf("dependency chain drew %d bonds, want at least the 2 edges", n)
-	}
-	for _, key := range []string{"objectives/exfil/dns", "micro-behaviors/net/socket"} {
-		if !strings.Contains(svg, key) {
-			t.Errorf("drawing omits %q; every kept behaviour should be titled", key)
-		}
-	}
-	// A taxonomy graft is drawn at reduced opacity; a pure dependency chain
-	// has nothing grafted, so nothing should be faded.
-	if strings.Contains(svg, `fill-opacity="0.65"`) {
-		t.Error("chain drew a faded vertex, but every atom here is reachable by dependency")
-	}
-}
-
-// A sample whose analysis recorded no dependencies at all still has to draw a
-// molecule: the taxonomy carries it. One live sample in ten is in this state.
-func TestMaleculeSVGTaxonomyFallback(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{
-			"objectives/persistence/cron", "micro-behaviors/fs/path",
-			"micro-behaviors/fs/chmod", "metadata/file/profile",
-		},
-		[]string{"suspicious", "notable", "notable", "baseline"},
-		nil,
-	)
-	svg := maleculeSVG(g, 196, 168)
-	if svg == "" {
-		t.Fatal("graph with no dependency edges drew nothing")
-	}
-	if got := len(maleculeVertices(svg)); got < 4 {
-		t.Errorf("drew %d vertices, want at least the 4 behaviours plus their stubs", got)
-	}
-	// Everything here arrived by taxonomy, so the fill must read as secondary.
-	if !strings.Contains(svg, `fill-opacity="0.65"`) {
-		t.Error("taxonomy-grafted atoms should be drawn faded, to rank below found structure")
-	}
-}
-
-// A behaviour two rules share is the one relation the spanning tree cannot
-// hold. It becomes a coordination centre: a shell, plus a dashed bond from the
-// user the tree did not already connect it to.
-func TestMaleculeSVGCoordinationCentre(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{
-			"objectives/exfil/dns", "objectives/credential-access/browser",
-			"micro-behaviors/net/socket",
-		},
-		[]string{"hostile", "hostile", "notable"},
-		[][2]int{{0, 2}, {1, 2}}, // both rules need the socket
-	)
-	svg := maleculeSVG(g, 196, 168)
-	if n := len(maleculeDashRE.FindAllString(svg, -1)); n != 1 {
-		t.Errorf("drew %d coordination bonds, want exactly 1: the tree already draws the other user", n)
-	}
-	if !strings.Contains(svg, `fill="none"`) {
-		t.Error("a coordination centre should carry a shell")
-	}
-}
-
-// The duplicate-bond regression: a hub's parent in the spanning tree is one of
-// its users and is already drawn solid, so a dashed bond to it repeats a line
-// that is there. Half the coordination ink used to be that repeat.
-func TestMaleculeSVGSkipsRedundantCoordinationBond(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket"},
-		[]string{"hostile", "notable"},
-		[][2]int{{0, 1}},
-	)
-	g.Atoms[1].UsedBy = append(g.Atoms[1].UsedBy, 0) // seen twice, still one user
-	if n := len(maleculeDashRE.FindAllString(maleculeSVG(g, 196, 168), -1)); n != 0 {
-		t.Errorf("drew %d coordination bonds for a behaviour with a single user, want 0", n)
-	}
-}
-
-// Crowding regression. A small molecule where most behaviours are shared used
-// to draw four overlapping shells and put vertices 2.5px apart carrying 2.6px
-// dots. The hub cap, the wedge rule and the relaxation pass are what hold it
-// open; this fails if any of them regresses.
-func TestMaleculeSVGKeepsVerticesApart(t *testing.T) {
-	keys := []string{
-		"objectives/exfil/dns", "objectives/persistence/cron", "objectives/discovery/host",
-		"micro-behaviors/net/socket", "micro-behaviors/fs/path", "micro-behaviors/os/exec",
-		"micro-behaviors/data/encode", "metadata/file/profile",
-	}
-	crits := []string{"hostile", "hostile", "suspicious", "notable", "notable", "notable", "notable", "baseline"}
-	edges := [][2]int{{0, 3}, {1, 3}, {2, 3}, {0, 4}, {1, 4}, {2, 5}, {0, 5}, {1, 6}, {2, 6}}
-	g := maleculeTestGraph(keys, crits, edges)
-
-	for _, size := range []struct {
-		name          string
-		w, h, wantSep float64
-	}{
-		{"detail", 196, 168, 4.2},
-		{"row", 132, 62, 3.4},
-	} {
-		pts := maleculeVertices(maleculeSVG(g, size.w, size.h))
-		worst, wi, wj := math.Inf(1), 0, 0
-		for i := range pts {
-			for j := i + 1; j < len(pts); j++ {
-				if d := math.Hypot(pts[i].X-pts[j].X, pts[i].Y-pts[j].Y); d < worst {
-					worst, wi, wj = d, i, j
-				}
-			}
-		}
-		if worst < size.wantSep {
-			t.Errorf("%s: closest vertices %.2fpx apart (want >= %.1f), at %v and %v",
-				size.name, worst, size.wantSep, pts[wi], pts[wj])
-		}
-	}
-}
-
-// A small molecule must not be mostly coordination centres, or the shells
-// swallow vertices that have nothing to do with them.
-func TestMaleculeSVGCapsCoordinationCentres(t *testing.T) {
-	keys := []string{
-		"objectives/a/one", "objectives/b/two", "objectives/c/three", "objectives/d/four",
-		"micro-behaviors/x/p", "micro-behaviors/x/q", "micro-behaviors/x/r", "micro-behaviors/x/s",
-	}
-	// Every micro-behaviour is shared by two objectives, so all four qualify.
-	edges := [][2]int{
-		{0, 4}, {1, 4}, {0, 5}, {1, 5}, {2, 6}, {3, 6}, {2, 7}, {3, 7},
-	}
-	g := maleculeTestGraph(keys, nil, edges)
-	shells := strings.Count(maleculeSVG(g, 196, 168), `fill="none"`)
-	if shells > 2 {
-		t.Errorf("drew %d coordination shells for 8 behaviours, want at most 2 (one per %d atoms)",
-			shells, maleculeHubAtoms)
-	}
-}
-
-// Past the budget the drawing stops being read and starts being decoration, so
-// the remainder is counted rather than drawn. Live samples reach 163
-// behaviours.
-func TestMaleculeSVGBudgetsAtoms(t *testing.T) {
-	var keys []string
-	for i := range 60 {
-		keys = append(keys, "micro-behaviors/fs/path"+strconv.Itoa(i))
-	}
-	g := maleculeTestGraph(keys, nil, nil)
-
-	detail := maleculeSVG(g, 196, 168)
-	if want := "+" + strconv.Itoa(60-maleculeDetailBudget); !strings.Contains(detail, want) {
-		t.Errorf("detail card should count the %s behaviours it did not draw", want)
-	}
-	row := maleculeSVG(g, 132, 62)
-	if want := "+" + strconv.Itoa(60-maleculeRowBudget); !strings.Contains(row, want) {
-		t.Errorf("feed row should count the %s behaviours it did not draw", want)
-	}
-	// The row is a glance, not a document: no labels at that size.
-	if strings.Contains(row, "<text x=") && strings.Contains(row, "font-weight=\"600\"") {
-		t.Error("feed row drew element labels; there is no room for them at 132x62")
-	}
-}
-
-// The same report must always draw the same molecule — the picture is cached
-// with the page, and a drawing that shuffled between renders would read as the
-// sample having changed.
-func TestMaleculeSVGDeterministic(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{
-			"objectives/exfil/dns", "objectives/persistence/cron",
-			"micro-behaviors/net/socket", "micro-behaviors/fs/path", "metadata/file/profile",
-		},
-		[]string{"hostile", "suspicious", "notable", "notable", "baseline"},
-		[][2]int{{0, 2}, {1, 2}, {1, 3}},
-	)
-	first := maleculeSVG(g, 196, 168)
-	for range 5 {
-		if got := maleculeSVG(g, 196, 168); got != first {
-			t.Fatal("maleculeSVG is not deterministic for one graph")
-		}
-	}
-}
-
-// Both pages run this renderer, and a feed row is the same molecule drawn
-// smaller — not a different picture.
 func TestMaleculeSVGRendersBothSizes(t *testing.T) {
 	g := maleculeTestGraph(
 		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket", "metadata/file/profile"},
@@ -261,72 +86,117 @@ func TestMaleculeSVGRendersBothSizes(t *testing.T) {
 		if !strings.HasPrefix(svg, "<svg viewBox=") || !strings.HasSuffix(svg, "</svg>") {
 			t.Errorf("%.0fx%.0f: malformed svg", size.w, size.h)
 		}
-		if want := "viewBox=\"0 0 " + strconv.Itoa(int(size.w)) + " " + strconv.Itoa(int(size.h)) + "\""; !strings.Contains(svg, want) {
+		want := `viewBox="0 0 ` + strconv.Itoa(int(size.w)) + ` ` + strconv.Itoa(int(size.h)) + `"`
+		if !strings.Contains(svg, want) {
 			t.Errorf("%.0fx%.0f: missing %s", size.w, size.h, want)
 		}
+		if n := len(maleculeSpheres(svg)); n != len(g.Atoms) {
+			t.Errorf("%.0fx%.0f: drew %d spheres, want %d", size.w, size.h, n, len(g.Atoms))
+		}
 	}
 }
 
-// The row splits the circle: what the report reasoned its way to goes above
-// the core, the taxonomy graft below it. Interleaved, the graft's larger
-// population buries the dependency limbs and a page of samples that share a
-// file type comes out as a page of the same sunburst.
-func TestMaleculeSVGRowSplitsDependenciesFromTaxonomy(t *testing.T) {
+// The shipped bond rule: a dependency is a covalent double bond, a family link
+// is a dashed contact. Both channels differ — count and continuity — because
+// the family links are the larger population and one channel alone stops
+// separating them at row size.
+func TestMaleculeSVGDrawsBothBondKinds(t *testing.T) {
+	// Two behaviours in one family (share 3) plus one dependency between
+	// atoms that share nothing.
+	g := maleculeTestGraph(
+		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/http"},
+		[]string{"hostile", "notable", "notable"},
+		[][2]int{{0, 1}},
+	)
+	svg := maleculeSVG(g, 196, 168)
+	solid, dashed := maleculeBonds(svg)
+	if want := 8; solid != want {
+		t.Errorf("one dependency drew %d solid strokes, want %d (a double bond, shaded and lit)",
+			solid, want)
+	}
+	if want := 1; dashed != want {
+		t.Errorf("one family link drew %d dashed strokes, want %d", dashed, want)
+	}
+}
+
+// A shared namespace is too loose a claim to spend a line on: the spring still
+// gathers the two atoms, but nothing is drawn between them.
+func TestMaleculeSVGSkipsNamespaceOnlyKinship(t *testing.T) {
+	g := maleculeTestGraph(
+		[]string{"micro-behaviors/net/socket", "micro-behaviors/fs/write"},
+		[]string{"notable", "notable"},
+		nil,
+	)
+	if _, dashed := maleculeBonds(maleculeSVG(g, 196, 168)); dashed != 0 {
+		t.Errorf("atoms sharing only a namespace drew %d contacts, want none", dashed)
+	}
+}
+
+// Depth is the verdict, so nothing may be painted in front of the worst
+// finding — including a label, which is where this went wrong before. The
+// worst atom here is deliberately not an objective: ranking depth by namespace
+// instead of by severity is exactly what used to bury it.
+func TestMaleculeSVGPaintsWorstAtomLast(t *testing.T) {
 	g := maleculeTestGraph(
 		[]string{
-			"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/dns",
-			"objectives/discovery/host", "objectives/collection/screenshot",
-			"micro-behaviors/fs/write", "metadata/file/profile",
+			"objectives/exfil/dns", "objectives/persistence/cron", "objectives/discovery/host",
+			"well-known/malware/backdoor",
+			"micro-behaviors/net/socket", "micro-behaviors/fs/write",
 		},
-		[]string{"hostile", "suspicious", "suspicious", "notable", "notable", "notable", "baseline"},
-		[][2]int{{0, 1}, {1, 2}},
+		[]string{"notable", "notable", "notable", "hostile", "notable", "notable"},
+		[][2]int{{0, 4}, {1, 5}},
 	)
-	const w, h = 132, 62
-	svg := maleculeSVG(g, w, h)
-	above, below := 0, 0
-	for _, p := range maleculeVertices(svg) {
-		if math.Abs(p.Y-h/2) < 0.5 {
-			continue // the core itself
+	for _, size := range []struct{ w, h float64 }{{196, 168}, {132, 62}} {
+		svg := maleculeSVG(g, size.w, size.h)
+		last := strings.LastIndex(svg, "<circle")
+		if last < 0 {
+			t.Fatalf("%.0fx%.0f: no spheres drawn", size.w, size.h)
 		}
-		if p.Y < h/2 {
-			above++
-		} else {
-			below++
+		if want := "<title>well-known/malware/backdoor</title>"; !strings.Contains(svg[last:], want) {
+			t.Errorf("%.0fx%.0f: the last sphere painted is not the hostile atom", size.w, size.h)
 		}
-	}
-	if above == 0 || below == 0 {
-		t.Fatalf("row drew %d vertices above the core and %d below; want both halves used", above, below)
-	}
-	// The dependency chain is three atoms deep and the graft has four leaves,
-	// so a drawing that split by anything but kind would not land 3 above.
-	if above != 3 {
-		t.Errorf("above the core = %d vertices, want the 3 of the dependency chain", above)
 	}
 }
 
-// A molecule with nothing to separate keeps the whole circle: half a drawing
-// would say something about the sample that is not true.
-func TestMaleculeSVGRowKeepsWholeCircleWithoutGraft(t *testing.T) {
-	g := maleculeTestGraph(
-		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/dns"},
-		[]string{"hostile", "suspicious", "suspicious"},
-		[][2]int{{0, 1}, {0, 2}},
-	)
-	const w, h = 132, 62
-	below := 0
-	for _, p := range maleculeVertices(maleculeSVG(g, w, h)) {
-		if p.Y > h/2+0.5 {
-			below++
-		}
+// Spheres are drawn at a fraction of the bond length, so two that land on top
+// of each other hide a behaviour outright.
+func TestMaleculeSVGKeepsSpheresApart(t *testing.T) {
+	keys := []string{
+		"objectives/exfil/dns", "objectives/persistence/cron", "objectives/discovery/host",
+		"micro-behaviors/net/socket", "micro-behaviors/fs/path", "micro-behaviors/os/exec",
+		"micro-behaviors/data/encode", "metadata/file/profile",
 	}
-	if below == 0 {
-		t.Error("an all-dependency molecule was squeezed into the top half")
+	crits := []string{"hostile", "hostile", "suspicious", "notable", "notable", "notable", "notable", "baseline"}
+	edges := [][2]int{{0, 3}, {1, 3}, {2, 3}, {0, 4}, {1, 4}, {2, 5}, {0, 5}, {1, 6}, {2, 6}}
+	g := maleculeTestGraph(keys, crits, edges)
+
+	for _, size := range []struct {
+		name    string
+		w, h    float64
+		wantSep float64
+	}{
+		{"detail", 196, 168, 3.5},
+		{"row", 132, 62, 2.5},
+	} {
+		pts := maleculeSpheres(maleculeSVG(g, size.w, size.h))
+		worst, wi, wj := math.Inf(1), 0, 0
+		for i := range pts {
+			for j := i + 1; j < len(pts); j++ {
+				if d := math.Hypot(pts[i].X-pts[j].X, pts[i].Y-pts[j].Y); d < worst {
+					worst, wi, wj = d, i, j
+				}
+			}
+		}
+		if worst < size.wantSep {
+			t.Errorf("%s: closest spheres %.2fpx apart (want >= %.1f), at %v and %v",
+				size.name, worst, size.wantSep, pts[wi], pts[wj])
+		}
 	}
 }
 
-// Bond lengths come from depth and from the arc a child needs, neither of
-// which knows how far the deepest limb ended up — so the finished layout is
-// scaled to the frame rather than trusted to have landed inside it.
+// The layout is settled in spring units that know nothing about the frame, so
+// the finished drawing is scaled into it rather than trusted to have landed
+// inside.
 func TestMaleculeSVGStaysInsideTheFrame(t *testing.T) {
 	keys := make([]string, 0, 24)
 	crits := make([]string, 0, 24)
@@ -340,10 +210,110 @@ func TestMaleculeSVGStaysInsideTheFrame(t *testing.T) {
 	}
 	g := maleculeTestGraph(keys, crits, edges)
 	for _, size := range []struct{ w, h float64 }{{196, 168}, {132, 62}} {
-		for _, p := range maleculeVertices(maleculeSVG(g, size.w, size.h)) {
+		for _, p := range maleculeSpheres(maleculeSVG(g, size.w, size.h)) {
 			if p.X < 0 || p.X > size.w || p.Y < 0 || p.Y > size.h {
-				t.Errorf("%.0fx%.0f: vertex (%.1f, %.1f) fell outside the frame", size.w, size.h, p.X, p.Y)
+				t.Errorf("%.0fx%.0f: sphere (%.1f, %.1f) fell outside the frame",
+					size.w, size.h, p.X, p.Y)
 			}
+		}
+	}
+}
+
+func TestMaleculeSVGBudgetsAtoms(t *testing.T) {
+	keys := make([]string, 0, 60)
+	for i := range 60 {
+		keys = append(keys, "micro-behaviors/net/socket"+strconv.Itoa(i))
+	}
+	g := maleculeTestGraph(keys, nil, nil)
+	for _, size := range []struct {
+		w, h   float64
+		budget int
+	}{
+		{196, 168, maleculeDetailBudget},
+		{132, 62, maleculeRowBudget},
+	} {
+		svg := maleculeSVG(g, size.w, size.h)
+		if n := len(maleculeSpheres(svg)); n != size.budget {
+			t.Errorf("%.0fx%.0f: drew %d spheres, want the budget of %d", size.w, size.h, n, size.budget)
+		}
+		if want := "+" + strconv.Itoa(len(keys)-size.budget); !strings.Contains(svg, want) {
+			t.Errorf("%.0fx%.0f: missing the %q counter for the atoms left out", size.w, size.h, want)
+		}
+	}
+}
+
+func TestMaleculeSVGDeterministic(t *testing.T) {
+	g := maleculeTestGraph(
+		[]string{
+			"objectives/exfil/dns", "micro-behaviors/net/socket", "micro-behaviors/net/http",
+			"micro-behaviors/fs/write", "metadata/file/profile", "well-known/malware/backdoor",
+		},
+		[]string{"hostile", "notable", "notable", "notable", "baseline", "suspicious"},
+		[][2]int{{0, 1}, {0, 2}, {5, 3}},
+	)
+	first := maleculeSVG(g, 196, 168)
+	for range 3 {
+		if got := maleculeSVG(g, 196, 168); got != first {
+			t.Fatal("the same graph drew two different molecules")
+		}
+	}
+}
+
+// A page of feed rows puts many drawings in one document, so the gradients one
+// molecule defines must not be picked up by the next.
+func TestMaleculeSVGGradientIDsDoNotCollide(t *testing.T) {
+	a := maleculeTestGraph([]string{"objectives/exfil/dns"}, []string{"hostile"}, nil)
+	b := maleculeTestGraph([]string{"objectives/persistence/cron"}, []string{"hostile"}, nil)
+	idRE := regexp.MustCompile(`<radialGradient id="(m[0-9a-f]{8})`)
+	ma := idRE.FindStringSubmatch(maleculeSVG(a, 132, 62))
+	mb := idRE.FindStringSubmatch(maleculeSVG(b, 132, 62))
+	if ma == nil || mb == nil {
+		t.Fatal("no gradient ids emitted")
+	}
+	if ma[1] == mb[1] {
+		t.Errorf("two different molecules share the gradient prefix %q", ma[1])
+	}
+}
+
+// The card names the atoms worth naming; the row has no room and names none.
+func TestMaleculeSVGLabelsOnlyOnTheCard(t *testing.T) {
+	g := maleculeTestGraph(
+		[]string{"objectives/exfil/dns", "micro-behaviors/net/socket"},
+		[]string{"hostile", "notable"},
+		[][2]int{{0, 1}},
+	)
+	if !strings.Contains(maleculeSVG(g, 196, 168), "<text") {
+		t.Error("the detail card drew no glyphs")
+	}
+	if strings.Contains(maleculeSVG(g, 132, 62), "<text") {
+		t.Error("the feed row drew a glyph it has no room for")
+	}
+}
+
+// A feed row's atoms are keyed two segments deep and a sample page's three, so
+// whether a family link earns a contact has to be about siblinghood rather
+// than absolute path depth. Judged on depth alone the row drew no contacts at
+// all and its atoms scattered.
+func TestMaleculeSVGDrawsShallowSiblings(t *testing.T) {
+	g := maleculeFromFormula("O₂(SXe)H₃(CmDbPo)", []feedTrait{
+		{Full: "objectives/supply-chain/hidden-payload::x", Crit: "hostile"},
+	})
+	if len(g.Atoms) < 4 {
+		t.Fatalf("formula built %d atoms, want a graph worth drawing", len(g.Atoms))
+	}
+	if _, dashed := maleculeBonds(maleculeSVG(g, 132, 62)); dashed == 0 {
+		t.Error("a feed row drew no family contacts; its atoms are siblings two segments deep")
+	}
+}
+
+// The feed carries no dependency graph, so the lead element's edge to its
+// group is a guess. Making it once is a skeleton; making it to every member
+// draws a dozen bonds out of one atom, which is a shape no molecule has.
+func TestMaleculeFromFormulaGivesLeadOneDependency(t *testing.T) {
+	g := maleculeFromFormula("H₅(CmCrDbPoU)", nil)
+	for i := range g.Atoms {
+		if n := len(g.Atoms[i].Uses); n > 1 {
+			t.Errorf("atom %q claims %d dependencies, want at most 1", g.Atoms[i].Key, n)
 		}
 	}
 }

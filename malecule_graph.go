@@ -213,6 +213,13 @@ func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 		// composite-depends-on-atomic relation the sample page reads off
 		// cleave's uses edges. Spending it here is what gives a feed row a
 		// skeleton instead of a flat star of unrelated dots.
+		//
+		// Only the group's first member earns that edge. The feed carries no
+		// dependency graph, so an edge from the lead to every member is a
+		// guess repeated a dozen times, and it draws as a dozen bonds out of
+		// one atom — a shape no molecule has. The rest of the group shares the
+		// lead's path, so the drawing gathers them as kin anyway, which is the
+		// weaker claim and the true one.
 		lead := -1
 		leadPath := ""
 		if group.Lead != "" {
@@ -228,7 +235,7 @@ func maleculeFromFormula(formula string, traits []feedTrait) maleculeGraph {
 				key = leadPath + "/" + key
 			}
 			at := atom(key, sym, crit(sym), counts[sym])
-			if lead < 0 || at == lead {
+			if lead < 0 || at == lead || len(graph.Atoms[lead].Uses) > 0 {
 				continue
 			}
 			if !slices.Contains(graph.Atoms[lead].Uses, at) {
