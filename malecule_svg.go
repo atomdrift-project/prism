@@ -98,6 +98,14 @@ const (
 	// purpose: depth is spent on colour here, and scale would confound the
 	// sphere size that carries the member count.
 	maleculePersp = 0.28
+	// maleculeMaxBond caps a bond as a fraction of the frame's short side.
+	// Fitting alone scales a molecule until it fills the frame, and every
+	// dimension here is derived from the bond length, so a sparse sample comes
+	// out as a handful of enormous spheres: eight atoms drew a bond 31% of the
+	// frame against a full card's 11-13%, and two atoms drew 85%. A small
+	// molecule blown up to fill the frame reads as a bigger claim than it is,
+	// so past this it is centred at size instead of inflated.
+	maleculeMaxBond = 0.20
 	// maleculeHaze is how far the furthest atoms wash toward the ground, and
 	// maleculeGround is that ground: the mist the rail card and the feed row
 	// are both drawn on. Distance washes colour toward the paper the drawing
@@ -648,6 +656,16 @@ func maleculeRelax(pos map[int]maleculePoint, order []int, minSep float64) {
 	}
 }
 
+// maleculeShrink scales the layout about the frame centre. Used to hold a
+// sparse molecule down to a plausible size once fitting has stretched it.
+func maleculeShrink(pos map[int]maleculePoint, order []int, w, h, by float64) {
+	cx, cy := w/2, h/2
+	for _, i := range order {
+		p := pos[i]
+		pos[i] = maleculePoint{cx + (p.X-cx)*by, cy + (p.Y-cy)*by}
+	}
+}
+
 // maleculeBondLen is the median drawn bond length. Every dimension of the
 // drawing is derived from it — stick width, sphere radius, glyph size — which
 // is what keeps the proportions of a molecular model at any density: they are
@@ -768,6 +786,12 @@ func maleculeSVG(graph maleculeGraph, width, height float64) string {
 	maleculeRelax(pos, rank, bond*maleculeBall*2.6)
 	maleculeFit(pos, rank, width, height, 13)
 	bond = maleculeBondLen(edges, kin, pos)
+	// Fitting grows a sparse molecule until it fills the frame; past a point
+	// that is not a bigger molecule, only a louder one.
+	if longest := math.Min(width, height) * maleculeMaxBond; bond > longest {
+		maleculeShrink(pos, rank, width, height, longest/bond)
+		bond = longest
+	}
 
 	cx, cy := width/2, height/2
 	depth := make(map[int]float64, len(rank))

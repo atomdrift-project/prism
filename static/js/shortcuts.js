@@ -1,6 +1,7 @@
 // Keyboard shortcuts for the sample detail view.
 //
 //   j / k   next / previous sample, in the order the feed was showing
+//   x       back to the feed this sample was opened from
 //   d       download the original bytes
 //   r       re-queue the sample for analysis
 //
@@ -24,13 +25,15 @@ function isTypingTarget(el) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-function neighbours() {
-  let nav = null;
+function readNav() {
   try {
-    nav = JSON.parse(sessionStorage.getItem(NAV_KEY) || "null");
+    return JSON.parse(sessionStorage.getItem(NAV_KEY) || "null");
   } catch (_) {
-    return { prev: null, next: null }; // private mode, quota, or corrupt JSON
+    return null; // private mode, quota, or corrupt JSON
   }
+}
+
+function neighbours(nav) {
   const samples = nav && Array.isArray(nav.samples) ? nav.samples : [];
   const match = location.pathname.match(/^\/file\/([0-9a-f]{8,64})/i);
   if (!match || samples.length < 2) return { prev: null, next: null };
@@ -52,7 +55,17 @@ function go(sample) {
   location.href = `/file/${sha}`;
 }
 
-const { prev, next } = neighbours();
+// The feed to go back to. Same-origin paths only: this is a string from
+// storage on its way into location.href, and "//evil.example" is a path to a
+// browser but an origin to a user.
+function returnURL(nav) {
+  const url = String(nav?.returnUrl ?? "");
+  if (!url.startsWith("/") || url.startsWith("//")) return "/";
+  return url;
+}
+
+const nav = readNav();
+const { prev, next } = neighbours(nav);
 
 document.addEventListener("keydown", (ev) => {
   if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
@@ -68,6 +81,10 @@ document.addEventListener("keydown", (ev) => {
       if (!prev) return;
       ev.preventDefault();
       go(prev);
+      return;
+    case "x":
+      ev.preventDefault();
+      location.href = returnURL(nav);
       return;
     case "d": {
       // Follow the link rather than navigating by href, so the browser sees a

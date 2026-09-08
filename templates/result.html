@@ -97,6 +97,8 @@
         .rail-title { font-family: var(--display); font-size: 13px; font-weight: 700; color: var(--ink); }
         .compound { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--mist); }
         .compound .malecule { width: 100%; height: auto; display: block; }
+        .compound-formula { display: flex; flex-direction: column; gap: 3px; }
+        .compound-formula .k { font-family: var(--display); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-light); }
         .formula { font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--ink); word-break: break-all; }
         .compound a { font-size: 12.5px; font-weight: 600; color: var(--fu-deep); }
         .prov { display: flex; flex-direction: column; gap: 8px; }
@@ -257,7 +259,7 @@
                 <div class="ids">
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
                     {{if .SourceURL}}<div class="id-line"><span class="k">URL</span><a class="v" href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer">{{.SourceURL}}</a></div>{{end}}
-                    {{if .MaleculeSVG}}<div class="id-line formula"><span class="k">Compound</span><a class="v" href="{{.CompoundURL}}">{{.Formula}}</a></div>{{end}}
+                    {{if .MaleculeSVG}}<div class="id-line formula"><span class="k">Malecule</span><a class="v" href="{{.CompoundURL}}">{{.Formula}}</a></div>{{end}}
                 </div>
                 {{if .DetectedBy}}<p class="cites">Also flagged by {{range $i, $c := .DetectedBy}}{{if $i}}, {{end}}{{if $c.URL}}<a href="{{$c.URL}}" target="_blank" rel="noopener noreferrer">{{$c.Source}}</a>{{else}}{{$c.Source}}{{end}}{{with $c.Note}} ({{.}}){{end}}{{end}}{{with .MoreSources}} {{.}}{{end}}.</p>{{end}}
             </div>
@@ -286,8 +288,11 @@
             {{if .MaleculeSVG}}
             <div class="compound">
                 {{.MaleculeSVG}}
-                <span class="formula" title="malecule formula">{{.Formula}}</span>
-                <a href="{{.CompoundURL}}">Others with this compound ›</a>
+                <div class="compound-formula">
+                    <span class="k">Malecule</span>
+                    <span class="formula">{{.Formula}}</span>
+                </div>
+                <a href="{{.CompoundURL}}">Others with this malecule ›</a>
             </div>
             {{end}}
             <div class="rail-block">
@@ -312,7 +317,7 @@
         </aside>
     </div>
     {{template "footer" .}}
-    <p class="sr-only">Keyboard shortcuts on this page: j for the next sample, k for the previous one, d to download the original bytes, r to re-queue the sample for analysis.</p>
+    <p class="sr-only">Keyboard shortcuts on this page: j for the next sample, k for the previous one, x to go back to the feed, d to download the original bytes, r to re-queue the sample for analysis.</p>
     <div id="a11y-live" class="sr-only" aria-live="polite"></div>
     <script nonce="{{.Nonce}}" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>

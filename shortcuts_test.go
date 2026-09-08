@@ -23,6 +23,7 @@ func TestResultPageLoadsShortcuts(t *testing.T) {
 		`src="/static/js/shortcuts.js?v=`,
 		"j for the next sample",
 		"k for the previous one",
+		"x to go back to the feed",
 		"d to download",
 		"r to re-queue",
 	} {
@@ -62,13 +63,18 @@ func TestStaticServesShortcuts(t *testing.T) {
 func TestNavStashContractMatches(t *testing.T) {
 	writer := readStatic(t, "static/js/nav-stash.js")
 	reader := readStatic(t, "static/js/shortcuts.js")
-	for _, want := range []string{`"prism_nav"`, "samples", "sha"} {
+	for _, want := range []string{`"prism_nav"`, "samples", "sha", "returnUrl"} {
 		if !strings.Contains(writer, want) {
 			t.Errorf("nav-stash.js no longer writes %s; shortcuts.js still expects it", want)
 		}
 		if !strings.Contains(reader, want) {
 			t.Errorf("shortcuts.js no longer reads %s", want)
 		}
+	}
+	// x navigates to a path out of storage, so it must stay same-origin:
+	// "//evil.example" is a path to a browser and an origin to a reader.
+	if !strings.Contains(reader, `startsWith("//")`) {
+		t.Error("shortcuts.js does not reject a protocol-relative returnUrl")
 	}
 	// nav-stash.js only records a sha that looks like one, and shortcuts.js
 	// re-checks the same shape before putting it in a URL.
