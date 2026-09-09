@@ -217,6 +217,14 @@ type labeledWindow struct {
 // Windows that carry no note are dropped — pure surrounding context belongs to a
 // neighboring matched window, not on its own. Returns nil without rich context.
 func labeledWindows(file *cleaveFile) []labeledWindow {
+	return labeledWindowsWithPriority(file, nil)
+}
+
+// labeledWindowsWithPriority is the Content-tab path with optional evidence
+// priorities supplied by the headline composites. Promoted atomic legs are
+// guaranteed a written annotation when they occur in this file, so the reader
+// can tell why those regions were selected instead of seeing only their color.
+func labeledWindowsWithPriority(file *cleaveFile, priority map[string]float64) []labeledWindow {
 	if !hasRichContext(file) {
 		return nil
 	}
@@ -225,7 +233,7 @@ func labeledWindows(file *cleaveFile) []labeledWindow {
 	// Written descriptions are capped to the file's strongest few traits so the
 	// context trait column stays scannable — every trait still highlights its
 	// span (that path is separate), only the top ones carry a note.
-	descByID := topDescByID(findingsByID, maxAnnotatedTraits)
+	descByID := topDescByIDPrioritized(findingsByID, maxAnnotatedTraits, priority)
 	var out []labeledWindow
 	for _, g := range groupCtxWindows(file.Ctx, file.FileType) {
 		notes := windowNotes(g, findingsByID)
@@ -287,25 +295,40 @@ func unlabeledWindows(file *cleaveFile) []labeledWindow {
 // scannable instead of repeating a description down every line.
 const maxAnnotatedTraits = 5
 
-// topDescByID returns descriptions for the strongest n findings — by severity,
-// then confidence, then id for a stable order — and drops the rest. The dropped
-// traits still highlight; they just carry no written note.
+// topDescByID returns descriptions for the strongest n findings — by
+// criticality×confidence, then id for a stable order — and drops the rest. The
+// dropped traits still highlight; they just carry no written note.
 func topDescByID(findings map[string]*finding, n int) map[string]string {
+	return topDescByIDPrioritized(findings, n, nil)
+}
+
+func topDescByIDPrioritized(findings map[string]*finding, n int, priority map[string]float64) map[string]string {
 	type ranked struct {
 		id, desc string
 		crit     int
 		conf     float64
+		priority float64
+		promoted bool
 	}
 	items := make([]ranked, 0, len(findings))
 	for id, f := range findings {
 		// No-Desc traits still count toward the top-N — rowAnnos falls back to
 		// the short trait id for their label, so they must be in the set.
-		items = append(items, ranked{id: id, desc: f.Desc, crit: f.Crit, conf: f.Conf})
+		promotedScore, promoted := priority[id]
+		items = append(items, ranked{id: id, desc: f.Desc, crit: f.Crit, conf: f.Conf, priority: promotedScore, promoted: promoted})
 	}
 	slices.SortFunc(items, func(a, b ranked) int {
+		if a.promoted != b.promoted {
+			if a.promoted {
+				return -1
+			}
+			return 1
+		}
+		if a.promoted && a.priority != b.priority {
+			return cmp.Compare(b.priority, a.priority)
+		}
 		return cmp.Or(
-			cmp.Compare(b.crit, a.crit),
-			cmp.Compare(b.conf, a.conf),
+			cmp.Compare(float64(b.crit)*b.conf, float64(a.crit)*a.conf),
 			cmp.Compare(a.id, b.id),
 		)
 	})

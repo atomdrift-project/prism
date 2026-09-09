@@ -847,15 +847,11 @@ type resultData struct {
 	// Badges are the findings the header names outright; Summary is the line
 	// under the title; ShortProv is the rail's provenance; MaleculeSVG is the
 	// compound drawing; CompoundURL finds other samples with this formula.
-	Badges []topTrait
-	// Findings lists what was found when no evidence region can be drawn,
-	// because the sample's findings carry no byte spans.
-	Findings       []findingRow
-	FindingsHidden int
-	Summary        string
-	ShortProv      []ProvenanceRow
-	MaleculeSVG    template.HTML
-	CompoundURL    string
+	Badges      []topTrait
+	Summary     string
+	ShortProv   []ProvenanceRow
+	MaleculeSVG template.HTML
+	CompoundURL string
 	// Parents lists archives that contain this file (extracted or unpacked
 	// members). Populated only on standalone child pages (non-archive views)
 	// so the user can navigate up to the archive context the file came from.
@@ -8073,7 +8069,6 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	data.FormulaQuery = desubscriptFormula(formula)
 	data.CompoundURL = "/stream?m=" + url.QueryEscape(data.FormulaQuery)
 	data.Badges = resultBadges(data.TopTraits, report.Files)
-	data.Findings, data.FindingsHidden = fallbackFindings(data.FileViews, report.Files)
 	data.ShortProv = shortProvenance(data.Provenance)
 	// The drawing is the top-level file's own behaviours: an archive's members
 	// each have their own, and stacking them would draw a graph no single file

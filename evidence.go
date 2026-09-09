@@ -6,9 +6,7 @@ package main
 // that page from data prism already carries; nothing here consults hopper.
 
 import (
-	"cmp"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -51,72 +49,6 @@ func resultBadges(top []topTrait, files []cleaveFile) []topTrait {
 		}
 	}
 	return out
-}
-
-// findingRow is one finding on the fallback list: what it is, and which member
-// file reported it.
-type findingRow struct {
-	Desc string
-	Crit string
-	File string
-}
-
-// maxFallbackFindings caps the fallback list. A busy archive can carry
-// hundreds of findings; the page states the strongest and links to the raw
-// result for the rest.
-const maxFallbackFindings = 24
-
-// fallbackFindings lists what was found when no region can be drawn — the
-// sample's findings carry no byte spans, so there are no lines to light. Every
-// notable-and-up finding appears once, strongest first, attributed to the file
-// that reported it. Returns nil when regions exist; the regions say it better.
-func fallbackFindings(views []fileView, files []cleaveFile) (rows []findingRow, hidden int) {
-	if len(views) > 0 {
-		return nil, 0
-	}
-	type scored struct {
-		row   findingRow
-		crit  int
-		score float64
-	}
-	best := make(map[string]scored)
-	for i := range files {
-		for j := range files[i].Findings {
-			f := &files[i].Findings[j]
-			if f.Crit < minNotableCrit || isOffsetZeroNoise(f) {
-				continue
-			}
-			desc := f.Desc
-			if desc == "" {
-				desc = traitDisplayID(f.ID)
-			}
-			score := float64(f.Crit) * f.Conf
-			if e, ok := best[desc]; ok && e.score >= score {
-				continue
-			}
-			best[desc] = scored{
-				row:   findingRow{Desc: desc, Crit: critIntToString(f.Crit), File: extractBasename(files[i].Path)},
-				crit:  f.Crit,
-				score: score,
-			}
-		}
-	}
-	all := make([]scored, 0, len(best))
-	for _, s := range best {
-		all = append(all, s)
-	}
-	slices.SortStableFunc(all, func(a, b scored) int {
-		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.row.Desc, b.row.Desc))
-	})
-	if len(all) > maxFallbackFindings {
-		hidden = len(all) - maxFallbackFindings
-		all = all[:maxFallbackFindings]
-	}
-	rows = make([]findingRow, len(all))
-	for i, s := range all {
-		rows[i] = s.row
-	}
-	return rows, hidden
 }
 
 // findingCounts tallies a file's findings by severity, notable and up.

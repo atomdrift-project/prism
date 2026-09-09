@@ -59,19 +59,23 @@ const maxMemberFetch = 12
 const maxEvidenceBlocks = 5
 
 // windowScore ranks a region for both the per-file cap and the page-wide one:
-// whether it backs a headline trait dominates, then whether it is one of our
-// own traits rather than an imported vendor signature, then severity. Ordering
-// by a single number keeps the two caps agreeing on what "strongest" means.
-func windowScore(lw *labeledWindow, wanted map[string]bool) int {
+// the selected composite legs dominate, ordered by criticality×confidence,
+// then first-party traits and severity. Ordering by one number keeps the two
+// caps agreeing on what "strongest" means.
+func windowScore(lw *labeledWindow, wanted map[string]bool, priority map[string]float64) int {
 	head := lw.headNote(wanted)
 	rank := 0
-	if wanted[head.ID] {
-		rank += 2
+	if score, ok := priority[head.ID]; ok {
+		// Keep the five atomic legs of the headline composites ahead of other
+		// behaviours, then preserve their confidence×criticality order.
+		rank += 10000 + int(score*1000)
+	} else if wanted[head.ID] {
+		rank += 2000
 	}
 	if !traitIsVendor(head.ID) {
-		rank++
+		rank += 100
 	}
-	return rank*8 + lw.Crit
+	return rank*8 + lw.Crit*100
 }
 
 // contentOmitted counts what the file cap dropped from the Content tab: how many
@@ -130,7 +134,7 @@ type fileData struct {
 // capEvidenceBlocks trims the whole page to maxEvidenceBlocks regions, keeping
 // the highest-scoring across every file and leaving each file's survivors in
 // file order. Returns how many it dropped, for the "results limited" note.
-func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
+func capEvidenceBlocks(datas []fileData, wanted map[string]bool, priority map[string]float64) int {
 	total := 0
 	for d := range datas {
 		total += len(datas[d].lws)
@@ -140,7 +144,7 @@ func capEvidenceBlocks(datas []fileData, wanted map[string]bool) int {
 	refs := make([]ref, 0, total)
 	for d := range datas {
 		for w := range datas[d].lws {
-			refs = append(refs, ref{d, w, windowScore(&datas[d].lws[w], wanted)})
+			refs = append(refs, ref{d, w, windowScore(&datas[d].lws[w], wanted, priority)})
 		}
 	}
 	slices.SortStableFunc(refs, func(a, b ref) int { return cmp.Compare(b.score, a.score) })
@@ -216,6 +220,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 	// so every top-trait location resolves to a real, clickable section instead of
 	// dangling past the file cap.
 	tcands := headlineTraits(files)
+	wanted, priority := headlineAtomicPriority(tcands, maxPriorityTraits)
 	for _, c := range tcands {
 		for _, id := range traitTargetIDs(c.f, c.host) {
 			if c.crit > forced[id] {
@@ -230,7 +235,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		file := &files[i]
 
 		fd := fileData{file: file}
-		for _, lw := range labeledWindows(file) {
+		for _, lw := range labeledWindowsWithPriority(file, priority) {
 			fd.lws = append(fd.lws, lw)
 			if lw.Crit > fd.maxCrit {
 				fd.maxCrit = lw.Crit
@@ -294,11 +299,10 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		}
 		datas = datas[:maxFilesShown]
 	}
-	wanted := headlineAtomics(tcands)
 	for d := range datas {
-		datas[d].lws = capWindows(datas[d].lws, wanted)
+		datas[d].lws = capWindows(datas[d].lws, wanted, priority)
 	}
-	omitted.Results += capEvidenceBlocks(datas, wanted)
+	omitted.Results += capEvidenceBlocks(datas, wanted, priority)
 	datas = slices.DeleteFunc(datas, func(fd fileData) bool { return len(fd.lws) == 0 })
 	// Recorded after both caps: a composite's member trail must only link files
 	// that still have a section to land on.
@@ -366,8 +370,13 @@ type topCand struct {
 }
 
 // maxTopTraits caps the headline. Three keeps it a glanceable summary, not a
-// second findings list.
+// second trait list.
 const maxTopTraits = 3
+
+// maxPriorityTraits is the number of atomic evidence traits promoted from the
+// headline composites. Evidence itself has the same five-region cap, so this
+// gives each promoted trait a chance to claim a region before ordinary traits.
+const maxPriorityTraits = 5
 
 // headlineTraits picks the sample's most significant traits — highest
 // crit×confidence, suspicious or above — across every file, atomic and composite
@@ -522,7 +531,7 @@ func legAtRow(s compactSource, row *contextRow) bool {
 // capWindows keeps a file's strongest maxWindowsPerFile windows but renders them
 // in file order, so the most important context survives the cap while the view
 // still reads top-to-bottom by offset.
-func capWindows(lws []labeledWindow, wanted map[string]bool) []labeledWindow {
+func capWindows(lws []labeledWindow, wanted map[string]bool, priority map[string]float64) []labeledWindow {
 	// One region per behaviour. A composite that fired on eight scattered
 	// matches used to produce eight regions carrying one identical sentence;
 	// the reader learns nothing from the second. Keep the strongest window for
@@ -537,7 +546,7 @@ func capWindows(lws []labeledWindow, wanted map[string]bool) []labeledWindow {
 			kept = append(kept, lws[i])
 			continue
 		}
-		if lws[i].Crit > kept[at].Crit {
+		if windowScore(&lws[i], wanted, priority) > windowScore(&kept[at], wanted, priority) {
 			kept[at] = lws[i]
 		}
 	}
@@ -549,7 +558,7 @@ func capWindows(lws []labeledWindow, wanted map[string]bool) []labeledWindow {
 	// Rank what survives by whether it backs a headline trait, then by
 	// severity, so the regions shown are the evidence for the verdict above.
 	slices.SortStableFunc(lws, func(a, b labeledWindow) int {
-		return cmp.Compare(windowScore(&b, wanted), windowScore(&a, wanted))
+		return cmp.Compare(windowScore(&b, wanted, priority), windowScore(&a, wanted, priority))
 	})
 	lws = lws[:maxWindowsPerFile]
 	slices.SortStableFunc(lws, func(a, b labeledWindow) int { return cmp.Compare(a.Start, b.Start) })
@@ -611,16 +620,22 @@ func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
 	return ctxNoteRef{}
 }
 
-// headlineAtomics names the matchers the headline traits rest on: a composite
-// contributes the traits it used (transitively, since a composite may be built
-// from composites), an atomic contributes itself. Uses indexes the host file's
-// own findings, so resolution never leaves that file.
-func headlineAtomics(cands []topCand) map[string]bool {
-	want := make(map[string]bool, len(cands)*4)
+// headlineAtomicPriority resolves the selected headline composites to their
+// atomic legs, scores those legs by criticality×confidence, and keeps the
+// strongest n. A composite may itself be used by another composite, so the
+// walk is transitive. The returned bool map is used for heading selection;
+// priority carries the score used for evidence ordering. A non-positive n
+// keeps every resolved leg for callers that need the complete set.
+func headlineAtomicPriority(cands []topCand, n int) (wanted map[string]bool, priority map[string]float64) {
+	wanted = make(map[string]bool, len(cands)*4)
+	scores := make(map[string]float64, len(cands)*4)
 	var walk func(f *finding, host *cleaveFile, depth int)
 	walk = func(f *finding, host *cleaveFile, depth int) {
 		if len(f.Uses) == 0 || depth > 4 {
-			want[f.ID] = true
+			score := float64(f.Crit) * f.Conf
+			if previous, ok := scores[f.ID]; !ok || score > previous {
+				scores[f.ID] = score
+			}
 			return
 		}
 		for _, j := range f.Uses {
@@ -633,7 +648,26 @@ func headlineAtomics(cands []topCand) map[string]bool {
 	for i := range cands {
 		walk(cands[i].f, cands[i].host, 0)
 	}
-	return want
+	type scored struct {
+		id    string
+		score float64
+	}
+	all := make([]scored, 0, len(scores))
+	for id, score := range scores {
+		all = append(all, scored{id: id, score: score})
+	}
+	slices.SortStableFunc(all, func(a, b scored) int {
+		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.id, b.id))
+	})
+	if n > 0 && len(all) > n {
+		all = all[:n]
+	}
+	priority = make(map[string]float64, len(all))
+	for _, item := range all {
+		wanted[item.id] = true
+		priority[item.id] = item.score
+	}
+	return wanted, priority
 }
 
 // contentLocCh returns the widest Loc string for source line numbers and for

@@ -51,11 +51,10 @@ func joinStrings(s []string) string {
 	return out
 }
 
-// TestBadgesAndFindingsWithoutSpans covers a sample whose findings carry no
-// byte spans — an LNK inside a zip, where cleave reports the verdict's reasons
-// but no line to light. The badges must still name them, and the evidence must
-// fall back to the findings themselves rather than an empty page.
-func TestBadgesAndFindingsWithoutSpans(t *testing.T) {
+// TestBadgesWithoutSpans covers a sample whose findings carry no byte spans —
+// an LNK inside a zip, where cleave reports the verdict's reasons but no line
+// to light. The header badges must still name the verdict's strongest reasons.
+func TestBadgesWithoutSpans(t *testing.T) {
 	files := []cleaveFile{
 		{ID: 0, Path: "sample.zip", FileType: "zip", Findings: []finding{
 			{ID: "objectives/execution/lnk/proxy::command-c-argument", Desc: "LNK target proxies a command", Crit: 4, Conf: 0.9},
@@ -73,19 +72,6 @@ func TestBadgesAndFindingsWithoutSpans(t *testing.T) {
 	}
 	if badges[0].Desc != "Delayed substitution hides the command" || badges[0].Crit != "suspicious" {
 		t.Errorf("strongest badge = %+v, want the highest-confidence suspicious finding", badges[0])
-	}
-	rows, hidden := fallbackFindings(nil, files)
-	if hidden != 0 || len(rows) != 4 {
-		t.Fatalf("rows = %+v (hidden %d), want the four distinct notable-and-up findings", rows, hidden)
-	}
-	if rows[0].Crit != "suspicious" || rows[len(rows)-1].Crit != "notable" {
-		t.Errorf("rows must run strongest first, got %+v", rows)
-	}
-	if rows[0].File == "" {
-		t.Error("a finding must name the member file that reported it")
-	}
-	if got, _ := fallbackFindings([]fileView{{}}, files); got != nil {
-		t.Errorf("regions exist, so the fallback list must stay empty; got %+v", got)
 	}
 }
 

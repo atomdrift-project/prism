@@ -186,11 +186,6 @@
         .hex .line { grid-template-columns: 80px minmax(0, 1fr) 140px; }
         .hex .cell { display: inline-block; width: 2ch; margin-right: 0.5ch; }
         .hex .ascii { color: var(--ink-light); white-space: pre; }
-        .finding-list { display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
-        .finding-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--rule-soft); }
-        .finding-row:last-child { border-bottom: 0; }
-        .finding-desc { font-size: 13.5px; color: var(--ink); min-width: 0; }
-        .finding-file { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-light); white-space: nowrap; }
         .note { margin: 0; font-size: 13px; color: var(--ink-mid); }
         /* Holds the space the real regions will occupy so their arrival moves
            nothing, and stays invisible for the first fifth of a second so a
@@ -268,20 +263,7 @@
                 {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{with .MembersHTML}}{{.}}{{end}}
-                {{if .Findings}}
-                {{- /* The stand-in for a file whose traits carry no byte spans.
-                       An archive replaces it with real regions once the member
-                       fetch lands, so it also carries an id the script removes. */ -}}
-                <section class="region" id="findings-fallback">
-                    <header class="region-head">
-                        <span class="region-title">Findings</span>
-                    </header>
-                    <div class="finding-list">
-                        {{range .Findings}}<div class="finding-row"><span class="crit-dot {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span><span class="finding-desc">{{.Desc}}</span>{{with .File}}<span class="finding-file" title="{{.}}">{{.}}</span>{{end}}</div>{{end}}
-                    </div>
-                    {{if .FindingsHidden}}<p class="note">{{.FindingsHidden}} more, in the <a href="/file/{{.SHA256}}.json">raw result</a>.</p>{{end}}
-                </section>
-                {{else if and (not .FileViews) (not .DeferredMembers)}}<p class="note">The scanner recorded no findings for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
+                {{if and (not .FileViews) (not .DeferredMembers)}}<p class="note">The scanner recorded no findings for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
             </div>
         </main>
         <aside class="rail">
@@ -336,12 +318,6 @@
             if (note) note.remove();
             var host = document.getElementById("evidence");
             host.insertAdjacentHTML("beforeend", m.content_html);
-            // Real evidence arrived, so the span-less findings list has been
-            // answered and should not sit above it repeating itself.
-            if (m.has_content) {
-                var fallback = document.getElementById("findings-fallback");
-                if (fallback) fallback.remove();
-            }
             var badges = document.querySelector(".badges, .head .note");
             if (badges && m.traits_html) badges.outerHTML = m.traits_html;
         }).catch(function () {});

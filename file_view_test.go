@@ -366,6 +366,56 @@ func TestHeadNotePrefersNotableOverBacking(t *testing.T) {
 	}
 }
 
+// TestHeadlineCompositeLegsPrioritizeEvidence makes the headline composites
+// carry six atomic legs, one deliberately weak. Evidence is capped at five
+// regions, so the weak leg must yield to the five strongest legs rather than
+// allowing an unrelated trait to win on severity alone.
+func TestHeadlineCompositeLegsPrioritizeEvidence(t *testing.T) {
+	findings := []finding{
+		{ID: "micro/leg-a", Desc: "leg a", Crit: 5, Conf: 0.9, Spans: [][2]int64{{10, 3}}},
+		{ID: "micro/leg-b", Desc: "leg b", Crit: 4, Conf: 0.9, Spans: [][2]int64{{20, 3}}},
+		{ID: "micro/leg-c", Desc: "leg c", Crit: 5, Conf: 0.8, Spans: [][2]int64{{30, 3}}},
+		{ID: "micro/leg-d", Desc: "leg d", Crit: 4, Conf: 0.8, Spans: [][2]int64{{40, 3}}},
+		{ID: "micro/leg-e", Desc: "leg e", Crit: 5, Conf: 0.7, Spans: [][2]int64{{50, 3}}},
+		{ID: "micro/leg-f", Desc: "leg f", Crit: 1, Conf: 0.1, Spans: [][2]int64{{60, 3}}},
+		{ID: "composite/a", Desc: "composite a", Crit: 5, Conf: 0.95, Uses: []int{0, 1}},
+		{ID: "composite/b", Desc: "composite b", Crit: 5, Conf: 0.9, Uses: []int{2, 3}},
+		{ID: "composite/c", Desc: "composite c", Crit: 4, Conf: 0.9, Uses: []int{4, 5}},
+	}
+	file := cleaveFile{
+		ID: 0, SHA256: "priority", Path: "sample.py", FileType: "python",
+		Findings: findings,
+		Ctx: []contextWindow{
+			{Offset: 1, Addr: ptrInt64(10), Data: []byte("leg-a")},
+			{Offset: 3, Addr: ptrInt64(20), Data: []byte("leg-b")},
+			{Offset: 5, Addr: ptrInt64(30), Data: []byte("leg-c")},
+			{Offset: 7, Addr: ptrInt64(40), Data: []byte("leg-d")},
+			{Offset: 9, Addr: ptrInt64(50), Data: []byte("leg-e")},
+			{Offset: 11, Addr: ptrInt64(60), Data: []byte("leg-f")},
+		},
+	}
+
+	views, top, _ := buildFileViews([]cleaveFile{file})
+	if len(top) != 3 {
+		t.Fatalf("top traits = %+v, want the three composites", top)
+	}
+	if len(views) != 1 || len(views[0].Windows) != maxEvidenceBlocks {
+		t.Fatalf("views = %+v, want one file with five evidence regions", views)
+	}
+	seen := make(map[string]bool)
+	for _, w := range views[0].Windows {
+		seen[w.Title] = true
+	}
+	for _, want := range []string{"leg a", "leg b", "leg c", "leg d", "leg e"} {
+		if !seen[want] {
+			t.Errorf("priority leg %q missing from evidence titles: %v", want, seen)
+		}
+	}
+	if seen["leg f"] {
+		t.Error("weak sixth composite leg should not displace a stronger priority leg")
+	}
+}
+
 // One trait firing across many members used to take every slot on the page:
 // capWindows dedupes within a file, but the evidence list is assembled across
 // files, so five members each contributed the same sentence and there was no

@@ -127,6 +127,19 @@ func TestResultDownloadTracksHopperAvailability(t *testing.T) {
 	}
 }
 
+func TestResultTemplateOmitsFindingsFallback(t *testing.T) {
+	tmpl := resultTemplateForTest(t)
+	d := singleFileData()
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, d); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "findings-fallback") || strings.Contains(out, ">Findings<") {
+		t.Fatalf("legacy Findings section still rendered: %q", out)
+	}
+}
+
 // parentsAndReferrersData is a standalone child page with one containing
 // archive and one merely-referencing sample, exercising both backlink panels.
 func parentsAndReferrersData() resultData {
