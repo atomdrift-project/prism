@@ -8268,6 +8268,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	case "benign":
 		data.Verdict = "BENIGN"
 		data.RiskLevel = "benign"
+		data.RiskLabel = "Benign"
 	default:
 		data.Verdict = "UNKNOWN"
 		data.RiskLevel = "unknown"

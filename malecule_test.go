@@ -123,6 +123,31 @@ func TestPrepareResultDataSeparatesFirstSeenAndAnalyzed(t *testing.T) {
 	}
 }
 
+func TestPrepareResultDataVerdictDisplayClasses(t *testing.T) {
+	raw := `{"ml":{"thresholds":[0.65,0.887],"fs":[{"id":0,"prob":0.1,"class":0}]},"raw":{"fs":[{"id":0,"sha":"` +
+		strings.Repeat("a", 64) + `","type":"pe","dp":0,"f":"K","sz":12}]}}`
+	for _, tc := range []struct {
+		classification string
+		verdict        string
+		riskLevel      string
+		riskLabel      string
+	}{
+		{"BENIGN", "BENIGN", "benign", "Benign"},
+		{"SUSPICIOUS", "SUSPICIOUS", "suspicious", "Suspicious"},
+		{"HOSTILE", "HOSTILE", "hostile", "Hostile"},
+	} {
+		t.Run(tc.classification, func(t *testing.T) {
+			data := prepareResultData("sample.exe", strings.Repeat("a", 64), &storedResult{
+				RawLitmus:      raw,
+				Classification: tc.classification,
+			})
+			if data.Verdict != tc.verdict || data.RiskLevel != tc.riskLevel || data.RiskLabel != tc.riskLabel {
+				t.Fatalf("display = %q/%q/%q, want %q/%q/%q", data.Verdict, data.RiskLevel, data.RiskLabel, tc.verdict, tc.riskLevel, tc.riskLabel)
+			}
+		})
+	}
+}
+
 // TestRenderHTMLPage renders a complete HTML page from a zipfile for visual inspection.
 // The output is written to testdata/rendered.html which can be opened in a browser.
 // Note: this test drives cleave directly to generate the nested cleave JSONL; verdict will

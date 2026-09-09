@@ -340,6 +340,7 @@
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
         .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--fu-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status:empty { display: none; }
         .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 700; }
         .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
         .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--fu-deep); animation: fallout-upload-dot 0.86s infinite ease-in-out; }
