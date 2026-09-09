@@ -703,17 +703,18 @@ type cachedMembers struct {
 //
 //nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
-	Pending        bool
-	PendingUpload  bool
-	PendingStarted int64
-	SHA256JSON     template.JS
-	SHA256Short    string
-	Filename       string
-	SHA256         string
-	Verdict        string
-	Formula        template.HTML
-	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
-	CSRFToken      string // signed CSRF token for operator actions (refresh)
+	Pending         bool
+	PendingUpload   bool
+	PendingStarted  int64
+	SHA256JSON      template.JS
+	SHA256Short     string
+	Filename        string
+	SHA256          string
+	Verdict         string
+	Formula         template.HTML
+	FormulaQuery    string // raw formula with subscript digits desubscripted, for ?m=… links
+	CSRFToken       string // signed CSRF token for operator actions (refresh)
+	UploadCSRFToken string // signed CSRF token for the upload form
 	// DownloadToken is a separate CSRF token bound to the "download" action.
 	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
 	// gated to button-driven flows: the token only validates for the browser
@@ -851,7 +852,9 @@ type resultData struct {
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
 	Provenance []ProvenanceGroup
-	// Badges are the findings the header names outright; Summary is the line
+	// UploadEnabled controls the inline upload affordance on a result page.
+	UploadEnabled bool
+	// Badges are the traits the header names outright; Summary is the line
 	// under the title; ShortProv is the rail's provenance; MaleculeSVG is the
 	// compound drawing; CompoundURL finds other samples with this formula.
 	Badges      []topTrait
@@ -5216,6 +5219,8 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "refresh")
+	data.UploadCSRFToken = csrfToken(r, "upload")
+	data.UploadEnabled = uploadEnabled && uploadBackendsAvailable()
 	data.DownloadToken = csrfToken(r, "download")
 	data.DownloadEnabled = hopperAPIAvailable()
 	// A compacted-archive envelope carries member stubs but no member bodies;
@@ -6665,18 +6670,20 @@ func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string,
 		shaJSON = []byte(`""`)
 	}
 	data := resultData{
-		Pending:        true,
-		PendingUpload:  pendingUpload,
-		PendingStarted: startedAt.UnixMilli(),
-		SHA256JSON:     template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
-		Filename:       filename,
-		Headline:       filename,
-		SHA256:         sha,
-		SHA256Short:    sha[:12] + "...",
-		Nonce:          nonceFor(r),
-		StyleNonce:     styleNonceFor(r),
-		BuildCommit:    buildCommit,
-		SourceLabel:    "browser upload",
+		Pending:         true,
+		PendingUpload:   pendingUpload,
+		PendingStarted:  startedAt.UnixMilli(),
+		SHA256JSON:      template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
+		Filename:        filename,
+		Headline:        filename,
+		SHA256:          sha,
+		SHA256Short:     sha[:12] + "...",
+		Nonce:           nonceFor(r),
+		StyleNonce:      styleNonceFor(r),
+		BuildCommit:     buildCommit,
+		UploadCSRFToken: csrfToken(r, "upload"),
+		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
+		SourceLabel:     "browser upload",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Pending pages must never be cached: a CDN that pins this could
@@ -7616,18 +7623,12 @@ type beamlineAssessment struct {
 	Status      string          `json:"status"`
 	SHA         string          `json:"sha"`
 	SHA256      string          `json:"sha256"`
-	Severity    string          `json:"severity"`
-	FiresAt     *int            `json:"fires_at"`
-	Engine      string          `json:"engine_version"`
-	AnalyzedAt  string          `json:"analyzed_at"`
-	Why         string          `json:"why"`
-	Findings    json.RawMessage `json:"findings"`
 	ML          json.RawMessage `json:"ml"`
 	LLM         json.RawMessage `json:"llm"`
-	Raw         json.RawMessage `json:"raw"`
 	Server      string          `json:"-"`
 	Source      string          `json:"-"`
 	RequestHost string          `json:"-"`
+	Raw         json.RawMessage `json:"raw"`
 }
 
 func beamlineAnalyzeURL() string {
@@ -7697,7 +7698,7 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 		if err := json.Unmarshal(line, &frame); err != nil {
 			return nil, fmt.Errorf("decode beamline response: %w", err)
 		}
-		if frame.Status != "" || beamlineFullEnvelope(frame) {
+		if frame.Status != "" || beamlineFullEnvelope(&frame) {
 			assessment = frame
 			break
 		}
@@ -7708,7 +7709,7 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 	if assessment.Status != "" && assessment.Status != "analyzed" {
 		return nil, fmt.Errorf("beamline returned status %q", assessment.Status)
 	}
-	if assessment.Status == "" && !beamlineFullEnvelope(assessment) {
+	if assessment.Status == "" && !beamlineFullEnvelope(&assessment) {
 		return nil, errors.New("beamline stream ended without a full result")
 	}
 	if assessment.Status == "" {
@@ -7724,8 +7725,8 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 	return &assessment, nil
 }
 
-func beamlineFullEnvelope(frame beamlineAssessment) bool {
-	return len(frame.ML) > 0 && len(frame.Raw) > 0
+func beamlineFullEnvelope(frame *beamlineAssessment) bool {
+	return frame != nil && len(frame.ML) > 0 && len(frame.Raw) > 0
 }
 
 func beamlineResponseIdentity(resp *http.Response) (server, source, requestHost string) {
@@ -8251,8 +8252,11 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 
 	data.FindingCount = strconv.Itoa(totalFindings)
 
-	// Set verdict and risk level from litmus classification.
-	switch res.Classification {
+	// Set verdict and risk level from litmus classification. Upload responses
+	// can arrive through a different JSON path, so normalize the spelling at
+	// this display boundary before selecting CSS classes.
+	classification := strings.ToLower(strings.TrimSpace(res.Classification))
+	switch classification {
 	case "hostile":
 		data.Verdict = "HOSTILE"
 		data.RiskLevel = "hostile"
@@ -8263,7 +8267,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.RiskLabel = "Suspicious"
 	case "benign":
 		data.Verdict = "BENIGN"
-		// RiskLevel intentionally empty for benign
+		data.RiskLevel = "benign"
 	default:
 		data.Verdict = "UNKNOWN"
 		data.RiskLevel = "unknown"
@@ -8288,7 +8292,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// renders for a non-benign level (Level set and != -1), so build the tip for
 	// that case. When the LLM interpretation moved the verdict off the raw ML
 	// class, the tip names the disagreement; otherwise it states the level.
-	data.VerdictTip = verdictTip(data.Level, data.LevelConfidence, res.Classification, mlResp.RawClass, llm)
+	data.VerdictTip = verdictTip(data.Level, data.LevelConfidence, classification, mlResp.RawClass, llm)
 
 	// Flag when we have limited analysis info (unknown file type AND no findings)
 	if (data.FileType == "UNKNOWN" || data.FileType == "") && totalFindings == 0 {
@@ -8414,23 +8418,10 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 			break
 		}
 	}
+	// Keep the hero quiet when there is no written interpretation. The trait
+	// chips below are the concise explanation; a generated count sentence here
+	// duplicated them and could disagree with the notable-trait threshold.
 	data.Summary = data.LLMInterpretation
-	if data.Summary == "" {
-		counted := report.Files[0].Findings
-		for i := range report.Files {
-			if report.Files[i].Depth == 0 {
-				counted = report.Files[i].Findings
-				break
-			}
-		}
-		members := 0
-		for i := range report.Files {
-			if report.Files[i].Depth > 0 {
-				members++
-			}
-		}
-		data.Summary = summaryLine(countFindings(counted), members, data.RiskLabel, data.LevelConfidence)
-	}
 
 	// The 3D molecule and the galaxy were retired in favour of the server-drawn
 	// malecule above; nothing renders them any more. Building them cost a full

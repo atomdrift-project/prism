@@ -54,7 +54,7 @@ func TestResultTemplateParses(t *testing.T) {
 			name: "single_file", data: singleFileData(),
 			dontWant: []string{`class="badge `},
 			want: []string{
-				"Provenance", "registry.npmjs.org", "recorded no findings",
+				"Provenance", "registry.npmjs.org", "No evidence locations",
 				`class="verdict "`, `<h1>x.exe</h1>`,
 			},
 		},
@@ -62,7 +62,7 @@ func TestResultTemplateParses(t *testing.T) {
 		// confidence, the summary line renders, the download link is gated on size.
 		{
 			name: "archive_with_children", data: archiveData(),
-			want: []string{`class="verdict hostile"`, "87%", "recorded no findings"},
+			want: []string{`class="verdict hostile"`, "87%", "No evidence locations"},
 		},
 		// Per-line context: a region titled by its strongest finding, the matched
 		// line lit whole with its descriptions in the title, and the badge.
@@ -135,7 +135,7 @@ func TestResultTemplateOmitsFindingsFallback(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	if strings.Contains(out, "findings-fallback") || strings.Contains(out, ">Findings<") {
+	if strings.Contains(out, "findings-fallback") || strings.Contains(out, ">Findings<") || strings.Contains(out, "No notable findings") {
 		t.Fatalf("legacy Findings section still rendered: %q", out)
 	}
 }
@@ -299,6 +299,7 @@ func archiveData() resultData {
 		IsArchive:       true,
 		Level:           new(72), // real FPR level: badge must render confidence
 		LevelConfidence: 87,
+		Badges:          []topTrait{{Desc: "spawns child", Crit: "hostile"}, {Desc: "collects credentials", Crit: "hostile"}},
 		ArchiveCategories: []CategoryGroup{{
 			Name: "Objectives",
 			Findings: []FindingDisplay{{

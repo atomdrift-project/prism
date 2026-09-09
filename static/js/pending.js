@@ -48,17 +48,27 @@
 
   function frameSignal(frame) {
     const ml = frame.ml && typeof frame.ml === "object" ? frame.ml : {};
+    const level = first(frame.level, ml.level, ml.lvl);
+    let severity = first(
+      frame.severity,
+      frame.classification,
+      frame.verdict,
+      frame.risk_level,
+      ml.severity,
+      ml.classification,
+      ml.verdict
+    );
+    // v6/v7 uses lvl:-1 as its explicit benign sentinel and a non-negative
+    // level for a hostile reading. Give the live card the same verdict label
+    // the completed result will show, even when the stream omits severity.
+    if (!severity && level) {
+      const numericLevel = Number(level);
+      if (numericLevel === -1) severity = "benign";
+      else if (Number.isFinite(numericLevel) && numericLevel >= 0) severity = "hostile";
+    }
     return {
-      level: first(frame.level, ml.level, ml.lvl),
-      severity: first(
-        frame.severity,
-        frame.classification,
-        frame.verdict,
-        frame.risk_level,
-        ml.severity,
-        ml.classification,
-        ml.verdict
-      ),
+      level,
+      severity,
     };
   }
 
@@ -70,7 +80,13 @@
 
   function frameTraits(frame) {
     const ml = frame.ml && typeof frame.ml === "object" ? frame.ml : {};
-    const source = frame.top_traits || frame.traits || frame.findings || ml.top_traits || ml.traits || ml.findings;
+    const source =
+      frame.top_traits ||
+      frame.traits ||
+      frame.findings ||
+      ml.top_traits ||
+      ml.traits ||
+      ml.findings;
     if (!Array.isArray(source)) return [];
     return source.map(traitText).filter(Boolean).slice(0, 3);
   }
@@ -110,9 +126,16 @@
   }
 
   function renderFrame(frame, raw) {
-    const phase = first(frame.phase, frame.phase_state, frame.state, frame.stage, frame.status) || "starting";
+    const phase =
+      first(frame.phase, frame.phase_state, frame.state, frame.stage, frame.status) || "starting";
     const phaseKey = phase.toLowerCase();
-    const message = first(frame.message, frame.msg, frame.detail, frame.description, frame.phase_message);
+    const message = first(
+      frame.message,
+      frame.msg,
+      frame.detail,
+      frame.description,
+      frame.phase_message
+    );
     const terminal = phaseKey === "analyzed" || frame.status === "analyzed";
 
     if (terminal) {
@@ -136,8 +159,12 @@
     if (level || severity || traits.length) {
       signal.classList.add("visible");
       if (level || severity) {
-        levelLabel.textContent = [severity, level ? `level ${level}` : ""].filter(Boolean).join(" · ");
-        levelLabel.className = `pending-level ${normalSeverity(severity)}`;
+        const severityClass = normalSeverity(severity);
+        const severityLabel = severityClass ? severityClass.toUpperCase() : severity;
+        levelLabel.textContent = [severityLabel, level ? `level ${level}` : ""]
+          .filter(Boolean)
+          .join(" · ");
+        levelLabel.className = `pending-level ${severityClass}`;
       }
       if (traits.length) traitsLabel.textContent = `Fresh signals · ${traits.join(" · ")}`;
     }
@@ -207,7 +234,8 @@
 
   elapsedTimer = setInterval(() => {
     const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
-    elapsed.textContent = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    elapsed.textContent =
+      seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   }, 1000);
 
   const endpoint = `/file/${encodeURIComponent(sha)}/${hasUploadProgress ? "events" : "wait"}`;

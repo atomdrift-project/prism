@@ -339,7 +339,14 @@
         .empty a { color: var(--fu-deep); font-weight: 600; }
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-        .top-upload-status { position: absolute; right: 0; top: calc(100% + 7px); color: var(--ink-light); font-size: 12px; white-space: nowrap; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--fu-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 700; }
+        .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--fu-deep); animation: fallout-upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
+        .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
+        .analyzing-file { color: var(--ink-light); font-weight: 700; }
+        @keyframes fallout-upload-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.55; } 40% { transform: translateY(-4px); opacity: 1; } }
         .feed-degraded {
             margin-top: 12px;
             padding: 10px 14px;
@@ -354,6 +361,7 @@
             body { font-size: 15px; }
             .shell { grid-template-columns: 1fr; gap: 14px; padding: 16px 18px 28px; }
             .rail { position: static; gap: 10px; }
+            .top-upload-status { max-width: 80vw; white-space: normal; }
             /* The count becomes a strip; days and filters become pill rows a
                thumb can reach, bleeding to the edges so they read as swipeable. */
             .count-card { flex-direction: row; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none; box-shadow: none; border-radius: 0; }

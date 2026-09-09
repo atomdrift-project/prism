@@ -6,15 +6,14 @@ package main
 // that page from data prism already carries; nothing here consults hopper.
 
 import (
-	"fmt"
 	"strings"
 )
 
 // minNotableCrit is the floor for a finding worth naming on the page.
 const minNotableCrit = 3
 
-// maxBadges is how many findings the header names outright.
-const maxBadges = 3
+// maxBadges is how many traits the header names outright.
+const maxBadges = 2
 
 // resultBadges picks the strongest few findings for the header, in the order
 // buildFileViews ranked them. A sample whose
@@ -40,65 +39,12 @@ func resultBadges(top []topTrait, files []cleaveFile) []topTrait {
 			return out
 		}
 	}
-	if len(out) > 0 {
-		return out
-	}
-	for _, c := range headlineTraits(files) {
+	for _, c := range headlineTraitsAtLeast(files, minNotableCrit, maxBadges) {
 		if add(c.desc, critIntToString(c.crit)) {
-			break
+			return out
 		}
 	}
 	return out
-}
-
-// findingCounts tallies a file's findings by severity, notable and up.
-type findingCounts struct {
-	Hostile, Suspicious, Notable int
-}
-
-func countFindings(findings []finding) findingCounts {
-	var c findingCounts
-	for fi := range findings {
-		f := &findings[fi]
-		switch f.Crit {
-		case 5:
-			c.Hostile++
-		case 4:
-			c.Suspicious++
-		case 3:
-			c.Notable++
-		default:
-		}
-	}
-	return c
-}
-
-// summaryLine is the sentence under the title when no written interpretation
-// exists: what was found, and how sure the model is.
-func summaryLine(c findingCounts, files int, verdict string, confidence int) string {
-	total := c.Hostile + c.Suspicious + c.Notable
-	if total == 0 {
-		return "No notable findings."
-	}
-	var parts []string
-	if c.Hostile > 0 {
-		parts = append(parts, plural(c.Hostile, "hostile", "hostile"))
-	}
-	if c.Suspicious > 0 {
-		parts = append(parts, plural(c.Suspicious, "suspicious", "suspicious"))
-	}
-	if c.Notable > 0 {
-		parts = append(parts, plural(c.Notable, "notable", "notable"))
-	}
-	where := ""
-	if files > 1 {
-		where = fmt.Sprintf(" across %d files", files)
-	}
-	s := fmt.Sprintf("%s%s: %s.", plural(total, "finding", "findings"), where, strings.Join(parts, ", "))
-	if confidence > 0 && verdict != "" {
-		s += fmt.Sprintf(" Model verdict %d%% %s.", confidence, strings.ToLower(verdict))
-	}
-	return s
 }
 
 // shortProvenance keeps the rail to facts the header does not already show:

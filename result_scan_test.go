@@ -34,8 +34,8 @@ func TestResultPageFromRealScan(t *testing.T) {
 	}
 	data := prepareResultData(res.Filename, sha, &res)
 
-	if len(data.Badges) != 3 {
-		t.Fatalf("badges = %+v, want the three hostile findings", data.Badges)
+	if len(data.Badges) != 2 {
+		t.Fatalf("badges = %+v, want the top two hostile findings", data.Badges)
 	}
 	for _, b := range data.Badges {
 		if b.Crit != "hostile" || b.Desc == "" || strings.Contains(b.Desc, "/") {
@@ -52,8 +52,8 @@ func TestResultPageFromRealScan(t *testing.T) {
 			t.Errorf("malecule missing %q", want)
 		}
 	}
-	if data.Summary == "" || strings.Contains(data.Summary, "/") {
-		t.Errorf("summary = %q, want a sentence", data.Summary)
+	if data.Summary != "" {
+		t.Errorf("summary = %q, want no generated count sentence", data.Summary)
 	}
 	var titled int
 	for _, fv := range data.FileViews {

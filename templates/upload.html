@@ -99,16 +99,26 @@
         }
         .top-upload-status {
             position: absolute;
+            z-index: 2;
             right: 0;
-            top: calc(100% + 7px);
+            top: calc(100% + 12px);
+            max-width: min(360px, 70vw);
+            padding: 5px 10px;
+            border: 1px solid var(--fu-border);
+            border-radius: 999px;
+            background: var(--paper);
+            box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12);
             color: var(--muted);
             font-size: 12px;
+            line-height: 1.35;
             white-space: nowrap;
         }
         .top-upload-status.is-analyzing {
+            display: inline-flex;
+            align-items: center;
             color: var(--carbon);
-            font-size: 17px;
-            font-weight: 800;
+            font-size: 14px;
+            font-weight: 700;
             letter-spacing: 0;
         }
         .analyzing-dots {

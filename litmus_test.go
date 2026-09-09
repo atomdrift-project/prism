@@ -84,7 +84,9 @@ func TestAnalyzeWithBeamlineAcceptsFullEnvelopeTerminal(t *testing.T) {
 	beamlineClient = &http.Client{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "{\"state\":\"analyzing\",\"phase\":\"unpack\"}\n{\"status\":\"analyzed\",\"ml\":{\"lvl\":-1},\"raw\":{\"files\":[]}}\n")
+		if _, err := io.WriteString(w, "{\"state\":\"analyzing\",\"phase\":\"unpack\"}\n{\"status\":\"analyzed\",\"ml\":{\"lvl\":-1},\"raw\":{\"files\":[]}}\n"); err != nil {
+			return
+		}
 	}))
 	defer srv.Close()
 	beamlineAPIAddr = srv.URL

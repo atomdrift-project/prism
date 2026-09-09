@@ -383,6 +383,14 @@ const maxPriorityTraits = 5
 // alike, deduped by trait ID and capped at maxTopTraits. Offset-0 noise is
 // excluded, matching the content view. Links are resolved later (traitSources).
 func headlineTraits(files []cleaveFile) []topCand {
+	return headlineTraitsAtLeast(files, minSuspiciousCrit, maxTopTraits)
+}
+
+// headlineTraitsAtLeast is the shared ranking path for the content headline
+// and the compact header trait chips. The content view stays at suspicious+
+// while the header can also name notable traits when that is all the scan
+// found.
+func headlineTraitsAtLeast(files []cleaveFile, minCrit, limit int) []topCand {
 	type scored struct {
 		topCand
 
@@ -392,7 +400,7 @@ func headlineTraits(files []cleaveFile) []topCand {
 	for i := range files {
 		for j := range files[i].Findings {
 			f := &files[i].Findings[j]
-			if f.Crit < minSuspiciousCrit || isOffsetZeroNoise(f) {
+			if f.Crit < minCrit || isOffsetZeroNoise(f) {
 				continue
 			}
 			score := float64(f.Crit) * f.Conf
@@ -413,8 +421,8 @@ func headlineTraits(files []cleaveFile) []topCand {
 	slices.SortStableFunc(all, func(a, b scored) int {
 		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.desc, b.desc))
 	})
-	if len(all) > maxTopTraits {
-		all = all[:maxTopTraits]
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
 	}
 	out := make([]topCand, len(all))
 	for i, s := range all {

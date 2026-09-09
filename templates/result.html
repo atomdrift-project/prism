@@ -34,7 +34,19 @@
 {{end}}
 {{- /* The header's findings, addressable by name for the members endpoint. */ -}}
 {{define "findingsbody"}}
-{{if .Badges}}<div class="badges" aria-label="Strongest findings">{{range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end}}</div>{{else}}<p class="note">No notable findings.</p>{{end}}
+<div class="badges-slot">{{if .Badges}}<div class="badges" aria-label="Top two traits">{{range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end}}</div>{{end}}</div>
+{{end}}
+{{define "upload-control"}}
+{{if .UploadEnabled}}
+<form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form" class="top-upload">
+    <input type="hidden" name="csrf_token" value="{{.UploadCSRFToken}}" />
+    <input type="file" name="file" id="file-input" required />
+    <label class="upload-btn" for="file-input">Upload</label>
+    <div id="upload-status" class="top-upload-status" aria-live="polite"></div>
+</form>
+{{else}}
+<span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+{{end}}
 {{end}}
 <!doctype html>
 <html lang="en">
@@ -90,7 +102,18 @@
         a { color: inherit; text-decoration: none; }
         :focus-visible { outline: 3px solid var(--fu); outline-offset: 3px; border-radius: 4px; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-{{template "chromestyle" .}}
+        {{template "chromestyle" .}}
+        .top-upload { margin: 0; position: relative; }
+        .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--fu-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 700; }
+        .top-upload-status a { color: var(--fu-deep); font-weight: 600; }
+        .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--fu-deep); animation: result-upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
+        .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
+        .analyzing-file { color: var(--ink-light); font-weight: 700; }
+        @keyframes result-upload-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.55; } 40% { transform: translateY(-4px); opacity: 1; } }
         .shell { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 48px; padding: 32px 64px 40px; max-width: 1440px; margin: 0 auto; }
         .rail { position: sticky; top: 24px; align-self: start; display: flex; flex-direction: column; gap: 14px; }
         .rail-block { border-top: 1px solid var(--rule); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -232,10 +255,10 @@
         .pending-current.waiting strong { color: #9a6700; }
         .pending-signal { display: none; align-items: baseline; gap: 10px; margin: 0; }
         .pending-signal.visible { display: flex; }
-        .pending-level { font-family: var(--display); font-size: 15px; font-weight: 700; text-transform: uppercase; }
-        .pending-level.hostile { color: var(--hostile); }
-        .pending-level.suspicious { color: var(--suspicious); }
-        .pending-level.benign { color: #16a34a; }
+        .pending-level { display: inline-flex; align-items: center; width: fit-content; padding: 3px 9px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); font-family: var(--display); font-size: 13px; font-weight: 700; text-transform: uppercase; }
+        .pending-level.hostile { color: var(--hostile); border-color: #f6bfca; background: var(--hostile-bg); }
+        .pending-level.suspicious { color: var(--suspicious); border-color: #f0cfaa; background: var(--suspicious-bg); }
+        .pending-level.benign { color: #167534; border-color: #b9e8c2; background: #effbf1; }
         .pending-traits { color: var(--ink-mid); font-size: 13px; }
         .pending-events-wrap { border-top: 1px solid var(--rule); padding-top: 12px; }
         .pending-events-wrap summary { cursor: pointer; color: var(--fu-deep); font-size: 12px; font-weight: 600; }
@@ -256,6 +279,7 @@
             body { font-size: 15px; }
             .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
             .rail { position: static; }
+            .top-upload-status { max-width: 80vw; white-space: normal; }
             /* No drawing and no controls on a phone: the formula reads as text
                under the URL, and download/refresh are desk work. */
             .compound, .actions { display: none; }
@@ -284,7 +308,7 @@
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
-        <div class="site-nav"><a href="/stream">Back to stream</a></div>
+        <div class="site-nav"><a href="/stream">Back to stream</a>{{template "upload-control" .}}</div>
     </nav>
     <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
         <main id="main">
@@ -324,6 +348,7 @@
     </div>
     {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/js/pending.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
     {{else}}
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
@@ -332,7 +357,7 @@
             <a href="/">Fallout</a>
             <a href="/stream">Stream</a>
             <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
-            <a class="upload-btn" href="/stream#upload">Upload</a>
+            {{template "upload-control" .}}
         </div>
     </nav>
     <div class="shell">
@@ -363,7 +388,7 @@
                 {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{with .MembersHTML}}{{.}}{{end}}
-                {{if and (not .FileViews) (not .DeferredMembers)}}<p class="note">The scanner recorded no findings for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
+                {{if and (not .FileViews) (not .DeferredMembers)}}<p class="note">No evidence locations were recorded for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
             </div>
         </main>
         <aside class="rail">
@@ -403,6 +428,7 @@
     <div id="a11y-live" class="sr-only" aria-live="polite"></div>
     <script nonce="{{.Nonce}}" src="/static/js/refresh.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
     {{if .DeferredMembers}}
     <script nonce="{{.Nonce}}">
     // A compacted archive stores its members separately; fetch them once and
@@ -418,7 +444,7 @@
             if (note) note.remove();
             var host = document.getElementById("evidence");
             host.insertAdjacentHTML("beforeend", m.content_html);
-            var badges = document.querySelector(".badges, .head .note");
+            var badges = document.querySelector(".badges-slot, .badges, .head .note");
             if (badges && m.traits_html) badges.outerHTML = m.traits_html;
         }).catch(function () {});
     })();
