@@ -4952,7 +4952,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		SelectedFormula: formulaFromQuery(r.URL.Query()),
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
-		Title:           "Stream",
+		Title:           "Index",
 		HasHopper:       hopperDB.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
@@ -4970,7 +4970,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		}
 	}
 	if ecosystem != "" {
-		data.Title = ecosystem + " · Stream"
+		data.Title = ecosystem + " · Index"
 	}
 	// A package path (/npm/lodash) titles its tab by the coordinate; the
 	// ?purl= query form stays a plain search, matching the box it came from.

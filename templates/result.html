@@ -309,7 +309,7 @@
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
-        <div class="site-nav"><a href="/stream">Back to stream</a>{{template "upload-control" .}}</div>
+        <div class="site-nav"><a href="/stream">Back to index</a>{{template "upload-control" .}}</div>
     </nav>
     <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
         <main id="main">
@@ -356,7 +356,7 @@
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/">Fallout</a>
-            <a href="/stream">Stream</a>
+            <a href="/stream">Index</a>
             <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
             {{template "upload-control" .}}
         </div>

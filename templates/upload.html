@@ -14,7 +14,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <title>{{if isPublic}}isotope13 labs{{else}}litmus{{end}} - Stream</title>
+    <title>{{if isPublic}}isotope13 labs{{else}}litmus{{end}} - Index</title>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{.Title}} — {{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
@@ -704,7 +704,7 @@
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
-            <a href="/stream" class="active">Stream</a>
+            <a href="/stream" class="active">Index</a>
             <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
             {{if .UploadEnabled}}
             <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
@@ -722,7 +722,7 @@
         <section class="intro">
             <div class="masthead">
                 <div class="headline mh-lock">
-                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Stream</h1>
+                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Index</h1>
                     <p class="lede">Query analyzed artifacts from registries, marketplaces, and lab uploads{{if .WeeklyHostile}} — or <a href="/fallout">see the latest {{.WeeklyHostile}} hostile catches in the fallout →</a>{{else}}.{{end}}</p>
                 </div>
                 {{if .HasHopper}}

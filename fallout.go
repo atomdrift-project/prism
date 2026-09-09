@@ -369,36 +369,29 @@ type falloutSector struct {
 }
 
 type falloutPageData struct {
-	Nonce       string
-	StyleNonce  string
-	BuildCommit string
-	SelectedEco string
-	Verified    string
-	CSRFToken   string
-	WindowLabel string
-	// WindowLabel mirrors falloutView; MeterSegs are the peak-meter segments
-	// (lit = the newest day in view, against the window's busiest day).
-	// AllSectorsURL clears the sector filter without leaving the week;
-	// OlderURL/NewerURL step the week nav, empty where there is nowhere to
-	// go. CurrentWeek is false whenever the reader is looking at the archive,
-	// which is what the "back to this week" affordance keys off.
-	AllSectorsURL string
-	OlderURL      string
-	NewerURL      string
-	CurrentURL    string
-	Sectors       []falloutSector
-	Days          []falloutDay
-	// Spark is the week's daily counts as bar heights, oldest first, for the
-	// count card's sparkline. Days runs newest-first for the rail, so this is
-	// its own slice rather than a template trick.
-	Spark         []falloutSpark
-	MeterSegs     []bool
-	WeeklyCount   int
-	HasHopper     bool
-	UploadEnabled bool
-	CurrentWeek   bool
-	FeedDegraded  bool
-	Filtered      bool
+	Stats          *indexStats
+	CurrentURL     string
+	Nonce          string
+	SelectedEco    string
+	Verified       string
+	CSRFToken      string
+	WindowLabel    string
+	AllSectorsURL  string
+	OlderURL       string
+	NewerURL       string
+	StyleNonce     string
+	BuildCommit    string
+	Days           []falloutDay
+	Sectors        []falloutSector
+	MeterSegs      []bool
+	Spark          []falloutSpark
+	WeeklyCount    int
+	EcosystemCount int
+	HasHopper      bool
+	UploadEnabled  bool
+	CurrentWeek    bool
+	FeedDegraded   bool
+	Filtered       bool
 }
 
 const falloutMeterSegs = 6
@@ -449,6 +442,15 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		WindowLabel:   week.label(),
 		AllSectorsURL: falloutURL(week.param(), "", verifiedRaw),
 		CurrentURL:    falloutURL("", eco, verifiedRaw),
+	}
+	if s, ok := cachedIndexStats(); ok {
+		live := projectIndexStats(s, time.Now().UTC())
+		data.Stats = &live
+	}
+	if data.HasHopper {
+		if dropdowns, err := feedDropdownOptions(r.Context()); err == nil {
+			data.EcosystemCount = len(dropdowns.Ecosystems)
+		}
 	}
 	if week.Prev != "" {
 		data.OlderURL = falloutURL(week.Prev, eco, verifiedRaw)

@@ -407,7 +407,7 @@
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/" class="active">Fallout</a>
-            <a href="/stream">Stream</a>
+            <a href="/stream">Index</a>
             <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
             {{if .UploadEnabled}}
             <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form" class="top-upload">
@@ -453,7 +453,7 @@
         </aside>
         <main>
             <h1>Fallout{{with .SelectedEco}} in <span class="eco">{{.}}</span>{{end}}, <em>{{.WindowLabel}}</em></h1>
-            <p class="lede">What the lab caught across open-source registries and marketplaces. Campaigns collapse into one entry with their siblings; every entry links to its evidence.</p>
+            <p class="lede">What we caught this week while monitoring over {{if .Stats}}{{commaInt .Stats.Total}}{{else}}—{{end}} artifacts across {{.EcosystemCount}} ecosystems. Campaigns that impact multiple packages are collapsed into a single entry with their siblings.</p>
             {{if .HasHopper}}
             {{if .FeedDegraded}}
             <div class="feed-degraded" role="status">The live feed is temporarily unavailable{{if .Days}}; showing the most recent cached results{{end}}.</div>
@@ -492,7 +492,7 @@
             {{else if not .FeedDegraded}}
             <div class="empty">
                 {{if .Filtered}}Nothing hostile from {{.SelectedEco}} {{.WindowLabel}} — a quiet sector is a good sector. <a href="{{.AllSectorsURL}}">Every sector →</a>
-                {{else}}Nothing hostile {{.WindowLabel}} — the quietest kind of week. <a href="/stream?criticality=hostile">Browse the stream →</a>{{end}}
+                {{else}}Nothing hostile {{.WindowLabel}} — the quietest kind of week. <a href="/stream?criticality=hostile">Browse the index →</a>{{end}}
             </div>
             {{end}}
             {{else}}
