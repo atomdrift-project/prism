@@ -261,9 +261,9 @@
     <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
         <main id="main">
             <div class="head pending-shell">
-                <span class="pending-badge" id="pending-phase">Beamline is tracing the sample</span>
+                <span class="pending-badge" id="pending-phase">Analysis in progress</span>
                 <h1>{{.Headline}}</h1>
-                <p class="pending-copy">A small sample-shaped page for now. The beamline is leaving notes as it goes; the full evidence view will unfold here when Hopper has the finished result.</p>
+                <p class="pending-copy">The sample is taking shape. Results will appear here as soon as the analysis settles.</p>
                 <div class="pending-meta">
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
                     <div class="id-line"><span class="k">Provenance</span><span class="v">browser upload</span></div>
@@ -271,9 +271,9 @@
             </div>
             <h2>Analysis in progress</h2>
             <section class="pending-stream" aria-live="polite" aria-busy="true">
-                <div class="pending-stream-head"><span id="pending-message">The sample is taking the scenic route.</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
+                <div class="pending-stream-head"><span id="pending-message">Gathering the first signals…</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
                 <div class="pending-signal" id="pending-signal"><span class="pending-level" id="pending-level"></span><span class="pending-traits" id="pending-traits"></span></div>
-                <ol class="pending-events" id="pending-events"><li><span class="phase">queued</span><span class="message">Waiting for the first beamline note…</span></li></ol>
+                <ol class="pending-events" id="pending-events"><li><span class="phase">starting</span><span class="message">Waiting for the first signal…</span></li></ol>
             </section>
         </main>
         <aside class="rail"><div class="rail-block pending-aside"><span class="rail-title">Provenance</span><div class="prov"><div><span class="k">Source</span><span class="v">browser upload</span></div><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>

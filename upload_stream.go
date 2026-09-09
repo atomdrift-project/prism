@@ -125,9 +125,10 @@ func compactUploadProgressFrame(frame []byte) []byte {
 	}
 	compact := make(map[string]json.RawMessage)
 	for _, key := range []string{
-		"phase", "state", "stage", "status", "message", "msg", "detail",
+		"phase", "phase_state", "phase_elapsed_ms", "phase_started_at", "state", "stage", "status", "message", "msg", "detail",
 		"description", "phase_message", "level", "severity", "classification",
-		"verdict", "risk_level", "why", "sha", "sha256", "fires_at",
+		"verdict", "decision", "risk_level", "why", "sha", "sha256", "fires_at",
+		"elapsed_ms", "total_elapsed_ms", "engine_version",
 	} {
 		if value := source[key]; len(value) > 0 && len(value) <= 4096 {
 			compact[key] = value

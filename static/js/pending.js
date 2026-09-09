@@ -21,13 +21,13 @@
   const seenFrames = new Set();
 
   const whimsy = {
-    queued: "The sample has entered the beamline.",
+    queued: "The sample has joined the queue.",
     ingesting: "The sample is taking the scenic route.",
     analyzing: "The instruments are having a look.",
-    analyzed: "Beamline has finished its pass; Hopper is folding in the details.",
+    analyzed: "The first reading is in; the page is gathering the details.",
     complete: "The evidence is settling into place.",
     retrying: "A small orbit, then back through the beamline.",
-    error: "The beamline hit a snag while examining this sample.",
+    error: "The analysis hit a snag while examining this sample.",
   };
 
   function text(value) {
@@ -79,7 +79,7 @@
   }
 
   function renderFrame(frame) {
-    const phase = first(frame.phase, frame.state, frame.stage, frame.status) || "beamline";
+    const phase = first(frame.phase, frame.state, frame.stage, frame.status) || "starting";
     const phaseKey = phase.toLowerCase();
     const message = first(
       frame.message,
@@ -88,7 +88,7 @@
       frame.description,
       frame.phase_message
     );
-    phaseLabel.textContent = phase === "analyzed" ? "Beamline has a result" : `Beamline · ${phase}`;
+    phaseLabel.textContent = phase === "analyzed" ? "Analysis has a result" : phase;
     messageLabel.textContent =
       message || whimsy[phaseKey] || "The sample is moving through the instruments.";
 
@@ -111,7 +111,7 @@
     phaseNode.className = "phase";
     messageNode.className = "message";
     phaseNode.textContent = phase;
-    messageNode.textContent = message || whimsy[phaseKey] || "Beamline sent a progress note.";
+    messageNode.textContent = message || whimsy[phaseKey] || "A progress note arrived.";
     item.append(phaseNode, messageNode);
     events.appendChild(item);
     while (events.children.length > 8) events.firstElementChild.remove();
@@ -126,7 +126,7 @@
     window.location.replace(`/file/${encodeURIComponent(sha)}`);
   }
 
-  function showFailure(message = "Beamline could not complete this analysis.") {
+  function showFailure(message = "The analysis could not be completed.") {
     if (failed) return;
     failed = true;
     if (eventSource) eventSource.close();
@@ -185,7 +185,9 @@
       showFailure("This analysis is no longer available.")
     );
     eventSource.addEventListener("error", () => {
-      eventSource.close();
+      // EventSource reconnects automatically. Keep it alive across a
+      // transient proxy hiccup; polling still provides the completion
+      // fallback without sacrificing later progress frames.
       startPolling();
     });
   } catch (_) {
