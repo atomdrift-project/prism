@@ -16,8 +16,8 @@ const minNotableCrit = 3
 // maxBadges is how many findings the header names outright.
 const maxBadges = 3
 
-// resultBadges picks the findings the header wears: the strongest few at
-// suspicious or above, in the order buildFileViews ranked them. A sample whose
+// resultBadges picks the strongest few findings for the header, in the order
+// buildFileViews ranked them. A sample whose
 // findings carry no byte spans gets no file views at all, so fall back to
 // ranking the report's own findings — the badges state the verdict's reasons
 // and must never depend on whether cleave recorded a location.
@@ -33,7 +33,7 @@ func resultBadges(top []topTrait, files []cleaveFile) []topTrait {
 		return len(out) == maxBadges
 	}
 	for _, t := range top {
-		if t.Crit != "hostile" && t.Crit != "suspicious" {
+		if t.Crit != "hostile" && t.Crit != "suspicious" && t.Crit != "notable" {
 			continue
 		}
 		if add(t.Desc, t.Crit) {

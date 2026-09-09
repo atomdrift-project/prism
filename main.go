@@ -1353,6 +1353,7 @@ type cleaveFile struct {
 	Rel         string            `json:"rel,omitempty"`
 	Via         string            `json:"via,omitempty"`
 	Role        string            `json:"role,omitempty"`
+	Identity    cleaveIdentity    `json:"ident"`
 	Facts       cleaveFacts       `json:"fact,omitzero"`
 	Imports     []string          `json:"is,omitempty"`
 	Exports     []symbolInfo      `json:"exports,omitempty"`
@@ -1369,6 +1370,20 @@ type cleaveFile struct {
 	ID          int               `json:"id"`
 	Depth       int               `json:"dp"`
 	Container   bool              `json:"-"`
+}
+
+type cleaveIdentityValue struct {
+	Value string `json:"value"`
+}
+
+type cleaveIdentity struct {
+	Name         cleaveIdentityValue `json:"name"`
+	Trust        string              `json:"trust"`
+	Project      cleaveIdentityValue `json:"project"`
+	Version      cleaveIdentityValue `json:"version"`
+	Identifier   cleaveIdentityValue `json:"identifier"`
+	UniqueIDs    map[string]string   `json:"unique_ids"`
+	Organization cleaveIdentityValue `json:"organization"`
 }
 
 // cleaveRef is one reference a file declares — what it points at and, when
@@ -1477,6 +1492,7 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		Rel         string                     `json:"rel,omitempty"`
 		Via         string                     `json:"via,omitempty"`
 		Role        string                     `json:"role,omitempty"`
+		Identity    cleaveIdentity             `json:"ident"`
 		Facts       cleaveFacts                `json:"facts,omitzero"` // v8
 		OldFacts    cleaveFacts                `json:"fact,omitzero"`  // v7
 		V4Facts     cleaveFacts                `json:"ff,omitzero"`    // v4
@@ -1526,6 +1542,7 @@ func (f *cleaveFile) UnmarshalJSON(data []byte) error {
 		Rel:      raw.Rel,
 		Via:      raw.Via,
 		Role:     raw.Role,
+		Identity: raw.Identity,
 		Facts:    facts,
 		Exports:  raw.Exports,
 		Findings: findings,
@@ -4233,6 +4250,43 @@ func provenanceGroups(sha256Hex, filename string, res *storedResult) []Provenanc
 	return out
 }
 
+func addCleaveIdentity(groups []ProvenanceGroup, ident cleaveIdentity) []ProvenanceGroup {
+	rows := []ProvenanceRow{
+		{Label: "Command", Value: ident.Name.Value},
+		{Label: "Identifier", Value: ident.Identifier.Value, Mono: true},
+		{Label: "Organization", Value: ident.Organization.Value},
+		{Label: "Project", Value: ident.Project.Value},
+		{Label: "Version", Value: ident.Version.Value, Mono: true},
+		{Label: "Trust", Value: ident.Trust},
+	}
+	if ident.UniqueIDs != nil {
+		if cdhash := ident.UniqueIDs["cdhash"]; cdhash != "" {
+			rows = append(rows, ProvenanceRow{Label: "CDHash", Value: cdhash, Mono: true})
+		}
+	}
+	rows = compactProvenanceRows(rows)
+	if len(rows) == 0 {
+		return groups
+	}
+	for i := range groups {
+		if groups[i].Title == "Identity" {
+			groups[i].Rows = append(groups[i].Rows, rows...)
+			return groups
+		}
+	}
+	return append([]ProvenanceGroup{{Title: "Identity", Rows: rows}}, groups...)
+}
+
+func compactProvenanceRows(rows []ProvenanceRow) []ProvenanceRow {
+	out := rows[:0]
+	for _, row := range rows {
+		if row.Value != "" {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func sampleTime(sample *hopper.Sample) time.Time {
 	newest := sample.CreatedAt
 	if sample.Mtime != nil && sample.Mtime.After(newest) {
@@ -5052,7 +5106,7 @@ func validSHA256(s string) bool {
 	return true
 }
 
-func handleFile(w http.ResponseWriter, r *http.Request) {
+func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // the detail handler coordinates cache, pending, and rendering paths
 	requestStart := time.Now()
 	// Normalize once at the boundary so suffix matching, validation, and
 	// every downstream lookup work on the same lowercase form.
@@ -5095,6 +5149,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	uploadFilename := ""
+	if v, ok := uploadsInFlight.Load(sha); ok {
+		if st, isState := v.(uploadState); isState {
+			uploadFilename = st.Filename
+		}
+	}
 	lookupStart := time.Now()
 	lctx, lookupSpan := obs.Span(ctx, "prism.detail.lookup")
 	cacheHit, res, err := lookupResult(lctx, sha, reqLogger)
@@ -5138,6 +5198,9 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		return
+	}
+	if uploadFilename != "" {
+		res.Filename = uploadFilename
 	}
 
 	reqLogger.Info("rendering result",
@@ -7609,7 +7672,7 @@ func openBeamlineStream(ctx context.Context, target string, size int64, filename
 		}
 		req.ContentLength = size
 		req.Header.Set("Content-Type", "application/octet-stream")
-		req.Header.Set("X-File-Name", filename)
+		req.Header.Set("X-Filename", filename)
 		start := time.Now()
 		resp, doErr := beamlineClient.Do(req)
 		if doErr == nil && resp.StatusCode == http.StatusOK {
@@ -8054,6 +8117,12 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		logger.Debug("empty cleave report", "sha256", sha256Hex)
 		data.Formula = template.HTML("?")
 		return data
+	}
+	for i := range report.Files {
+		if report.Files[i].Depth == 0 {
+			data.Provenance = addCleaveIdentity(data.Provenance, report.Files[i].Identity)
+			break
+		}
 	}
 
 	// Extract target info from top-level file (depth=0) or first file

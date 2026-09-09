@@ -34,7 +34,7 @@
 {{end}}
 {{- /* The header's findings, addressable by name for the members endpoint. */ -}}
 {{define "findingsbody"}}
-{{if .Badges}}<div class="badges" aria-label="Strongest findings">{{range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end}}</div>{{else}}<p class="note">No verdict-level findings.</p>{{end}}
+{{if .Badges}}<div class="badges" aria-label="Strongest findings">{{range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end}}</div>{{else}}<p class="note">No notable findings.</p>{{end}}
 {{end}}
 <!doctype html>
 <html lang="en">
