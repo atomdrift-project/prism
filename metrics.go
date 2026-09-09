@@ -186,6 +186,7 @@ func registerReliabilityGauges(m metric.Meter) {
 		if backendStatus != nil {
 			observeBackend("hopper-api", backendStatus.hopper.available())
 			observeBackend("litmus", backendStatus.litmus.available())
+			observeBackend("beamline-api", backendStatus.beamline.available())
 		} else {
 			observeBackend("hopper-api", false)
 			observeBackend("litmus", false)

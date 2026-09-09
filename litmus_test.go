@@ -31,6 +31,40 @@ func TestLitmusAnalyzeURL(t *testing.T) {
 	}
 }
 
+func TestAnalyzeWithBeamline(t *testing.T) {
+	oldAddr, oldClient := beamlineAPIAddr, beamlineClient
+	defer func() { beamlineAPIAddr, beamlineClient = oldAddr, oldClient }()
+	beamlineClient = &http.Client{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/analyze" {
+			t.Errorf("path = %q, want /v1/analyze", r.URL.Path)
+		}
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		} else if string(got) != "PAYLOAD" {
+			t.Errorf("body = %q, want PAYLOAD", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/octet-stream" {
+			t.Errorf("content type = %q, want application/octet-stream", got)
+		}
+		if _, err := w.Write([]byte("{\"state\":\"analyzing\"}\n{\"status\":\"analyzed\",\"sha256\":\"" + strings.Repeat("a", 64) + "\",\"fires_at\":-1}\n")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+	beamlineAPIAddr = srv.URL
+
+	assessment, err := analyzeWithBeamline(context.Background(), []byte("PAYLOAD"), "sample.bin")
+	if err != nil {
+		t.Fatalf("analyzeWithBeamline: %v", err)
+	}
+	if assessment.Status != "analyzed" || assessment.SHA != strings.Repeat("a", 64) {
+		t.Fatalf("assessment = %+v", assessment)
+	}
+}
+
 func TestHopperResultURL(t *testing.T) {
 	old := hopperAPIAddr
 	defer func() { hopperAPIAddr = old }()

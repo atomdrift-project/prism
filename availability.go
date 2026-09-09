@@ -36,6 +36,7 @@ type backendAvailabilityMonitor struct {
 	client   *http.Client
 	hopper   *backendProbe
 	litmus   *backendProbe
+	beamline *backendProbe
 	interval time.Duration
 }
 
@@ -57,6 +58,10 @@ func newBackendAvailabilityMonitor(hopperAddr, litmusServer string, client *http
 		litmus: &backendProbe{
 			name: "litmus",
 			url:  backendHealthURL(litmusServer, "/_/health"),
+		},
+		beamline: &backendProbe{
+			name: "beamline-api",
+			url:  backendHealthURL(beamlineAPIAddr, "/healthz"),
 		},
 		interval: backendProbeInterval,
 	}
@@ -90,6 +95,7 @@ func (m *backendAvailabilityMonitor) refresh(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { m.hopper.refresh(ctx, m.client) })
 	wg.Go(func() { m.litmus.refresh(ctx, m.client) })
+	wg.Go(func() { m.beamline.refresh(ctx, m.client) })
 	wg.Wait()
 }
 
@@ -161,13 +167,12 @@ func hopperAPIAvailable() bool {
 }
 
 func uploadBackendsAvailable() bool {
-	return backendStatus != nil && backendStatus.hopper.available() && backendStatus.litmus.available()
+	return backendStatus != nil && backendStatus.beamline.available() && backendStatus.hopper.available()
 }
 
-// litmusAvailable reports whether the analysis server is up. Uploads need it
-// paired with hopper-api (uploadBackendsAvailable); escalation needs the same
-// pair for a different reason — hopper-api to fetch the sample, litmus to
-// analyze it — so it asks for the two halves separately.
+// litmusAvailable reports whether the legacy scan server is up. Escalation
+// still uses it after fetching samples from Hopper; browser uploads use
+// Beamline directly.
 func litmusAvailable() bool {
 	return backendStatus != nil && backendStatus.litmus.available()
 }

@@ -99,8 +99,9 @@ func TestFeatureAvailabilityRequirements(t *testing.T) {
 	}
 
 	backendStatus.litmus.state.Store(int32(backendHealthy))
+	backendStatus.beamline.state.Store(int32(backendHealthy))
 	if !uploadBackendsAvailable() {
-		t.Fatal("uploads should be available when both backends are healthy")
+		t.Fatal("uploads should be available when Beamline is healthy")
 	}
 
 	backendStatus.hopper.state.Store(int32(backendUnhealthy))
