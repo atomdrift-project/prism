@@ -56,12 +56,18 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 	defer srv.Close()
 	beamlineAPIAddr = srv.URL
 
-	assessment, err := analyzeWithBeamline(context.Background(), []byte("PAYLOAD"), "sample.bin")
+	var frames []string
+	assessment, err := analyzeWithBeamline(context.Background(), []byte("PAYLOAD"), "sample.bin", func(frame []byte) {
+		frames = append(frames, string(frame))
+	})
 	if err != nil {
 		t.Fatalf("analyzeWithBeamline: %v", err)
 	}
 	if assessment.Status != "analyzed" || assessment.SHA != strings.Repeat("a", 64) {
 		t.Fatalf("assessment = %+v", assessment)
+	}
+	if len(frames) != 2 || frames[0] != `{"state":"analyzing"}` {
+		t.Fatalf("frames = %#v, want both streamed Beamline frames", frames)
 	}
 }
 

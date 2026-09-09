@@ -197,6 +197,33 @@
         .skel-code { height: 116px; border-radius: 6px; border: 1px solid var(--rule); background: var(--mist); }
         @media (prefers-reduced-motion: reduce) { .evidence-pending { animation: none; opacity: 1; } }
         .note a { color: var(--fu-deep); font-weight: 600; }
+        .pending-shell { display: flex; flex-direction: column; gap: 18px; }
+        .pending-badge { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--fu-deep); font-family: var(--display); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+        .pending-badge::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--fu); box-shadow: 0 0 0 5px var(--fu-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
+        @keyframes pending-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+        .pending-copy { margin: 0; max-width: 62ch; color: var(--ink-mid); font-size: 16px; }
+        .pending-copy em { color: var(--fu-deep); font-style: normal; }
+        .pending-meta { display: flex; flex-direction: column; gap: 7px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 7px; background: var(--mist); }
+        .pending-meta .id-line { gap: 14px; }
+        .pending-meta .k { width: 78px; }
+        .pending-stream { display: flex; flex-direction: column; gap: 8px; min-height: 130px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 7px; background: var(--paper); }
+        .pending-stream-head { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-light); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+        .pending-elapsed { font-family: var(--mono); color: var(--fu-deep); }
+        .pending-events { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; }
+        .pending-events li { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--rule-soft); }
+        .pending-events li:last-child { border-bottom: 0; }
+        .pending-events .phase { color: var(--fu-deep); }
+        .pending-events .message { color: var(--ink-mid); overflow-wrap: anywhere; }
+        .pending-signal { display: none; align-items: baseline; gap: 10px; margin: 2px 0 4px; }
+        .pending-signal.visible { display: flex; }
+        .pending-level { font-family: var(--display); font-size: 15px; font-weight: 700; text-transform: uppercase; }
+        .pending-level.hostile { color: var(--hostile); }
+        .pending-level.suspicious { color: var(--suspicious); }
+        .pending-level.benign { color: #16a34a; }
+        .pending-traits { color: var(--ink-mid); font-size: 13px; }
+        .pending-aside { display: flex; flex-direction: column; gap: 8px; }
+        .pending-aside .rail-title { margin-bottom: 2px; }
+        @media (prefers-reduced-motion: reduce) { .pending-badge::before { animation: none; } }
         @media (max-width: 960px) {
             body { font-size: 15px; }
             .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
@@ -225,6 +252,35 @@
     </style>
 </head>
 <body>
+    {{if .Pending}}
+    {{template "banner" .}}
+    <nav class="topbar" aria-label="Primary">
+        <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
+        <div class="site-nav"><a href="/">Fallout</a><a href="/stream">Stream</a><a class="feed-link" href="/feed.atom">{{template "feedicon" .}}Feed</a></div>
+    </nav>
+    <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}">
+        <main id="main">
+            <div class="head pending-shell">
+                <span class="pending-badge" id="pending-phase">Beamline is tracing the sample</span>
+                <h1>{{.Headline}}</h1>
+                <p class="pending-copy">A small sample-shaped page for now. The beamline is leaving notes as it goes; the full evidence view will unfold here when Hopper has the finished result.</p>
+                <div class="pending-meta">
+                    <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
+                    <div class="id-line"><span class="k">Provenance</span><span class="v">browser upload</span></div>
+                </div>
+            </div>
+            <h2>Analysis in progress</h2>
+            <section class="pending-stream" aria-live="polite" aria-busy="true">
+                <div class="pending-stream-head"><span id="pending-message">The sample is taking the scenic route.</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
+                <div class="pending-signal" id="pending-signal"><span class="pending-level" id="pending-level"></span><span class="pending-traits" id="pending-traits"></span></div>
+                <ol class="pending-events" id="pending-events"><li><span class="phase">queued</span><span class="message">Waiting for the first beamline note…</span></li></ol>
+            </section>
+        </main>
+        <aside class="rail"><div class="rail-block pending-aside"><span class="rail-title">Provenance</span><div class="prov"><div><span class="k">Source</span><span class="v">browser upload</span></div><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
+    </div>
+    {{template "footer" .}}
+    <script nonce="{{.Nonce}}" src="/static/js/pending.js?v={{.BuildCommit}}"></script>
+    {{else}}
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
@@ -323,6 +379,7 @@
         }).catch(function () {});
     })();
     </script>
+    {{end}}
     {{end}}
 </body>
 </html>

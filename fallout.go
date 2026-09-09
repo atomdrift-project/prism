@@ -374,9 +374,10 @@ type falloutPageData struct {
 	BuildCommit string
 	SelectedEco string
 	Verified    string
+	CSRFToken   string
+	WindowLabel string
 	// WindowLabel mirrors falloutView; MeterSegs are the peak-meter segments
 	// (lit = the newest day in view, against the window's busiest day).
-	WindowLabel string
 	// AllSectorsURL clears the sector filter without leaving the week;
 	// OlderURL/NewerURL step the week nav, empty where there is nowhere to
 	// go. CurrentWeek is false whenever the reader is looking at the archive,
@@ -390,13 +391,14 @@ type falloutPageData struct {
 	// Spark is the week's daily counts as bar heights, oldest first, for the
 	// count card's sparkline. Days runs newest-first for the rail, so this is
 	// its own slice rather than a template trick.
-	Spark        []falloutSpark
-	MeterSegs    []bool
-	WeeklyCount  int
-	HasHopper    bool
-	CurrentWeek  bool
-	FeedDegraded bool
-	Filtered     bool
+	Spark         []falloutSpark
+	MeterSegs     []bool
+	WeeklyCount   int
+	HasHopper     bool
+	UploadEnabled bool
+	CurrentWeek   bool
+	FeedDegraded  bool
+	Filtered      bool
 }
 
 const falloutMeterSegs = 6
@@ -430,14 +432,16 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		week = falloutWeekOf(now, now)
 	}
 	data := falloutPageData{
-		Nonce:       nonceFor(r),
-		StyleNonce:  styleNonceFor(r),
-		BuildCommit: buildCommit,
-		SelectedEco: eco,
-		Verified:    verifiedRaw,
-		Filtered:    eco != "" || verified != falloutAny,
-		HasHopper:   hopperDB.Load() != nil,
-		CurrentWeek: week.Current,
+		Nonce:         nonceFor(r),
+		StyleNonce:    styleNonceFor(r),
+		BuildCommit:   buildCommit,
+		SelectedEco:   eco,
+		Verified:      verifiedRaw,
+		Filtered:      eco != "" || verified != falloutAny,
+		HasHopper:     hopperDB.Load() != nil,
+		CSRFToken:     csrfToken(r, "upload"),
+		UploadEnabled: uploadEnabled && uploadBackendsAvailable(),
+		CurrentWeek:   week.Current,
 		// The period the page names is a property of the URL, not of the
 		// query: a degraded or hopper-less page still says which week the
 		// reader is looking at. A snapshot that fell short of the window

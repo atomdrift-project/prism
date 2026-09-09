@@ -337,6 +337,9 @@
         .legend b { font-family: var(--mono); font-weight: 600; }
         .empty { padding: 42px 12px; color: var(--ink-light); text-align: center; }
         .empty a { color: var(--fu-deep); font-weight: 600; }
+        .top-upload { margin: 0; position: relative; }
+        .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+        .top-upload-status { position: absolute; right: 0; top: calc(100% + 7px); color: var(--ink-light); font-size: 12px; white-space: nowrap; }
         .feed-degraded {
             margin-top: 12px;
             padding: 10px 14px;
@@ -397,7 +400,16 @@
             <a href="/" class="active">Fallout</a>
             <a href="/stream">Stream</a>
             <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
-            <a class="upload-btn" href="/stream#upload">Upload</a>
+            {{if .UploadEnabled}}
+            <form method="POST" action="/upload" enctype="multipart/form-data" id="upload-form" class="top-upload">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+                <input type="file" name="file" id="file-input" required />
+                <label class="upload-btn" for="file-input">Upload</label>
+                <div id="upload-status" class="top-upload-status"></div>
+            </form>
+            {{else}}
+            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+            {{end}}
         </div>
     </nav>
     <div class="shell">

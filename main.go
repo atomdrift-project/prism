@@ -90,7 +90,6 @@ var (
 	formatsTemplate   *template.Template
 	poweredByTemplate *template.Template
 	helpQueryTemplate *template.Template
-	pendingTemplate   *template.Template
 	hopperAPIAddr     string       // Address of hopper API server (e.g., "hopper-api:8081")
 	hopperClient      *http.Client // HTTP client for hopper API server
 	beamlineAPIAddr   string       // Public Beamline API base URL
@@ -704,13 +703,16 @@ type cachedMembers struct {
 //
 //nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
-	SHA256Short  string
-	Filename     string
-	SHA256       string
-	Verdict      string
-	Formula      template.HTML
-	FormulaQuery string // raw formula with subscript digits desubscripted, for ?m=… links
-	CSRFToken    string // signed CSRF token for operator actions (rescan)
+	Pending        bool
+	PendingStarted int64
+	SHA256JSON     template.JS
+	SHA256Short    string
+	Filename       string
+	SHA256         string
+	Verdict        string
+	Formula        template.HTML
+	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
+	CSRFToken      string // signed CSRF token for operator actions (rescan)
 	// DownloadToken is a separate CSRF token bound to the "download" action.
 	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
 	// gated to button-driven flows: the token only validates for the browser
@@ -2043,12 +2045,6 @@ func main() {
 		logger.Error("template loading failed", "error", tmplErr)
 		os.Exit(1)
 	}
-	pendingTemplate, tmplErr = template.New("pending.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/pending.html")
-	if tmplErr != nil {
-		logger.Error("template loading failed", "error", tmplErr)
-		os.Exit(1)
-	}
-
 	// Connect to hopper sample registry. Explicit --db, HOPPER_DSN, and
 	// FALLOUT_DB override the local hopper default. If the first attempt
 	// fails (hopper-db is still starting, network blip, etc.) we keep
@@ -2261,6 +2257,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleFile)
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
+	mux.HandleFunc("GET /file/{sha256}/events", handleFileEvents)
 	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
 	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
 	mux.HandleFunc("POST /file/{sha256}/rum", handleFileRUM)
@@ -6530,18 +6527,6 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 }
 
-// pendingPageData feeds templates/pending.html. SHA256JSON is the same
-// value as SHA256, JSON-encoded so it can be safely embedded inside the
-// inline <script> as a JS string literal under the strict CSP nonce.
-type pendingPageData struct {
-	Nonce       string // script-src nonce
-	StyleNonce  string // style-src nonce
-	BuildCommit string
-	Filename    string
-	SHA256      string
-	SHA256JSON  template.JS
-}
-
 // renderPending serves the "Analyzing…" wait page for a SHA whose sample
 // row exists in hopper but has no cleave_result yet. The page opens an
 // SSE connection to /file/<sha>/wait that flips to a result-page reload
@@ -6554,20 +6539,25 @@ func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string)
 	if err != nil {
 		shaJSON = []byte(`""`)
 	}
-	data := pendingPageData{
-		Nonce:       nonceFor(r),
-		StyleNonce:  styleNonceFor(r),
-		BuildCommit: buildCommit,
-		Filename:    filename,
-		SHA256:      sha,
-		SHA256JSON:  template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
+	data := resultData{
+		Pending:        true,
+		PendingStarted: time.Now().UnixMilli(),
+		SHA256JSON:     template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
+		Filename:       filename,
+		Headline:       filename,
+		SHA256:         sha,
+		SHA256Short:    sha[:12] + "...",
+		Nonce:          nonceFor(r),
+		StyleNonce:     styleNonceFor(r),
+		BuildCommit:    buildCommit,
+		SourceLabel:    "browser upload",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Pending pages must never be cached: a CDN that pins this could
 	// serve "Analyzing…" forever even after the real result lands.
 	w.Header().Set("Cache-Control", "no-store")
-	if err := pendingTemplate.Execute(w, data); err != nil {
-		logger.Error("template execution failed", "template", "pending", "error", err)
+	if err := resultTemplate.Execute(w, data); err != nil {
+		logger.Error("template execution failed", "template", "result-pending", "error", err)
 	}
 }
 
@@ -6629,6 +6619,72 @@ func readyPayload(sha string) string {
 		return `{"sha256":""}`
 	}
 	return string(b)
+}
+
+// handleFileEvents streams the Beamline progress transcript for a browser
+// upload. It is intentionally separate from /wait: Beamline describes the
+// analysis phases, while Hopper decides when the authoritative result exists.
+func handleFileEvents(w http.ResponseWriter, r *http.Request) {
+	sha := strings.ToLower(r.PathValue("sha256"))
+	if !validSHA256(sha) {
+		http.Error(w, "invalid sha256", http.StatusBadRequest)
+		return
+	}
+	value, ok := uploadEventStreams.Load(sha)
+	if !ok {
+		http.Error(w, "upload progress not found", http.StatusNotFound)
+		return
+	}
+	stream, ok := value.(*uploadEventStream)
+	if !ok {
+		http.Error(w, "upload progress unavailable", http.StatusInternalServerError)
+		return
+	}
+	subscription := stream.subscribe()
+	defer subscription.unsubscribe()
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	emit := func(frame []byte) bool {
+		if _, err := fmt.Fprintf(w, "event: beamline\ndata: %s\n\n", frame); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	for _, frame := range subscription.history {
+		if !emit(frame) {
+			return
+		}
+	}
+	if subscription.closed {
+		return
+	}
+	heartbeat := time.NewTicker(waitHeartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case frame, ok := <-subscription.events:
+			if !ok || !emit(frame) {
+				return
+			}
+		case <-heartbeat.C:
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // handleFileWait is the SSE notification channel for the pending page.
@@ -7101,7 +7157,8 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	// shows an "analyzing" state (not a 404) during the window before either
 	// backend has a result.
 	uploadsInFlight.Store(sha, uploadState{Filename: filename})
-	go ingestUpload(context.WithoutCancel(ctx), buf, sha, filename)
+	stream := keepUploadEventStream(sha)
+	go ingestUpload(context.WithoutCancel(ctx), buf, sha, filename, stream)
 
 	http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
 }
@@ -7209,11 +7266,12 @@ func litmusAnalyzeURL() string {
 // ingestUpload sends the uploaded bytes to Beamline's public analysis API and
 // caches its terminal assessment for Prism's existing result page. Beamline is
 // the sole upload destination; Hopper and Litmus are not fallback paths.
-func ingestUpload(ctx context.Context, buf []byte, sha, filename string) {
+func ingestUpload(ctx context.Context, buf []byte, sha, filename string, stream *uploadEventStream) {
 	ctx, cancel := context.WithTimeout(ctx, uploadIngestTimeout)
 	defer cancel()
+	defer stream.close()
 	log := logger.With("sha256", sha, "filename", filename)
-	assessment, err := analyzeWithBeamline(ctx, buf, filename)
+	assessment, err := analyzeWithBeamline(ctx, buf, filename, stream.publish)
 	if err != nil {
 		log.Error("beamline upload failed", "error", err)
 		markUploadFailed(sha, filename, time.Now())
@@ -7262,7 +7320,7 @@ func beamlineAnalyzeURL() string {
 
 // analyzeWithBeamline posts raw bytes to Beamline and reads until the NDJSON
 // stream's terminal object, the first object containing a status field.
-func analyzeWithBeamline(ctx context.Context, buf []byte, filename string) (*beamlineAssessment, error) {
+func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte)) (*beamlineAssessment, error) {
 	target := beamlineAnalyzeURL()
 	if target == "" {
 		return nil, errors.New("beamline API URL is invalid")
@@ -7294,6 +7352,9 @@ func analyzeWithBeamline(ctx context.Context, buf []byte, filename string) (*bea
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
+		}
+		if onFrame != nil {
+			onFrame(line)
 		}
 		var frame beamlineAssessment
 		if err := json.Unmarshal(line, &frame); err != nil {
