@@ -3,6 +3,7 @@
   if (!shell) return;
 
   const sha = shell.dataset.uploadSha;
+  const hasUploadProgress = shell.dataset.uploadProgress === "true";
   const started = Number(shell.dataset.uploadStarted || Date.now());
   const elapsed = document.getElementById("pending-elapsed");
   const phaseLabel = document.getElementById("pending-phase");
@@ -14,6 +15,10 @@
   let reloaded = false;
   let eventSource;
   let pollingStarted = false;
+  let pollTimer;
+  let elapsedTimer;
+  let failed = false;
+  const seenFrames = new Set();
 
   const whimsy = {
     queued: "The sample has entered the beamline.",
@@ -21,6 +26,7 @@
     analyzing: "The instruments are having a look.",
     analyzed: "Beamline has finished its pass; Hopper is folding in the details.",
     complete: "The evidence is settling into place.",
+    retrying: "A small orbit, then back through the beamline.",
     error: "The beamline hit a snag while examining this sample.",
   };
 
@@ -32,18 +38,20 @@
     return values.map(text).find(Boolean) || "";
   }
 
-  function frameLevel(frame) {
+  function frameSignal(frame) {
     const ml = frame.ml && typeof frame.ml === "object" ? frame.ml : {};
-    return first(
-      frame.level,
-      frame.severity,
-      frame.classification,
-      frame.verdict,
-      frame.risk_level,
-      ml.level,
-      ml.severity,
-      ml.lvl
-    );
+    return {
+      level: first(frame.level, ml.level, ml.lvl),
+      severity: first(
+        frame.severity,
+        frame.classification,
+        frame.verdict,
+        frame.risk_level,
+        ml.severity,
+        ml.classification,
+        ml.verdict
+      ),
+    };
   }
 
   function traitText(value) {
@@ -65,16 +73,13 @@
     return source.map(traitText).filter(Boolean).slice(0, 3);
   }
 
-  function normalLevel(value) {
-    const level = value.toLowerCase();
-    if (level === "-1" || level === "benign" || level === "0") return "benign";
-    if (level === "1" || level === "suspicious") return "suspicious";
-    if (level === "2" || level === "hostile") return "hostile";
-    return "";
+  function normalSeverity(value) {
+    const severity = value.toLowerCase();
+    return ["benign", "suspicious", "hostile"].includes(severity) ? severity : "";
   }
 
   function renderFrame(frame) {
-    const phase = first(frame.phase, frame.stage, frame.status) || "beamline";
+    const phase = first(frame.phase, frame.state, frame.stage, frame.status) || "beamline";
     const phaseKey = phase.toLowerCase();
     const message = first(
       frame.message,
@@ -87,13 +92,15 @@
     messageLabel.textContent =
       message || whimsy[phaseKey] || "The sample is moving through the instruments.";
 
-    const level = frameLevel(frame);
+    const { level, severity } = frameSignal(frame);
     const traits = frameTraits(frame);
-    if (level || traits.length) {
+    if (level || severity || traits.length) {
       signal.classList.add("visible");
-      if (level) {
-        levelLabel.textContent = `Level · ${level}`;
-        levelLabel.className = `pending-level ${normalLevel(level)}`;
+      if (level || severity) {
+        levelLabel.textContent = [severity, level ? `level ${level}` : ""]
+          .filter(Boolean)
+          .join(" · ");
+        levelLabel.className = `pending-level ${normalSeverity(severity)}`;
       }
       if (traits.length) traitsLabel.textContent = `Top traits · ${traits.join(" · ")}`;
     }
@@ -114,7 +121,21 @@
     if (reloaded) return;
     reloaded = true;
     if (eventSource) eventSource.close();
+    if (pollTimer) clearInterval(pollTimer);
+    if (elapsedTimer) clearInterval(elapsedTimer);
     window.location.replace(`/file/${encodeURIComponent(sha)}`);
+  }
+
+  function showFailure(message = "Beamline could not complete this analysis.") {
+    if (failed) return;
+    failed = true;
+    if (eventSource) eventSource.close();
+    if (pollTimer) clearInterval(pollTimer);
+    if (elapsedTimer) clearInterval(elapsedTimer);
+    renderFrame({ phase: "error", message });
+    phaseLabel.textContent = "Analysis stopped";
+    messageLabel.textContent = message;
+    document.querySelector(".pending-stream")?.setAttribute("aria-busy", "false");
   }
 
   function startPolling() {
@@ -125,44 +146,47 @@
         .then((response) => response.json())
         .then((state) => {
           if (state?.ready) reloadOnce();
+          if (state?.failed) showFailure();
         })
         .catch(() => {
           /* polling is best effort */
         });
     tick();
-    setInterval(tick, 2000);
+    pollTimer = setInterval(tick, 2000);
   }
 
-  setInterval(() => {
+  elapsedTimer = setInterval(() => {
     const seconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
     elapsed.textContent =
       seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
   }, 1000);
 
   try {
-    eventSource = new EventSource(`/file/${encodeURIComponent(sha)}/events`);
+    const endpoint = hasUploadProgress ? "events" : "wait";
+    eventSource = new EventSource(`/file/${encodeURIComponent(sha)}/${endpoint}`);
     eventSource.addEventListener("beamline", (event) => {
+      if (seenFrames.has(event.data)) return;
+      seenFrames.add(event.data);
       try {
         renderFrame(JSON.parse(event.data));
       } catch (_) {
         /* ignore malformed progress */
       }
     });
+    eventSource.addEventListener("ready", () => reloadOnce());
+    eventSource.addEventListener("failed", (event) => {
+      try {
+        showFailure(JSON.parse(event.data).message);
+      } catch (_) {
+        showFailure();
+      }
+    });
+    eventSource.addEventListener("missing", () =>
+      showFailure("This analysis is no longer available.")
+    );
     eventSource.addEventListener("error", () => {
-      if (eventSource.readyState === EventSource.CLOSED) startPolling();
-    });
-  } catch (_) {
-    startPolling();
-  }
-
-  try {
-    const wait = new EventSource(`/file/${encodeURIComponent(sha)}/wait`);
-    wait.addEventListener("ready", () => {
-      wait.close();
-      reloadOnce();
-    });
-    wait.addEventListener("error", () => {
-      if (wait.readyState === EventSource.CLOSED) startPolling();
+      eventSource.close();
+      startPolling();
     });
   } catch (_) {
     startPolling();

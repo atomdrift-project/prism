@@ -59,7 +59,7 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 	var frames []string
 	assessment, err := analyzeWithBeamline(context.Background(), []byte("PAYLOAD"), "sample.bin", func(frame []byte) {
 		frames = append(frames, string(frame))
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("analyzeWithBeamline: %v", err)
 	}

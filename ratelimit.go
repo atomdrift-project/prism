@@ -122,7 +122,7 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 //     favicon sits outside /static/ so it does not fall through to the
 //     /{ecosystem} feed route (see handleFavicon).
 //   - /_/stats: masthead counter poll, every 15s on the feed.
-//   - /file/{sha}/members|rum|wait|status: JS hydrations of a page already
+//   - /file/{sha}/members|rum|wait|events|status: JS hydrations of a page already
 //     counted. Crawlers do not run JS, so these are not a scraper vector.
 //   - /_/health, /_/metrik, /_/challenge: probes and the challenge form.
 func rateLimitExempt(path string) bool {
@@ -136,7 +136,7 @@ func rateLimitExempt(path string) bool {
 	if strings.HasPrefix(path, "/file/") {
 		if i := strings.LastIndexByte(path, '/'); i >= 0 {
 			switch path[i:] {
-			case "/members", "/rum", "/wait", "/status":
+			case "/members", "/rum", "/wait", "/events", "/status":
 				return true
 			}
 		}

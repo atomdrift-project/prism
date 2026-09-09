@@ -1,4 +1,4 @@
-// Rescan button — POSTs to /file/<sha>/rescan with a CSRF token, shows
+// Refresh button — POSTs to /file/<sha>/refresh with a CSRF token, shows
 // inline feedback, and (on success) waits for the worker to finish before
 // reloading the page so the user sees fresh results without manual refresh.
 // The button is rendered only when the last analysis is older than
@@ -28,7 +28,7 @@ function watchForCompletion(sha, after, btn) {
   const url = `/file/${encodeURIComponent(sha)}/wait${qs}`;
   const onReady = () => {
     btn.textContent = "↻ reloading…";
-    announce("Rescan complete. Reloading.");
+    announce("Refresh complete. Reloading.");
     // Small delay so the SR announcement and the "reloading…" label are
     // perceivable before the navigation throws everything away.
     setTimeout(() => location.reload(), 300);
@@ -49,7 +49,7 @@ function watchForCompletion(sha, after, btn) {
       es.close();
       btn.textContent = "✕ sample missing";
       btn.classList.add("is-error");
-      announce("Rescan failed: sample no longer present.");
+      announce("Refresh failed: sample no longer present.");
     });
     // When the server hits its own waitMaxDuration it just closes the
     // connection — natural EventSource behavior is to auto-reconnect,
@@ -90,7 +90,7 @@ function watchForCompletion(sha, after, btn) {
   setTimeout(tick, 5000);
 }
 
-document.querySelectorAll(".rescan-btn").forEach((btn) => {
+document.querySelectorAll(".refresh-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const sha = btn.dataset.sha;
     const csrf = btn.dataset.csrf;
@@ -104,17 +104,17 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
     btn.disabled = true;
     btn.textContent = "↻ queuing…";
     btn.classList.remove("is-done", "is-error");
-    announce("Queuing sample for rescan…");
+    announce("Refreshing sample…");
 
     try {
       const body = new URLSearchParams({ csrf_token: csrf });
-      const resp = await fetch(`/file/${encodeURIComponent(sha)}/rescan`, {
+      const resp = await fetch(`/file/${encodeURIComponent(sha)}/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
       });
       if (!resp.ok) {
-        let msg = `rescan failed (${resp.status})`;
+        let msg = `refresh failed (${resp.status})`;
         try {
           const j = await resp.json();
           if (j?.error) msg = j.error;
@@ -127,11 +127,19 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
         announce(msg);
         return;
       }
+      const accepted = await resp.json();
+      if (accepted?.status === "current") {
+        btn.textContent = "↻ reloading…";
+        btn.classList.add("is-done");
+        announce("The current analysis already matches Scan. Reloading.");
+        setTimeout(() => location.reload(), 300);
+        return;
+      }
       btn.textContent = "↻ waiting…";
       btn.classList.add("is-done");
-      btn.title = "Sample has been re-queued; waiting for a fresh analysis.";
-      announce("Sample queued. Waiting for analysis to finish.");
-      // We only auto-reload when the user themselves triggered the rescan
+      btn.title = "Sample refresh accepted; waiting for a fresh analysis.";
+      announce("Sample refresh accepted. Waiting for analysis to finish.");
+      // We only auto-reload when the user themselves triggered the refresh
       // on this page — visiting the same page in another tab won't poll
       // because that tab never observed a successful POST here.
       watchForCompletion(sha, after, btn);
@@ -139,7 +147,7 @@ document.querySelectorAll(".rescan-btn").forEach((btn) => {
       btn.textContent = "✕ network error";
       btn.classList.add("is-error");
       btn.title = String(err);
-      announce("Rescan failed: network error.");
+      announce("Refresh failed: network error.");
     }
   });
 });

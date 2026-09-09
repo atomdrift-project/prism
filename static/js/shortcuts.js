@@ -96,10 +96,10 @@ document.addEventListener("keydown", (ev) => {
       return;
     }
     case "r": {
-      const rescan = document.querySelector("button.rescan-btn:not([disabled])");
-      if (!rescan) return;
+      const refresh = document.querySelector("button.refresh-btn:not([disabled])");
+      if (!refresh) return;
       ev.preventDefault();
-      rescan.click();
+      refresh.click();
       return;
     }
     default:

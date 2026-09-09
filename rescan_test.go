@@ -74,3 +74,46 @@ func TestPostRescanToHopper(t *testing.T) {
 		}
 	})
 }
+
+func TestRequestRefreshUsesBeamline(t *testing.T) {
+	sha := strings.Repeat("b", 64)
+	var gotPath, gotMethod, gotSHA, gotRefresh string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		gotSHA, gotRefresh = r.URL.Query().Get("sha256"), r.URL.Query().Get("refresh")
+		w.Header().Set("X-Beamline-Source", "scan:primary")
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		if _, err := w.Write([]byte(`{"status":"analyzed","sha256":"` + sha + `"}` + "\n")); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	oldAddr, oldClient := beamlineAPIAddr, beamlineClient
+	oldCache, oldReport := cache, reportCache
+	oldParents, oldMembers := parentArchiveCache, membersCache
+	beamlineAPIAddr, beamlineClient = srv.URL, srv.Client()
+	cache = openNullCache[storedResult]("refresh result test cache")
+	reportCache = openNullCache[cachedReport]("refresh report test cache")
+	parentArchiveCache = openNullCache[cachedParents]("refresh parents test cache")
+	membersCache = openNullCache[cachedMembers]("refresh members test cache")
+	t.Cleanup(func() {
+		beamlineAPIAddr, beamlineClient = oldAddr, oldClient
+		cache, reportCache = oldCache, oldReport
+		parentArchiveCache, membersCache = oldParents, oldMembers
+	})
+
+	current, err := requestRefresh(context.Background(), sha)
+	if err != nil {
+		t.Fatalf("requestRefresh: %v", err)
+	}
+	if !current {
+		t.Fatal("requestRefresh did not report a current Hopper result")
+	}
+	if gotPath != "/v1/analyze" || gotMethod != http.MethodPost {
+		t.Fatalf("request = %s %s, want POST /v1/analyze", gotMethod, gotPath)
+	}
+	if gotSHA != sha || gotRefresh != "1" {
+		t.Fatalf("query sha256=%q refresh=%q", gotSHA, gotRefresh)
+	}
+}

@@ -128,18 +128,18 @@
         .eco-badge { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 10.5px; border-radius: 3px; padding: 1px 6px; letter-spacing: 0.3px; color: var(--ink-mid); background: var(--mist); }
         .meta .faint { font-size: 12.5px; color: var(--ink-light); }
         .actions { margin-left: auto; display: flex; gap: 8px; }
-        .download-btn, .rescan-btn {
+        .download-btn, .refresh-btn {
             display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 4px;
             font-family: "Inter", system-ui, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
         }
         .download-btn { background: var(--fu); color: #fff; border: 1px solid var(--fu); }
         .download-btn:hover { background: var(--fu-deep); border-color: var(--fu-deep); }
         .download-btn.is-disabled { background: var(--mist); color: var(--ink-light); border-color: var(--rule); cursor: not-allowed; }
-        .rescan-btn { background: var(--paper); color: var(--fu-deep); border: 1px solid var(--fu-border); }
-        .rescan-btn:hover { background: var(--fu-dim); }
-        .rescan-btn:disabled { color: var(--ink-light); cursor: default; }
-        .rescan-btn.is-done { color: #16a34a; border-color: #16a34a; }
-        .rescan-btn.is-error { color: var(--hostile); border-color: var(--hostile); }
+        .refresh-btn { background: var(--paper); color: var(--fu-deep); border: 1px solid var(--fu-border); }
+        .refresh-btn:hover { background: var(--fu-dim); }
+        .refresh-btn:disabled { color: var(--ink-light); cursor: default; }
+        .refresh-btn.is-done { color: #16a34a; border-color: #16a34a; }
+        .refresh-btn.is-error { color: var(--hostile); border-color: var(--hostile); }
         h1 { margin: 0; font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.7px; line-height: 1.1; color: var(--ink); word-break: break-word; }
         .summary { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-mid); max-width: 72ch; }
         .badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
@@ -229,7 +229,7 @@
             .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
             .rail { position: static; }
             /* No drawing and no controls on a phone: the formula reads as text
-               under the URL, and download/rescan are desk work. */
+               under the URL, and download/refresh are desk work. */
             .compound, .actions { display: none; }
             .id-line.formula { display: flex; }
             h1 { font-size: 22px; }
@@ -258,7 +258,7 @@
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav"><a href="/">Fallout</a><a href="/stream">Stream</a><a class="feed-link" href="/feed.atom">{{template "feedicon" .}}Feed</a></div>
     </nav>
-    <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}">
+    <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
         <main id="main">
             <div class="head pending-shell">
                 <span class="pending-badge" id="pending-phase">Beamline is tracing the sample</span>
@@ -300,7 +300,7 @@
                     {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
                     <span class="actions">
                         {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
-                        {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Rescan</button>{{end}}
+                        {{if .RefreshAllowed}}<button type="button" class="refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh this sample's analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Refresh</button>{{end}}
                     </span>
                 </div>
                 <h1>{{.Headline}}</h1>
@@ -357,7 +357,7 @@
     {{template "footer" .}}
     <p class="sr-only">Keyboard shortcuts on this page: j for the next sample, k for the previous one, x to go back to the feed, d to download the original bytes, r to re-queue the sample for analysis.</p>
     <div id="a11y-live" class="sr-only" aria-live="polite"></div>
-    <script nonce="{{.Nonce}}" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" src="/static/js/refresh.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>
     {{if .DeferredMembers}}
     <script nonce="{{.Nonce}}">

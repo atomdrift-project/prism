@@ -191,7 +191,7 @@ const (
 	feedHotPrecacheCount       = 10
 	// auxCacheTTL is the TTL for ancillary per-SHA caches (report, parent
 	// archives, etc.). They key off an immutable SHA-256, and a rescan
-	// explicitly invalidates them (see requestRescan), so the only thing this
+	// explicitly invalidates them (see requestRefresh), so the only thing this
 	// bounds is drift for a sample nobody rescans — hence a long 24-hour
 	// envelope. A hard refresh (Cache-Control: no-cache) bypasses it on demand.
 	auxCacheTTL = 24 * time.Hour
@@ -199,7 +199,7 @@ const (
 	// before another rescan request is accepted. Enforced both
 	// client-side (button hidden) and server-side (atomic check in the
 	// UPDATE statement), so a race or hand-crafted POST can't bypass.
-	rescanCooldown = 15 * time.Minute
+	refreshCooldown = 15 * time.Minute
 )
 
 // csrfKey is the 32-byte key for HMAC-signing CSRF tokens. Tokens are
@@ -704,6 +704,7 @@ type cachedMembers struct {
 //nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
 	Pending        bool
+	PendingUpload  bool
 	PendingStarted int64
 	SHA256JSON     template.JS
 	SHA256Short    string
@@ -712,7 +713,7 @@ type resultData struct {
 	Verdict        string
 	Formula        template.HTML
 	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
-	CSRFToken      string // signed CSRF token for operator actions (rescan)
+	CSRFToken      string // signed CSRF token for operator actions (refresh)
 	// DownloadToken is a separate CSRF token bound to the "download" action.
 	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
 	// gated to button-driven flows: the token only validates for the browser
@@ -898,9 +899,9 @@ type resultData struct {
 	IsArchive   bool
 	// HasTree gates the Structure tab: the containment tree has a root with at
 	// least one child (an archive), not a lone file whose tree is one node.
-	HasTree       bool
-	LimitedInfo   bool
-	RescanAllowed bool // last analysis is older than rescanCooldown — the rescan button is hidden when false
+	HasTree        bool
+	LimitedInfo    bool
+	RefreshAllowed bool // last analysis is older than rescanCooldown — the refresh button is hidden when false
 }
 
 // storedResult is what we persist in fido/datastore.
@@ -2259,7 +2260,7 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
 	mux.HandleFunc("GET /file/{sha256}/events", handleFileEvents)
 	mux.HandleFunc("GET /file/{sha256}/status", handleFileStatus)
-	mux.HandleFunc("POST /file/{sha256}/rescan", handleRescan)
+	mux.HandleFunc("POST /file/{sha256}/refresh", handleRefresh)
 	mux.HandleFunc("POST /file/{sha256}/rum", handleFileRUM)
 	mux.HandleFunc("GET /file/{sha256}/members", handleFileMembers)
 	mux.HandleFunc("GET /formats", handleFormats)
@@ -3413,7 +3414,7 @@ func feedDate(t, now time.Time) string {
 	return t.Local().Format("Jan 2") //nolint:gosmopolitan // server-local rendering is intentional for the public feed
 }
 
-// errSampleNotEligible is returned by requestRescan when the SHA matches no
+// errSampleNotEligible is returned by requestRefresh when the SHA matches no
 // top-level, non-skipped sample in the hopper database OR when the sample
 // was analyzed within the rescanCooldown window. Distinguishing between
 // the two cases would require a second query; the handler surfaces a
@@ -3463,34 +3464,74 @@ func (b *tokenBucket) Allow() bool {
 	return true
 }
 
-// rescanLimiter caps the global rescan request rate at 1/sec sustained
+// refreshLimiter caps the global refresh request rate at 1/sec sustained
 // with a burst of 10 (so several operators can each click once without
 // being blocked, but sustained pressure is throttled to the configured
-// rate). See handleRescan for use.
-var rescanLimiter = newTokenBucket(1.0, 10)
+// rate). See handleRefresh for use.
+var refreshLimiter = newTokenBucket(1.0, 10)
 
-// requestRescan re-queues a sample for analysis by asking hopper's HTTP API to
-// clear its cached analysis fields, so the next worker poll picks it up as Tier
-// 1 (unanalyzed) work. The write is routed through hopper-api rather than
-// prism's own pool: prism reads from a replica, and funneling every write
-// through hopper keeps the master authoritative — the same reason uploads and
-// result publishes go over the API. hopper limits the action to top-level
-// non-skipped samples and enforces the re-queue cooldown server-side.
-//
-// On success prism's per-sha caches are invalidated so a subsequent
-// GET /file/<sha> rebuilds from the re-queued state instead of the stale view.
-func requestRescan(ctx context.Context, sha string) error {
-	if err := postRescanToHopper(ctx, sha); err != nil {
-		return err
+// requestRefresh sends the sample through Beamline's refresh path. Beamline
+// bypasses its edge/KV reads; Scan then accepts Hopper's verdict only when its
+// traits version matches the worker, otherwise it fetches Hopper's immutable
+// bytes and analyzes them. The response body is drained in the background so
+// a long Scan stream remains alive after this short operator request returns.
+// The bool reports that Hopper was already current, allowing the browser to
+// reload instead of waiting for a strictly newer analyzed_at timestamp.
+func requestRefresh(ctx context.Context, sha string) (bool, error) {
+	target := beamlineAnalyzeURL()
+	if target == "" {
+		return false, errors.New("beamline API URL is invalid")
 	}
+	u, err := url.Parse(target)
+	if err != nil {
+		return false, fmt.Errorf("parse beamline refresh URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("sha256", sha)
+	q.Set("refresh", "1")
+	u.RawQuery = q.Encode()
+
+	// Detach from the browser request before opening the stream. Once Beamline
+	// accepts it, the analysis and its cache fills must survive this handler
+	// returning its small JSON acknowledgement.
+	streamCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadIngestTimeout+time.Minute)
+	req, err := http.NewRequestWithContext(streamCtx, http.MethodPost, u.String(), http.NoBody)
+	if err != nil {
+		cancel()
+		return false, fmt.Errorf("build beamline refresh request: %w", err)
+	}
+	req.ContentLength = 0
+	start := time.Now()
+	resp, err := beamlineClient.Do(req) //nolint:bodyclose // the accepted streaming body is closed by its drain goroutine
+	if err != nil {
+		cancel()
+		recordDep(ctx, "beamline-api", "refresh", "error", start)
+		return false, fmt.Errorf("beamline refresh request: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close() //nolint:errcheck // best-effort
+		recordDep(ctx, "beamline-api", "refresh", "error", start)
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096)) //nolint:errcheck // diagnostics only
+		cancel()
+		return false, fmt.Errorf("beamline refresh status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	recordDep(ctx, "beamline-api", "refresh", "ok", start)
+	current := resp.Header.Get("X-Beamline-Source") == "scan:primary" || resp.Header.Get("X-Beamline-Source") == "scan:replica"
+	go func() {
+		defer cancel()
+		defer resp.Body.Close() //nolint:errcheck // best-effort
+		if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, maxLitmusResponseBytes)); err != nil {
+			logger.Warn("beamline refresh stream ended early", "sha256", sha, "error", err)
+		}
+	}()
 	// Invalidate every prism-local cache keyed on this sha so the next
-	// GET /file/<sha> rebuilds the whole page from the re-queued state
+	// GET /file/<sha> rebuilds the whole page from Hopper's current state
 	// instead of serving the stale rendered view. The aux caches now hold a
-	// 24-hour TTL, so without this a rescan wouldn't surface for a day.
+	// 24-hour TTL, so without this a refresh wouldn't surface for a day.
 	// Failures are not fatal — the next refresh window picks up the new
 	// state — but worth logging.
-	invalidateSampleCaches(ctx, sha, "rescan")
-	return nil
+	invalidateSampleCaches(ctx, sha, "refresh")
+	return current, nil
 }
 
 // isHardRefresh reports whether the request is a browser hard reload
@@ -3513,10 +3554,30 @@ func invalidateSampleCaches(ctx context.Context, sha, reason string) {
 		del  func(context.Context, string) error
 		name string
 	}{
-		{name: "result", del: cache.Delete},
-		{name: "report", del: reportCache.Delete},
-		{name: "parents", del: parentArchiveCache.Delete},
-		{name: "members", del: membersCache.Delete},
+		{name: "result", del: func(ctx context.Context, sha string) error {
+			if cache == nil {
+				return nil
+			}
+			return cache.Delete(ctx, sha)
+		}},
+		{name: "report", del: func(ctx context.Context, sha string) error {
+			if reportCache == nil {
+				return nil
+			}
+			return reportCache.Delete(ctx, sha)
+		}},
+		{name: "parents", del: func(ctx context.Context, sha string) error {
+			if parentArchiveCache == nil {
+				return nil
+			}
+			return parentArchiveCache.Delete(ctx, sha)
+		}},
+		{name: "members", del: func(ctx context.Context, sha string) error {
+			if membersCache == nil {
+				return nil
+			}
+			return membersCache.Delete(ctx, sha)
+		}},
 	} {
 		if err := c.del(ctx, sha); err != nil {
 			logger.Debug("sample cache invalidation failed", "sha256", sha, "cache", c.name, "reason", reason, "error", err)
@@ -5042,7 +5103,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if pend, ok := errors.AsType[*pendingAnalysisError](err); ok {
 			reqLogger.Info("rendering pending state", "filename", pend.Filename)
-			renderPending(w, r, sha, pend.Filename)
+			renderPending(w, r, sha, pend.Filename, pend.StartedAt)
 			return
 		}
 		// Ingestion ran and gave up. Say so plainly: a 404 here would tell the
@@ -5091,7 +5152,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	data.Nonce = nonceFor(r)
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
-	data.CSRFToken = csrfToken(r, "rescan")
+	data.CSRFToken = csrfToken(r, "refresh")
 	data.DownloadToken = csrfToken(r, "download")
 	data.DownloadEnabled = hopperAPIAvailable()
 	// A compacted-archive envelope carries member stubs but no member bodies;
@@ -5651,9 +5712,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 			if st, isState := v.(uploadState); isState {
 				switch {
 				case st.FailedAt.IsZero():
-					if _, ok := errors.AsType[*pendingAnalysisError](err); !ok {
-						return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: st.Filename}
-					}
+					return false, storedResult{}, &pendingAnalysisError{SHA: sha, Filename: st.Filename, StartedAt: st.StartedAt}
 				case time.Since(st.FailedAt) <= uploadFailureTTL:
 					return false, storedResult{}, &uploadFailedError{SHA: sha, Filename: st.Filename}
 				default:
@@ -5684,8 +5743,9 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 // been analyzed yet (cleave_result is NULL). Handlers should render the
 // "Analyzing…" page and not cache the partial result.
 type pendingAnalysisError struct {
-	SHA      string
-	Filename string
+	StartedAt time.Time
+	SHA       string
+	Filename  string
 }
 
 func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
@@ -6293,7 +6353,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 		case http.StatusBadRequest:
 			http.Error(w, "invalid sha256", http.StatusBadRequest)
 		case http.StatusRequestEntityTooLarge:
-			http.Error(w, "file is too large to download from the browser; use the litmus CLI", http.StatusRequestEntityTooLarge)
+			http.Error(w, "file is too large to download from the browser; use Atomdrift Scan at https://atomdrift.org/scan/", http.StatusRequestEntityTooLarge)
 		case http.StatusUnsupportedMediaType:
 			http.Error(w, "this archive type can't be served for download", http.StatusUnsupportedMediaType)
 		case http.StatusUnprocessableEntity:
@@ -6319,7 +6379,7 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	}
 	if size > maxDownloadSize {
 		reqLogger.Info("download rejected: file too large", "size_bytes", size, "max_bytes", maxDownloadSize)
-		http.Error(w, "file exceeds the 400 MB browser download limit; use the litmus CLI", http.StatusRequestEntityTooLarge)
+		http.Error(w, "file exceeds the 400 MB browser download limit; use Atomdrift Scan at https://atomdrift.org/scan/", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -6348,18 +6408,15 @@ func writeJSONError(w http.ResponseWriter, status int, code, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code}) //nolint:errcheck,errchkjson // payload is a map[string]string (JSON-safe); response already failed
 }
 
-// handleRescan accepts any user's request to re-queue a sample for analysis,
-// gated at prism by a valid CSRF token (so the request demonstrably came from a
-// recently-rendered page) and a global rate limit, then forwarded to hopper's
-// /api/rescan endpoint. hopper enforces the per-sample re-queue cooldown
-// atomically in its UPDATE; prism mirrors that cooldown (rescanCooldown, 15
-// minutes) only to decide when to offer the button. On success the sample's
-// analysis fields are cleared on the master so the next worker poll picks it
-// up, and prism's local result cache for that SHA is invalidated.
-func handleRescan(w http.ResponseWriter, r *http.Request) {
+// handleRefresh accepts any user's request to refresh a sample's analysis,
+// gated at prism by a valid CSRF token and a global rate limit, then forwarded
+// through Beamline's refresh path. The page-level cooldown still controls when
+// the button is offered; Scan's traits-version comparison controls whether any
+// analysis work is actually needed.
+func handleRefresh(w http.ResponseWriter, r *http.Request) {
 	sha := strings.ToLower(r.PathValue("sha256"))
 	ip := clientIP(r)
-	reqLogger := logger.With("sha256", sha, "client_ip", ip, "action", "rescan")
+	reqLogger := logger.With("sha256", sha, "client_ip", ip, "action", "refresh")
 
 	if !validSHA256(sha) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_sha", "invalid SHA256")
@@ -6372,28 +6429,29 @@ func handleRescan(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "bad_form", "malformed request")
 		return
 	}
-	if !csrfValid(r, "rescan", r.FormValue("csrf_token")) {
+	if !csrfValid(r, "refresh", r.FormValue("csrf_token")) {
 		writeJSONError(w, http.StatusForbidden, "bad_csrf", "CSRF token missing or expired; reload the page and try again")
 		return
 	}
-	if !rescanLimiter.Allow() {
-		reqLogger.Warn("rescan rate-limited")
+	if !refreshLimiter.Allow() {
+		reqLogger.Warn("refresh rate-limited")
 		w.Header().Set("Retry-After", "1")
-		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many rescan requests; please wait a moment")
+		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many refresh requests; please wait a moment")
 		return
 	}
-	if err := requestRescan(r.Context(), sha); err != nil {
-		if errors.Is(err, errSampleNotEligible) {
-			writeJSONError(w, http.StatusTooManyRequests, "not_eligible", "sample is not eligible — either it's an archive child, skipped, or was analyzed within the last 15 minutes")
-			return
-		}
-		reqLogger.Error("rescan: hopper update failed", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "rescan_failed", "failed to queue rescan")
+	current, err := requestRefresh(r.Context(), sha)
+	if err != nil {
+		reqLogger.Error("refresh: beamline request failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "refresh_failed", "failed to queue refresh")
 		return
 	}
-	reqLogger.Info("rescan queued")
+	status := "queued"
+	if current {
+		status = "current"
+	}
+	reqLogger.Info("refresh accepted", "status", status)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"}) //nolint:errcheck,errchkjson // map[string]string is JSON-safe
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": status}) //nolint:errcheck,errchkjson // map[string]string is JSON-safe
 }
 
 // hopperDSNHost extracts the host:port from a postgres DSN for logging.
@@ -6531,17 +6589,22 @@ func serveFileJSON(w http.ResponseWriter, r *http.Request, sha, ip string) {
 // row exists in hopper but has no cleave_result yet. The page opens an
 // SSE connection to /file/<sha>/wait that flips to a result-page reload
 // the moment a worker writes the cleave result.
-func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string) {
+func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string, startedAt time.Time) {
 	if filename == "" {
 		filename = sha[:12] + "…"
 	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	_, pendingUpload := uploadEventStreams.Load(sha)
 	shaJSON, err := json.Marshal(sha)
 	if err != nil {
 		shaJSON = []byte(`""`)
 	}
 	data := resultData{
 		Pending:        true,
-		PendingStarted: time.Now().UnixMilli(),
+		PendingUpload:  pendingUpload,
+		PendingStarted: startedAt.UnixMilli(),
 		SHA256JSON:     template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
 		Filename:       filename,
 		Headline:       filename,
@@ -6642,6 +6705,13 @@ func handleFileEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	subscription := stream.subscribe()
 	defer subscription.unsubscribe()
+	ip := clientIP(r)
+	if !waitAcquire(ip) {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, "too many concurrent upload streams", http.StatusTooManyRequests)
+		return
+	}
+	defer waitRelease(ip)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -6653,29 +6723,58 @@ func handleFileEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-	emit := func(frame []byte) bool {
-		if _, err := fmt.Fprintf(w, "event: beamline\ndata: %s\n\n", frame); err != nil {
+	emit := func(event string, frame []byte) bool {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, frame); err != nil {
 			return false
 		}
 		flusher.Flush()
 		return true
 	}
 	for _, frame := range subscription.history {
-		if !emit(frame) {
+		if !emit("beamline", frame) {
 			return
 		}
 	}
+	events := subscription.events
 	if subscription.closed {
-		return
+		events = nil
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), uploadProgressTTL)
+	defer cancel()
+	readyTicker := time.NewTicker(waitPollInterval)
+	defer readyTicker.Stop()
 	heartbeat := time.NewTicker(waitHeartbeatInterval)
 	defer heartbeat.Stop()
+	checkReady := func() bool {
+		state, _ := uploadViewState(ctx, sha)
+		switch state {
+		case "ready":
+			emit("ready", []byte(readyPayload(sha)))
+			return true
+		case "failed":
+			emit("failed", []byte(`{"message":"Beamline could not complete this analysis."}`))
+			return true
+		default:
+			return false
+		}
+	}
+	if checkReady() {
+		return
+	}
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
-		case frame, ok := <-subscription.events:
-			if !ok || !emit(frame) {
+		case frame, open := <-events:
+			if !open {
+				events = nil
+				continue
+			}
+			if !emit("beamline", frame) {
+				return
+			}
+		case <-readyTicker.C:
+			if checkReady() {
 				return
 			}
 		case <-heartbeat.C:
@@ -6804,7 +6903,9 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	// seconds, and a trigger that fires on a timer is not the attention signal
 	// this is meant to capture.
 	if after.IsZero() {
-		go escalate(context.WithoutCancel(ctx), sha, name, logger.With("sha256", sha, "client_ip", ip))
+		if _, browserUpload := uploadsInFlight.Load(sha); !browserUpload {
+			go escalate(context.WithoutCancel(ctx), sha, name, logger.With("sha256", sha, "client_ip", ip))
+		}
 	}
 
 	for {
@@ -6838,6 +6939,9 @@ func uploadViewState(ctx context.Context, sha string) (state, filename string) {
 	}
 	if pend, ok := errors.AsType[*pendingAnalysisError](err); ok {
 		return "pending", pend.Filename
+	}
+	if failed, ok := errors.AsType[*uploadFailedError](err); ok {
+		return "failed", failed.Filename
 	}
 	return "missing", ""
 }
@@ -6878,6 +6982,7 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 	after := parseAfterMillis(r.URL.Query().Get("after"))
 	exists := false
 	ready := false
+	failed := false
 	var analyzedAtMillis int64
 	if !after.IsZero() {
 		sample, err := db.SampleBySHA256(ctx, sha)
@@ -6899,11 +7004,14 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 			exists, ready = true, true
 		case "pending":
 			exists = true
+		case "failed":
+			exists = true
+			failed = true
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	resp := map[string]any{"exists": exists, "ready": ready}
+	resp := map[string]any{"exists": exists, "ready": ready, "failed": failed}
 	if analyzedAtMillis > 0 {
 		resp["analyzed_at"] = analyzedAtMillis
 	}
@@ -6996,14 +7104,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	reqLogger.Info("upload request received")
 
-	// Beamline's public upload cap is 16 MiB.
-	const maxUploadSize = 16 * 1024 * 1024
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+1<<20)
-
-	// Outbound timeout to Beamline — generous to cover analysis of a large
-	// artifact over a slow link.
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
+	// Leave bounded room for multipart headers and the CSRF field above the
+	// actual file ceiling.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+(1<<20))
 
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -7048,8 +7151,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 					Icon:  "⚖",
 					Title: "File too large",
-					MessageHTML: `The web interface accepts files up to 16 MiB. For larger files, use ` +
-						`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+					MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+						`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
 				})
 				return
 			}
@@ -7092,7 +7195,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			serveUploadedFile(ctx, w, r, part, maxUploadSize, requestStart, reqLogger)
+			serveUploadedFile(r.Context(), w, r, part, maxUploadSize, requestStart, reqLogger)
 			return
 
 		default:
@@ -7116,22 +7219,50 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	filename := filepath.Base(part.FileName())
 	reqLogger = reqLogger.With("filename", filename)
 
-	// Buffer the file once and identify it by content hash — the same sha256
-	// hopper and litmus derive from the bytes — so we never depend on a backend
-	// to tell us where to send the user. Cap the part even though the whole
-	// request is already behind MaxBytesReader: a malformed multipart with one
-	// giant non-file leading part could otherwise waste memory first. A
-	// MaxBytesError surfaces here as the body cap trips.
-	buf, rerr := io.ReadAll(io.LimitReader(part, maxUploadSize))
+	// Spool while hashing so sixteen 100 MiB uploads consume bounded disk rather
+	// than 1.6 GiB of heap. The extra byte is how we distinguish an exact-limit
+	// file from one that must be rejected; LimitReader itself never reports
+	// overflow.
+	tmp, err := os.CreateTemp("", "prism-upload-*")
+	if err != nil {
+		_ = part.Close() //nolint:errcheck // best-effort
+		reqLogger.Error("upload spool creation failed", "error", err)
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "⚠",
+			Title:   "Upload unavailable",
+			Message: "Prism could not prepare this upload. Please try again.",
+		})
+		return
+	}
+	spoolPath := tmp.Name()
+	keepSpool := false
+	defer func() {
+		_ = tmp.Close() //nolint:errcheck // best-effort
+		if !keepSpool {
+			_ = os.Remove(spoolPath) //nolint:errcheck // best-effort cleanup after rejected upload
+		}
+	}()
+	digest := sha256.New()
+	size, rerr := io.Copy(io.MultiWriter(tmp, digest), io.LimitReader(part, maxUploadSize+1))
 	_ = part.Close() //nolint:errcheck // best-effort
-	if rerr != nil {
+	if rerr != nil || size > maxUploadSize {
+		if size > maxUploadSize {
+			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
+			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
+				Icon:  "⚖",
+				Title: "File too large",
+				MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+					`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
+			})
+			return
+		}
 		if _, ok := errors.AsType[*http.MaxBytesError](rerr); ok {
 			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 				Icon:  "⚖",
 				Title: "File too large",
-				MessageHTML: `The web interface accepts files up to 16 MiB. For larger files, use ` +
-					`<a href="https://codeberg.org/atomdrift/litmus">litmus</a>, our open-source command-line tool — no size limits.`,
+				MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+					`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
 			})
 			return
 		}
@@ -7143,28 +7274,85 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		})
 		return
 	}
+	if err := tmp.Close(); err != nil {
+		reqLogger.Error("upload spool close failed", "error", err)
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "⚠",
+			Title:   "Upload unavailable",
+			Message: "Prism could not prepare this upload. Please try again.",
+		})
+		return
+	}
 
-	sum := sha256.Sum256(buf)
-	sha := hex.EncodeToString(sum[:])
+	sha := hex.EncodeToString(digest.Sum(nil))
 	reqLogger = reqLogger.With("sha256", sha)
 	reqLogger.Info("upload received; ingesting via Beamline",
-		"size", len(buf),
+		"size", size,
 		"total_duration_ms", time.Since(requestStart).Milliseconds(),
 	)
 
-	// Ingest on litmus and hopper concurrently in the background; either path
-	// alone makes /file/<sha> render. Mark the sha in-flight first so the page
-	// shows an "analyzing" state (not a 404) during the window before either
-	// backend has a result.
-	uploadsInFlight.Store(sha, uploadState{Filename: filename})
-	stream := keepUploadEventStream(sha)
-	go ingestUpload(context.WithoutCancel(ctx), buf, sha, filename, stream)
+	// A 100 MiB upload remains resident while Beamline analyzes it, so rate
+	// limiting alone is not enough: cap concurrent buffers explicitly.
+	select {
+	case beamlineSlots <- struct{}{}:
+	default:
+		reqLogger.Info("upload rejected: Beamline slots full")
+		w.Header().Set("Retry-After", "30")
+		renderError(w, r, http.StatusServiceUnavailable, errorData{
+			Icon:    "⏳",
+			Title:   "Analysis queue full",
+			Message: "All browser analysis slots are busy. Please try again in about 30 seconds.",
+		})
+		return
+	}
 
-	http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+	startedAt := time.Now()
+	state := uploadState{Filename: filename, StartedAt: startedAt}
+	for {
+		actual, loaded := uploadsInFlight.LoadOrStore(sha, state)
+		if !loaded {
+			break
+		}
+		previous, valid := actual.(uploadState)
+		if valid && previous.FailedAt.IsZero() {
+			<-beamlineSlots
+			http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+			return
+		}
+		if uploadsInFlight.CompareAndSwap(sha, actual, state) {
+			break
+		}
+	}
+	time.AfterFunc(uploadProgressTTL, func() { uploadsInFlight.CompareAndDelete(sha, state) })
+	stream := keepUploadEventStream(sha)
+	accepted := make(chan error, 1)
+	keepSpool = true
+	go ingestUpload(context.WithoutCancel(ctx), spoolPath, size, sha, filename, stream, accepted)
+
+	// Do not hand out the result URL until Beamline has accepted the complete
+	// request body and returned a streaming response. Before this boundary a
+	// Prism restart leaves the browser on its POST, where retry is safe; after
+	// it, Beamline owns the analysis and will publish the result to Hopper.
+	select {
+	case err := <-accepted:
+		if err != nil {
+			renderError(w, r, http.StatusBadGateway, errorData{
+				Icon:    "⚠",
+				Title:   "Upload failed",
+				Message: "Beamline could not accept this upload. Please try again.",
+			})
+			return
+		}
+		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+	case <-r.Context().Done():
+		return
+	}
 }
 
 // Upload ingestion tuning.
 const (
+	// maxUploadSize is shared with the browser-side guard in static/upload.js.
+	maxUploadSize = 100 << 20
 	// uploadIngestTimeout bounds the background Beamline analysis. Beamline may
 	// hold an analysis stream for up to 30 minutes on the heaviest artifact.
 	uploadIngestTimeout = 35 * time.Minute
@@ -7180,12 +7368,17 @@ const (
 	// overrun the litmus server. When all slots are busy a new upload skips the
 	// fast path; hopper still stores it durably and its own worker analyzes it.
 	maxConcurrentLitmus = 8
+	// Uploads are disk-spooled, so sixteen concurrent analyses do not imply a
+	// sixteen-file heap commitment. Excess requests fail quickly with Retry-After.
+	maxConcurrentBeamline = 16
 )
 
 // litmusSlots is the maxConcurrentLitmus semaphore: a token per in-flight
 // litmus analysis, acquired non-blocking so a saturated fast path degrades to
 // hopper rather than queueing memory-heavy work.
 var litmusSlots = make(chan struct{}, maxConcurrentLitmus)
+
+var beamlineSlots = make(chan struct{}, maxConcurrentBeamline)
 
 // uploadsInFlight tracks shas whose upload is being ingested in the background
 // (sha -> uploadState). lookupResult renders a pending "analyzing" page for
@@ -7199,8 +7392,9 @@ var uploadsInFlight sync.Map
 // the ingestion in that case so /file/<sha> can explain what happened instead of
 // 404ing a hash the user handed us seconds ago.
 type uploadState struct {
-	FailedAt time.Time
-	Filename string
+	FailedAt  time.Time
+	StartedAt time.Time
+	Filename  string
 }
 
 // uploadFailureTTL bounds how long a failed ingestion stays visible on the
@@ -7209,17 +7403,19 @@ type uploadState struct {
 // shadowed by the stale failure.
 const uploadFailureTTL = 15 * time.Minute
 
-// markUploadFailed records a terminal ingestion failure and sweeps expired
-// entries. The sweep is O(entries) but runs only on failure, and the map holds
-// at most one entry per in-flight or recently-failed upload.
+// markUploadFailed records a terminal ingestion failure for long enough that
+// the redirected detail page can explain it. CompareAndDelete prevents an old
+// timer from deleting a later re-upload of the same bytes.
 func markUploadFailed(sha, filename string, now time.Time) {
-	uploadsInFlight.Store(sha, uploadState{Filename: filename, FailedAt: now})
-	uploadsInFlight.Range(func(k, v any) bool {
-		if st, ok := v.(uploadState); ok && !st.FailedAt.IsZero() && now.Sub(st.FailedAt) > uploadFailureTTL {
-			uploadsInFlight.Delete(k)
+	startedAt := now
+	if current, ok := uploadsInFlight.Load(sha); ok {
+		if state, valid := current.(uploadState); valid && !state.StartedAt.IsZero() {
+			startedAt = state.StartedAt
 		}
-		return true
-	})
+	}
+	failed := uploadState{Filename: filename, StartedAt: startedAt, FailedAt: now}
+	uploadsInFlight.Store(sha, failed)
+	time.AfterFunc(uploadFailureTTL, func() { uploadsInFlight.CompareAndDelete(sha, failed) })
 }
 
 // uploadFailedError signals that a sample's background ingestion finished with
@@ -7266,13 +7462,27 @@ func litmusAnalyzeURL() string {
 // ingestUpload sends the uploaded bytes to Beamline's public analysis API and
 // caches its terminal assessment for Prism's existing result page. Beamline is
 // the sole upload destination; Hopper and Litmus are not fallback paths.
-func ingestUpload(ctx context.Context, buf []byte, sha, filename string, stream *uploadEventStream) {
+func ingestUpload(ctx context.Context, spoolPath string, size int64, sha, filename string, stream *uploadEventStream, accepted chan<- error) {
 	ctx, cancel := context.WithTimeout(ctx, uploadIngestTimeout)
 	defer cancel()
 	defer stream.close()
+	defer func() { <-beamlineSlots }()
+	defer func() {
+		if err := os.Remove(spoolPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.Warn("upload spool cleanup failed", "path", spoolPath, "error", err)
+		}
+	}()
 	log := logger.With("sha256", sha, "filename", filename)
-	assessment, err := analyzeWithBeamline(ctx, buf, filename, stream.publish)
+	acceptedSent := false
+	assessment, err := analyzeFileWithBeamline(ctx, spoolPath, size, filename, stream.publish, func() {
+		acceptedSent = true
+		accepted <- nil
+	})
 	if err != nil {
+		if !acceptedSent {
+			accepted <- err
+		}
+		stream.publish([]byte(`{"status":"error","message":"Beamline could not complete this analysis."}`))
 		log.Error("beamline upload failed", "error", err)
 		markUploadFailed(sha, filename, time.Now())
 		return
@@ -7320,30 +7530,33 @@ func beamlineAnalyzeURL() string {
 
 // analyzeWithBeamline posts raw bytes to Beamline and reads until the NDJSON
 // stream's terminal object, the first object containing a status field.
-func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte)) (*beamlineAssessment, error) {
+func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
+	return analyzeBeamline(ctx, int64(len(buf)), filename, func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(buf)), nil
+	}, onFrame, onAccepted)
+}
+
+func analyzeFileWithBeamline(ctx context.Context, path string, size int64, filename string, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
+	return analyzeBeamline(ctx, size, filename, func() (io.ReadCloser, error) {
+		return os.Open(path)
+	}, onFrame, onAccepted)
+}
+
+type beamlineBodyFactory func() (io.ReadCloser, error)
+
+func analyzeBeamline(ctx context.Context, size int64, filename string, body beamlineBodyFactory, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
 	target := beamlineAnalyzeURL()
 	if target == "" {
 		return nil, errors.New("beamline API URL is invalid")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(buf))
+	resp, err := openBeamlineStream(ctx, target, size, filename, body, onFrame)
 	if err != nil {
-		return nil, fmt.Errorf("build beamline request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("X-File-Name", filename)
-	start := time.Now()
-	resp, err := beamlineClient.Do(req)
-	if err != nil {
-		recordDep(ctx, "beamline-api", "upload", "error", start)
-		return nil, fmt.Errorf("beamline request: %w", err)
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096)) //nolint:errcheck // diagnostics only
-		recordDep(ctx, "beamline-api", "upload", "error", start)
-		return nil, fmt.Errorf("beamline status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	if onAccepted != nil {
+		onAccepted()
 	}
-	recordDep(ctx, "beamline-api", "upload", "ok", start)
 
 	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxLitmusResponseBytes))
 	scanner.Buffer(make([]byte, 64*1024), 4<<20)
@@ -7376,6 +7589,63 @@ func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFra
 		assessment.SHA = assessment.SHA256
 	}
 	return &assessment, nil
+}
+
+const beamlineUploadAttempts = 3
+
+var beamlineUploadBackoff = [...]time.Duration{250 * time.Millisecond, time.Second}
+
+func openBeamlineStream(ctx context.Context, target string, size int64, filename string, body beamlineBodyFactory, onFrame func([]byte)) (*http.Response, error) {
+	var lastErr error
+	for attempt := 1; attempt <= beamlineUploadAttempts; attempt++ {
+		requestBody, err := body()
+		if err != nil {
+			return nil, fmt.Errorf("open beamline upload: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, requestBody)
+		if err != nil {
+			_ = requestBody.Close() //nolint:errcheck // best-effort
+			return nil, fmt.Errorf("build beamline request: %w", err)
+		}
+		req.ContentLength = size
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("X-File-Name", filename)
+		start := time.Now()
+		resp, doErr := beamlineClient.Do(req)
+		if doErr == nil && resp.StatusCode == http.StatusOK {
+			recordDep(ctx, "beamline-api", "upload", "ok", start)
+			return resp, nil
+		}
+		recordDep(ctx, "beamline-api", "upload", "error", start)
+		retryable := doErr != nil
+		if doErr != nil {
+			lastErr = fmt.Errorf("beamline request: %w", doErr)
+		} else {
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096)) //nolint:errcheck // diagnostics only
+			_ = resp.Body.Close()                                     //nolint:errcheck // best-effort
+			lastErr = fmt.Errorf("beamline status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+			retryable = resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError
+		}
+		if !retryable || attempt == beamlineUploadAttempts {
+			return nil, lastErr
+		}
+		if onFrame != nil {
+			retryFrame, marshalErr := json.Marshal(map[string]any{"phase": "retrying", "message": "Beamline asked Prism to try the handoff again.", "attempt": attempt + 1})
+			if marshalErr != nil {
+				logger.Warn("failed to encode Beamline retry progress", "error", marshalErr)
+			} else {
+				onFrame(retryFrame)
+			}
+		}
+		timer := time.NewTimer(beamlineUploadBackoff[attempt-1])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
+	return nil, lastErr
 }
 
 // cacheLitmusResult stores a litmus verdict in prism's result cache so
@@ -7648,7 +7918,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.AnalyzedAt = analyzedAt.Format("2 Jan 2006 15:04 UTC")
 		data.AnalyzedAgo = timeAgo(time.Since(analyzedAt))
 		data.AnalyzedAtMillis = analyzedAt.UnixMilli()
-		data.RescanAllowed = time.Since(analyzedAt) >= rescanCooldown
+		data.RefreshAllowed = time.Since(analyzedAt) >= refreshCooldown
 	}
 	data.SourceURL, data.SourceLabel = sourceDisplay(res.SourceURL, res.SourceDomain)
 	if res.Ecosystem != "" {

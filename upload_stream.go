@@ -28,16 +28,19 @@ type uploadEventSubscription struct {
 
 const maxUploadStreamEvents = 64
 
+const (
+	maxUploadProgressFrame = 64 << 10
+	uploadProgressTTL      = uploadIngestTimeout + 5*time.Minute
+)
+
 func newUploadEventStream() *uploadEventStream {
 	return &uploadEventStream{subscribers: make(map[chan []byte]struct{})}
 }
 
 func (s *uploadEventStream) publish(frame []byte) {
-	if !json.Valid(frame) {
+	frame = compactUploadProgressFrame(frame)
+	if len(frame) == 0 {
 		return
-	}
-	if len(frame) > 64<<10 {
-		frame = frame[:64<<10]
 	}
 	copyFrame := append([]byte(nil), frame...)
 	s.mu.Lock()
@@ -100,6 +103,110 @@ func keepUploadEventStream(sha string) *uploadEventStream {
 	uploadEventStreams.Store(sha, stream)
 	// The stream is only a progress view. Keep it long enough for a refresh
 	// race, then discard it regardless of whether the browser stayed open.
-	time.AfterFunc(uploadFailureTTL, func() { uploadEventStreams.Delete(sha) })
+	time.AfterFunc(uploadProgressTTL, func() { uploadEventStreams.CompareAndDelete(sha, stream) })
 	return stream
+}
+
+// compactUploadProgressFrame keeps SSE memory bounded without ever slicing a
+// JSON value in half. Most Beamline phase frames are tiny and pass through
+// unchanged. A terminal frame can contain a large findings body; for the
+// progress UI we retain only scalar status fields and the first three compact
+// trait descriptions. Hopper still receives and stores the complete result.
+func compactUploadProgressFrame(frame []byte) []byte {
+	if !json.Valid(frame) {
+		return nil
+	}
+	if len(frame) <= maxUploadProgressFrame {
+		return append([]byte(nil), frame...)
+	}
+	var source map[string]json.RawMessage
+	if err := json.Unmarshal(frame, &source); err != nil {
+		return nil
+	}
+	compact := make(map[string]json.RawMessage)
+	for _, key := range []string{
+		"phase", "state", "stage", "status", "message", "msg", "detail",
+		"description", "phase_message", "level", "severity", "classification",
+		"verdict", "risk_level", "why", "sha", "sha256", "fires_at",
+	} {
+		if value := source[key]; len(value) > 0 && len(value) <= 4096 {
+			compact[key] = value
+		}
+	}
+	for _, key := range []string{"top_traits", "traits", "findings"} {
+		if value := compactProgressTraits(source[key]); len(value) > 0 {
+			compact[key] = value
+		}
+	}
+	if ml := compactProgressML(source["ml"]); len(ml) > 0 {
+		compact["ml"] = ml
+	}
+	out, err := json.Marshal(compact)
+	if err != nil || len(out) > maxUploadProgressFrame {
+		return []byte(`{"phase":"progress","message":"Beamline produced a large progress update."}`)
+	}
+	return out
+}
+
+func compactProgressTraits(raw json.RawMessage) json.RawMessage {
+	var values []json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &values) != nil {
+		return nil
+	}
+	if len(values) > 3 {
+		values = values[:3]
+	}
+	for i, value := range values {
+		if len(value) <= 4096 {
+			continue
+		}
+		var trait map[string]json.RawMessage
+		if json.Unmarshal(value, &trait) != nil {
+			values[i] = json.RawMessage(`"large finding"`)
+			continue
+		}
+		brief := make(map[string]json.RawMessage)
+		for _, key := range []string{"trait", "name", "title", "description", "desc", "id"} {
+			if field := trait[key]; len(field) > 0 && len(field) <= 2048 {
+				brief[key] = field
+			}
+		}
+		encoded, err := json.Marshal(brief)
+		if err != nil {
+			values[i] = json.RawMessage(`"large finding"`)
+			continue
+		}
+		values[i] = encoded
+	}
+	out, err := json.Marshal(values)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+func compactProgressML(raw json.RawMessage) json.RawMessage {
+	var source map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &source) != nil {
+		return nil
+	}
+	compact := make(map[string]json.RawMessage)
+	for _, key := range []string{"level", "lvl", "severity", "classification", "verdict"} {
+		if value := source[key]; len(value) > 0 && len(value) <= 1024 {
+			compact[key] = value
+		}
+	}
+	for _, key := range []string{"top_traits", "traits", "findings"} {
+		if value := compactProgressTraits(source[key]); len(value) > 0 {
+			compact[key] = value
+		}
+	}
+	if len(compact) == 0 {
+		return nil
+	}
+	out, err := json.Marshal(compact)
+	if err != nil {
+		return nil
+	}
+	return out
 }

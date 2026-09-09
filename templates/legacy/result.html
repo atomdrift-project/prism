@@ -1862,7 +1862,7 @@
                         <span class="meta-label">Analyzed</span>
                         <span class="meta-value" title="{{.AnalyzedAt}}">
                             {{.AnalyzedAgo}}
-                            {{if .RescanAllowed}}<button type="button" class="rescan-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Re-queue this sample for analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>rescan</button>{{end}}
+                            {{if .RefreshAllowed}}<button type="button" class="rescan-btn refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh this sample's analysis. Keyboard shortcut: r" aria-keyshortcuts="r"><span aria-hidden="true">↻ </span>refresh</button>{{end}}
                         </span>
                     </div>
                     {{end}}
@@ -2201,7 +2201,7 @@
     <script nonce="{{.Nonce}}" type="module" src="/static/js/members.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/trait-expand.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/hero-nav.js?v={{.BuildCommit}}"></script>
-    <script nonce="{{.Nonce}}" type="module" src="/static/js/rescan.js?v={{.BuildCommit}}"></script>
+    <script nonce="{{.Nonce}}" type="module" src="/static/js/refresh.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" type="module" src="/static/js/tree.js?v={{.BuildCommit}}"></script>
 </body>
 </html>

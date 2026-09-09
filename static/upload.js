@@ -7,7 +7,7 @@ const ecosystemFilter = document.getElementById("ecosystem-filter");
 const domainFilter = document.getElementById("domain-filter");
 const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search-input");
-const maxSize = 100 * 1024 * 1024; // 100 MB
+const maxSize = 100 * 1024 * 1024; // Prism's browser upload cap
 
 document.querySelectorAll("[data-gradient]").forEach((el) => {
   el.style.background = el.getAttribute("data-gradient");
@@ -287,7 +287,7 @@ if (input && form) {
     if (file.size > maxSize) {
       uploadStatus.className = "top-upload-status";
       uploadStatus.innerHTML =
-        'File exceeds 100 MB. Use <a href="https://github.com/atomdrift-project/litmus">litmus CLI</a>.';
+        'File exceeds 100 MiB. Use <a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.';
       input.value = "";
       return;
     }
