@@ -7,22 +7,27 @@ import (
 )
 
 // uploadEventStream keeps the short-lived Beamline transcript for one browser
-// upload. It is deliberately in-memory: the transcript is UI telemetry, not
-// the analysis result, and Hopper remains authoritative for the final page.
+// upload. It is deliberately in-memory: the transcript is UI telemetry; the
+// terminal full response is persisted in Prism's result cache separately.
 //
 //nolint:govet // the mutex stays adjacent to the mutable progress state.
 type uploadEventStream struct {
 	mu          sync.Mutex
 	closed      bool
-	events      [][]byte
-	subscribers map[chan []byte]struct{}
+	events      []uploadStreamEvent
+	subscribers map[chan uploadStreamEvent]struct{}
+}
+
+type uploadStreamEvent struct {
+	kind string
+	data []byte
 }
 
 //nolint:govet // this short-lived handoff keeps the subscription self-contained.
 type uploadEventSubscription struct {
 	closed      bool
-	history     [][]byte
-	events      <-chan []byte
+	history     []uploadStreamEvent
+	events      <-chan uploadStreamEvent
 	unsubscribe func()
 }
 
@@ -34,15 +39,23 @@ const (
 )
 
 func newUploadEventStream() *uploadEventStream {
-	return &uploadEventStream{subscribers: make(map[chan []byte]struct{})}
+	return &uploadEventStream{subscribers: make(map[chan uploadStreamEvent]struct{})}
 }
 
 func (s *uploadEventStream) publish(frame []byte) {
-	frame = compactUploadProgressFrame(frame)
+	s.publishEvent("beamline", compactUploadProgressFrame(frame))
+}
+
+func (s *uploadEventStream) publishServer(info []byte) {
+	s.publishEvent("server", info)
+}
+
+func (s *uploadEventStream) publishEvent(kind string, frame []byte) {
 	if len(frame) == 0 {
 		return
 	}
 	copyFrame := append([]byte(nil), frame...)
+	event := uploadStreamEvent{kind: kind, data: copyFrame}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -50,13 +63,13 @@ func (s *uploadEventStream) publish(frame []byte) {
 	}
 	if len(s.events) == maxUploadStreamEvents {
 		copy(s.events, s.events[1:])
-		s.events[len(s.events)-1] = copyFrame
+		s.events[len(s.events)-1] = event
 	} else {
-		s.events = append(s.events, copyFrame)
+		s.events = append(s.events, event)
 	}
 	for sub := range s.subscribers {
 		select {
-		case sub <- append([]byte(nil), copyFrame...):
+		case sub <- uploadStreamEvent{kind: kind, data: append([]byte(nil), copyFrame...)}:
 		default:
 			// A slow browser already has enough history to catch up. Do not let
 			// it hold Beamline's analysis goroutine hostage.
@@ -67,14 +80,14 @@ func (s *uploadEventStream) publish(frame []byte) {
 func (s *uploadEventStream) subscribe() uploadEventSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	history := make([][]byte, len(s.events))
-	for i := range s.events {
-		history[i] = append([]byte(nil), s.events[i]...)
+	history := make([]uploadStreamEvent, len(s.events))
+	for i, event := range s.events {
+		history[i] = uploadStreamEvent{kind: event.kind, data: append([]byte(nil), event.data...)}
 	}
 	if s.closed {
 		return uploadEventSubscription{history: history, unsubscribe: func() {}, closed: true}
 	}
-	sub := make(chan []byte, 16)
+	sub := make(chan uploadStreamEvent, 16)
 	s.subscribers[sub] = struct{}{}
 	return uploadEventSubscription{history: history, events: sub, unsubscribe: func() {
 		s.mu.Lock()
@@ -111,7 +124,7 @@ func keepUploadEventStream(sha string) *uploadEventStream {
 // JSON value in half. Most Beamline phase frames are tiny and pass through
 // unchanged. A terminal frame can contain a large findings body; for the
 // progress UI we retain only scalar status fields and the first three compact
-// trait descriptions. Hopper still receives and stores the complete result.
+// trait descriptions. The complete result is cached separately by ingestUpload.
 func compactUploadProgressFrame(frame []byte) []byte {
 	if !json.Valid(frame) {
 		return nil

@@ -197,33 +197,61 @@
         .skel-code { height: 116px; border-radius: 6px; border: 1px solid var(--rule); background: var(--mist); }
         @media (prefers-reduced-motion: reduce) { .evidence-pending { animation: none; opacity: 1; } }
         .note a { color: var(--fu-deep); font-weight: 600; }
-        .pending-shell { display: flex; flex-direction: column; gap: 18px; }
-        .pending-badge { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--fu-deep); font-family: var(--display); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-        .pending-badge::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--fu); box-shadow: 0 0 0 5px var(--fu-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
+        .pending-shell { display: flex; flex-direction: column; gap: 20px; }
+        .pending-kicker { display: flex; align-items: center; gap: 9px; color: var(--fu-deep); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+        .pending-kicker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--fu); box-shadow: 0 0 0 5px var(--fu-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
+        .pending-kicker.done::before { background: #16a34a; box-shadow: 0 0 0 5px #eaf8ed; animation: none; }
         @keyframes pending-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+        .pending-title-row { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
+        .pending-title-row h1 { max-width: 16ch; }
+        .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--fu-border); border-radius: 999px; color: var(--fu-deep); background: var(--fu-dim); font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+        .pending-state.ready { color: #167534; border-color: #b9e8c2; background: #effbf1; }
         .pending-copy { margin: 0; max-width: 62ch; color: var(--ink-mid); font-size: 16px; }
         .pending-copy em { color: var(--fu-deep); font-style: normal; }
-        .pending-meta { display: flex; flex-direction: column; gap: 7px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 7px; background: var(--mist); }
+        .pending-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; padding: 15px 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--mist); }
         .pending-meta .id-line { gap: 14px; }
         .pending-meta .k { width: 78px; }
-        .pending-stream { display: flex; flex-direction: column; gap: 8px; min-height: 130px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 7px; background: var(--paper); }
+        .pending-meta .id-line:last-child { grid-column: 1 / -1; }
+        .pending-timeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin: 8px 0 4px; }
+        .pending-step { position: relative; display: flex; flex-direction: column; gap: 7px; padding-right: 12px; color: var(--ink-light); font-size: 12px; }
+        .pending-step::after { content: ""; position: absolute; left: 17px; right: 0; top: 8px; height: 2px; background: var(--rule); }
+        .pending-step:last-child::after { display: none; }
+        .pending-step .dot { z-index: 1; width: 17px; height: 17px; border: 4px solid var(--paper); border-radius: 50%; background: var(--rule); box-shadow: 0 0 0 1px var(--rule); }
+        .pending-step.complete { color: var(--ink-mid); }
+        .pending-step.complete .dot { background: #16a34a; box-shadow: 0 0 0 1px #16a34a; }
+        .pending-step.active { color: var(--fu-deep); font-weight: 700; }
+        .pending-step.active .dot { background: var(--fu); box-shadow: 0 0 0 4px var(--fu-dim), 0 0 0 5px var(--fu); }
+        .pending-step.active::after { background: linear-gradient(90deg, var(--fu) 0 35%, var(--rule) 35%); }
+        .pending-stream { display: flex; flex-direction: column; gap: 15px; min-height: 230px; padding: 18px; border: 1px solid var(--rule); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 28px rgba(204, 0, 119, 0.06); }
         .pending-stream-head { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-light); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
         .pending-elapsed { font-family: var(--mono); color: var(--fu-deep); }
-        .pending-events { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; }
-        .pending-events li { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--rule-soft); }
-        .pending-events li:last-child { border-bottom: 0; }
-        .pending-events .phase { color: var(--fu-deep); }
-        .pending-events .message { color: var(--ink-mid); overflow-wrap: anywhere; }
-        .pending-signal { display: none; align-items: baseline; gap: 10px; margin: 2px 0 4px; }
+        .pending-current { display: grid; gap: 5px; padding: 16px; border-radius: 7px; background: var(--mist); }
+        .pending-current strong { font-family: var(--display); font-size: 20px; line-height: 1.15; }
+        .pending-current p { margin: 0; color: var(--ink-mid); }
+        .pending-current.waiting { background: #fff8e8; }
+        .pending-current.waiting strong { color: #9a6700; }
+        .pending-signal { display: none; align-items: baseline; gap: 10px; margin: 0; }
         .pending-signal.visible { display: flex; }
         .pending-level { font-family: var(--display); font-size: 15px; font-weight: 700; text-transform: uppercase; }
         .pending-level.hostile { color: var(--hostile); }
         .pending-level.suspicious { color: var(--suspicious); }
         .pending-level.benign { color: #16a34a; }
         .pending-traits { color: var(--ink-mid); font-size: 13px; }
-        .pending-aside { display: flex; flex-direction: column; gap: 8px; }
+        .pending-events-wrap { border-top: 1px solid var(--rule); padding-top: 12px; }
+        .pending-events-wrap summary { cursor: pointer; color: var(--fu-deep); font-size: 12px; font-weight: 600; }
+        .pending-events { display: flex; flex-direction: column; gap: 0; max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 11px; }
+        .pending-events li { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 4px 10px; padding: 7px 0; border-bottom: 1px solid var(--rule-soft); }
+        .pending-events li:last-child { border-bottom: 0; }
+        .pending-events .phase { color: var(--fu-deep); }
+        .pending-events .message { color: var(--ink-mid); overflow-wrap: anywhere; }
+        .pending-events .raw { grid-column: 1 / -1; color: var(--ink-light); white-space: pre-wrap; overflow-wrap: anywhere; }
+        .pending-route { display: grid; gap: 7px; padding-top: 2px; font-size: 12px; }
+        .pending-route-row { display: flex; justify-content: space-between; gap: 12px; }
+        .pending-route .label { color: var(--ink-light); }
+        .pending-route .value { color: var(--ink-mid); font-family: var(--mono); text-align: right; overflow-wrap: anywhere; }
+        .pending-aside { display: flex; flex-direction: column; gap: 14px; }
         .pending-aside .rail-title { margin-bottom: 2px; }
-        @media (prefers-reduced-motion: reduce) { .pending-badge::before { animation: none; } }
+        @media (prefers-reduced-motion: reduce) { .pending-kicker::before { animation: none; } }
         @media (max-width: 960px) {
             body { font-size: 15px; }
             .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
@@ -256,27 +284,43 @@
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
         <a href="https://isotope13.ai/" class="logo">{{template "wordmark" .}}</a>
-        <div class="site-nav"><a href="/">Fallout</a><a href="/stream">Stream</a><a class="feed-link" href="/feed.atom">{{template "feedicon" .}}Feed</a></div>
+        <div class="site-nav"><a href="/stream">Back to stream</a></div>
     </nav>
     <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
         <main id="main">
             <div class="head pending-shell">
-                <span class="pending-badge" id="pending-phase">Analysis in progress</span>
-                <h1>{{.Headline}}</h1>
-                <p class="pending-copy">The sample is taking shape. Results will appear here as soon as the analysis settles.</p>
+                <span class="pending-kicker" id="pending-phase">Upload received</span>
+                <div class="pending-title-row">
+                    <h1>{{.Headline}}</h1>
+                    <span class="pending-state" id="pending-state">In flight</span>
+                </div>
+                <p class="pending-copy">The bytes are here. Watch them take a little trip, then wait for the final result to land.</p>
                 <div class="pending-meta">
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
-                    <div class="id-line"><span class="k">Provenance</span><span class="v">browser upload</span></div>
+                    <div class="id-line"><span class="k">Source</span><span class="v">browser upload</span></div>
+                </div>
+                <div class="pending-timeline" aria-label="Analysis route">
+                    <div class="pending-step complete" data-step="received"><span class="dot"></span><span>Received</span></div>
+                    <div class="pending-step active" data-step="analysis"><span class="dot"></span><span>Analysis server</span></div>
+                    <div class="pending-step" data-step="archive"><span class="dot"></span><span>Result store</span></div>
+                    <div class="pending-step" data-step="result"><span class="dot"></span><span>Result</span></div>
                 </div>
             </div>
-            <h2>Analysis in progress</h2>
             <section class="pending-stream" aria-live="polite" aria-busy="true">
-                <div class="pending-stream-head"><span id="pending-message">Gathering the first signals…</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
+                <div class="pending-stream-head"><span>Live handoff</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
+                <div class="pending-current" id="pending-current"><strong id="pending-message">Connecting to the analysis server…</strong><p id="pending-detail">Opening the live analysis stream.</p></div>
                 <div class="pending-signal" id="pending-signal"><span class="pending-level" id="pending-level"></span><span class="pending-traits" id="pending-traits"></span></div>
-                <ol class="pending-events" id="pending-events"><li><span class="phase">starting</span><span class="message">Waiting for the first signal…</span></li></ol>
+                <div class="pending-route" id="pending-route" hidden>
+                    <div class="pending-route-row"><span class="label">Analysis server</span><span class="value" id="pending-server">not reported yet</span></div>
+                    <div class="pending-route-row"><span class="label">Request host</span><span class="value" id="pending-request-host">not reported yet</span></div>
+                </div>
+                <details class="pending-events-wrap">
+                    <summary>Show stream messages</summary>
+                    <ol class="pending-events" id="pending-events"><li><span class="phase">starting</span><span class="message">Opening the live analysis stream.</span></li></ol>
+                </details>
             </section>
         </main>
-        <aside class="rail"><div class="rail-block pending-aside"><span class="rail-title">Provenance</span><div class="prov"><div><span class="k">Source</span><span class="v">browser upload</span></div><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
+        <aside class="rail"><div class="rail-block pending-aside"><span class="rail-title">What happens next</span><p class="note">A server is reading the sample now. When the full result arrives, this page will flip over automatically.</p><div class="prov"><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
     </div>
     {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/js/pending.js?v={{.BuildCommit}}"></script>

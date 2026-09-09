@@ -40,6 +40,9 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 		if r.URL.Path != "/v1/analyze" {
 			t.Errorf("path = %q, want /v1/analyze", r.URL.Path)
 		}
+		if got := r.URL.Query().Get("full"); got != "1" {
+			t.Errorf("full query = %q, want 1", got)
+		}
 		got, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -49,6 +52,7 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 		if got := r.Header.Get("Content-Type"); got != "application/octet-stream" {
 			t.Errorf("content type = %q, want application/octet-stream", got)
 		}
+		w.Header().Set("X-Beamline-Worker", "scan-test")
 		if _, err := w.Write([]byte("{\"state\":\"analyzing\"}\n{\"status\":\"analyzed\",\"sha256\":\"" + strings.Repeat("a", 64) + "\",\"fires_at\":-1}\n")); err != nil {
 			t.Errorf("write response: %v", err)
 		}
@@ -66,8 +70,31 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 	if assessment.Status != "analyzed" || assessment.SHA != strings.Repeat("a", 64) {
 		t.Fatalf("assessment = %+v", assessment)
 	}
+	if assessment.Server != "scan-test" {
+		t.Fatalf("server = %q, want scan-test", assessment.Server)
+	}
 	if len(frames) != 2 || frames[0] != `{"state":"analyzing"}` {
 		t.Fatalf("frames = %#v, want both streamed Beamline frames", frames)
+	}
+}
+
+func TestAnalyzeWithBeamlineAcceptsFullEnvelopeTerminal(t *testing.T) {
+	oldAddr, oldClient := beamlineAPIAddr, beamlineClient
+	defer func() { beamlineAPIAddr, beamlineClient = oldAddr, oldClient }()
+	beamlineClient = &http.Client{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "{\"state\":\"analyzing\",\"phase\":\"unpack\"}\n{\"status\":\"analyzed\",\"ml\":{\"lvl\":-1},\"raw\":{\"files\":[]}}\n")
+	}))
+	defer srv.Close()
+	beamlineAPIAddr = srv.URL
+
+	assessment, err := analyzeWithBeamline(context.Background(), []byte("PAYLOAD"), "sample.bin", nil, nil)
+	if err != nil {
+		t.Fatalf("analyzeWithBeamline full envelope: %v", err)
+	}
+	if assessment.Status != "analyzed" || len(assessment.ML) == 0 || len(assessment.Raw) == 0 {
+		t.Fatalf("assessment = %+v, want full terminal envelope", assessment)
 	}
 }
 

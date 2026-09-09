@@ -6793,8 +6793,8 @@ func handleFileEvents(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return true
 	}
-	for _, frame := range subscription.history {
-		if !emit("beamline", frame) {
+	for _, event := range subscription.history {
+		if !emit(event.kind, event.data) {
 			return
 		}
 	}
@@ -6828,12 +6828,12 @@ func handleFileEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case frame, open := <-events:
+		case event, open := <-events:
 			if !open {
 				events = nil
 				continue
 			}
-			if !emit("beamline", frame) {
+			if !emit(event.kind, event.data) {
 				return
 			}
 		case <-readyTicker.C:
@@ -7580,22 +7580,54 @@ func ingestUpload(ctx context.Context, spoolPath string, size int64, sha, filena
 		markUploadFailed(sha, filename, time.Now())
 		return
 	}
-	// Beamline forwards the analyzed artifact into Hopper. Do not synthesize a
-	// local result: the normal Hopper-backed lookup path remains authoritative
-	// for the report, archive members, downloads, and evidence. The in-flight
-	// marker is cleared by lookupResult once that Hopper result is visible.
+	if assessment.Server != "" || assessment.Source != "" {
+		info, marshalErr := json.Marshal(map[string]string{
+			"server":  assessment.Server,
+			"source":  assessment.Source,
+			"request": assessment.RequestHost,
+		})
+		if marshalErr == nil {
+			stream.publishServer(info)
+		}
+	}
+	env := &litmusEnvelope{ML: assessment.ML, LLM: assessment.LLM, Raw: assessment.Raw}
+	if len(env.ML) == 0 || len(env.Raw) == 0 {
+		// Older Beamline workers accept full=1 but still return the compact
+		// status object. Keep the pre-full behavior during the rollout: that
+		// worker has already forwarded the artifact to the result store, so the
+		// pending stream continues watching for the authoritative stored result.
+		log.Warn("beamline returned compact terminal response; waiting for result store",
+			"has_ml", len(env.ML) > 0, "has_raw", len(env.Raw) > 0)
+		return
+	}
+	// With full=1 Beamline gives Prism the same envelope we used to wait for
+	// Hopper to materialize. Cache it before closing the upload stream so the
+	// browser's ready event lands only after the result page is renderable.
+	if err := cache.Set(ctx, sha, storedResultFromLitmus(filename, env, size)); err != nil {
+		stream.publish([]byte(`{"status":"error","message":"Prism could not save the completed analysis."}`))
+		log.Error("beamline full result cache write failed", "error", err)
+		markUploadFailed(sha, filename, time.Now())
+		return
+	}
+	uploadsInFlight.Delete(sha)
 }
 
 type beamlineAssessment struct {
-	Status     string          `json:"status"`
-	SHA        string          `json:"sha"`
-	SHA256     string          `json:"sha256"`
-	Severity   string          `json:"severity"`
-	FiresAt    *int            `json:"fires_at"`
-	Engine     string          `json:"engine_version"`
-	AnalyzedAt string          `json:"analyzed_at"`
-	Why        string          `json:"why"`
-	Findings   json.RawMessage `json:"findings"`
+	Status      string          `json:"status"`
+	SHA         string          `json:"sha"`
+	SHA256      string          `json:"sha256"`
+	Severity    string          `json:"severity"`
+	FiresAt     *int            `json:"fires_at"`
+	Engine      string          `json:"engine_version"`
+	AnalyzedAt  string          `json:"analyzed_at"`
+	Why         string          `json:"why"`
+	Findings    json.RawMessage `json:"findings"`
+	ML          json.RawMessage `json:"ml"`
+	LLM         json.RawMessage `json:"llm"`
+	Raw         json.RawMessage `json:"raw"`
+	Server      string          `json:"-"`
+	Source      string          `json:"-"`
+	RequestHost string          `json:"-"`
 }
 
 func beamlineAnalyzeURL() string {
@@ -7611,13 +7643,16 @@ func beamlineAnalyzeURL() string {
 		return ""
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/v1/analyze"
-	u.RawQuery = ""
+	query := u.Query()
+	query.Set("full", "1")
+	u.RawQuery = query.Encode()
 	u.Fragment = ""
 	return u.String()
 }
 
 // analyzeWithBeamline posts raw bytes to Beamline and reads until the NDJSON
-// stream's terminal object, the first object containing a status field.
+// stream's terminal object. With full=1 the terminal object is the full
+// {ml,llm,raw} envelope, so it has no status field of its own.
 func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
 	return analyzeBeamline(ctx, int64(len(buf)), filename, func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(buf)), nil
@@ -7642,6 +7677,7 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
+	server, source, requestHost := beamlineResponseIdentity(resp)
 	if onAccepted != nil {
 		onAccepted()
 	}
@@ -7661,7 +7697,7 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 		if err := json.Unmarshal(line, &frame); err != nil {
 			return nil, fmt.Errorf("decode beamline response: %w", err)
 		}
-		if frame.Status != "" {
+		if frame.Status != "" || beamlineFullEnvelope(frame) {
 			assessment = frame
 			break
 		}
@@ -7669,14 +7705,47 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read beamline response: %w", err)
 	}
-	if assessment.Status != "analyzed" {
+	if assessment.Status != "" && assessment.Status != "analyzed" {
 		return nil, fmt.Errorf("beamline returned status %q", assessment.Status)
+	}
+	if assessment.Status == "" && !beamlineFullEnvelope(assessment) {
+		return nil, errors.New("beamline stream ended without a full result")
+	}
+	if assessment.Status == "" {
+		assessment.Status = "analyzed"
 	}
 
 	if assessment.SHA == "" {
 		assessment.SHA = assessment.SHA256
 	}
+	assessment.Server = server
+	assessment.Source = source
+	assessment.RequestHost = requestHost
 	return &assessment, nil
+}
+
+func beamlineFullEnvelope(frame beamlineAssessment) bool {
+	return len(frame.ML) > 0 && len(frame.Raw) > 0
+}
+
+func beamlineResponseIdentity(resp *http.Response) (server, source, requestHost string) {
+	if resp == nil {
+		return "", "", ""
+	}
+	server = firstNonEmpty(
+		resp.Header.Get("X-Beamline-Worker"),
+		resp.Header.Get("X-Beamline-Server"),
+		resp.Header.Get("X-Server"),
+		resp.Header.Get("Server"),
+	)
+	source = resp.Header.Get("X-Beamline-Source")
+	if resp.Request != nil && resp.Request.URL != nil {
+		requestHost = resp.Request.URL.Host
+	}
+	if server == "" {
+		server = requestHost
+	}
+	return server, source, requestHost
 }
 
 const beamlineUploadAttempts = 3
