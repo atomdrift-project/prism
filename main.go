@@ -7349,6 +7349,9 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 
 	sha := hex.EncodeToString(digest.Sum(nil))
 	reqLogger = reqLogger.With("sha256", sha)
+	if redirectExistingSample(ctx, w, r, sha, reqLogger) {
+		return
+	}
 	reqLogger.Info("upload received; ingesting via Beamline",
 		"size", size,
 		"total_duration_ms", time.Since(requestStart).Milliseconds(),
@@ -7410,6 +7413,28 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	case <-r.Context().Done():
 		return
 	}
+}
+
+// redirectExistingSample avoids spending a Beamline analysis slot when the
+// uploaded bytes already have a Hopper record. A read failure is deliberately
+// non-fatal: if Hopper is temporarily unavailable, the upload should still
+// follow the normal Beamline path rather than being rejected or silently lost.
+func redirectExistingSample(ctx context.Context, w http.ResponseWriter, r *http.Request, sha string, reqLogger *slog.Logger) bool {
+	_, err := loadParentSample(ctx, sha)
+	if err == nil {
+		reqLogger.Info("upload already exists in hopper; redirecting to sample")
+		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+		return true
+	}
+	if _, pending := errors.AsType[*pendingAnalysisError](err); pending {
+		reqLogger.Info("upload already exists in hopper; redirecting to pending sample")
+		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+		return true
+	}
+	if !strings.Contains(err.Error(), "sample not found in hopper") {
+		reqLogger.Debug("could not check for existing Hopper sample; continuing upload", "error", err)
+	}
+	return false
 }
 
 // Upload ingestion tuning.
