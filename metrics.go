@@ -146,11 +146,6 @@ func registerReliabilityGauges(m metric.Meter) {
 		"Exact rows in samples, same number as the masthead counter.",
 		"{sample}",
 	)
-	indexRate := fgauge(
-		"prism.index.rate",
-		"Samples inserted per minute over the trailing stats window.",
-		"{sample}/min",
-	)
 	indexAge := fgauge(
 		"prism.index.age",
 		"Seconds since the last successful index-stats poll. Rising while samples stay flat means the poller cannot reach hopper-db.",
@@ -200,11 +195,9 @@ func registerReliabilityGauges(m metric.Meter) {
 
 		if snap, ok := cachedIndexStats(); ok {
 			o.ObserveInt64(indexSamples, snap.Total)
-			o.ObserveFloat64(indexRate, snap.RatePerMin)
 			o.ObserveFloat64(indexAge, time.Since(snap.GeneratedAt).Seconds())
 		} else {
 			o.ObserveInt64(indexSamples, 0)
-			o.ObserveFloat64(indexRate, 0)
 			o.ObserveFloat64(indexAge, -1) // never polled successfully
 		}
 

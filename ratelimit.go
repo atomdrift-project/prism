@@ -121,7 +121,7 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 //   - /static/ and /favicon.ico: the page's scripts, fonts, images, and icon.
 //     favicon sits outside /static/ so it does not fall through to the
 //     /{ecosystem} feed route (see handleFavicon).
-//   - /_/stats: masthead counter poll, every 15s on the feed.
+//   - /_/stats: masthead counter poll, every 5m on the feed.
 //   - /file/{sha}/members|rum|wait|events|status: JS hydrations of a page already
 //     counted. Crawlers do not run JS, so these are not a scraper vector.
 //   - /_/health, /_/metrik, /_/challenge: probes and the challenge form.

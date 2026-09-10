@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,177 +12,153 @@ import (
 	"time"
 )
 
-// indexStats is the exact sample-count baseline published to the masthead
-// counter, plus the recent ingestion rate used to advance the digits between
-// exact recounts. The baseline comes from COUNT(*) and is therefore
-// independent of PostgreSQL's planner statistics.
+// indexStats is the exact number of rows in `samples`, published to the
+// masthead counter. There is deliberately no ingest rate and no projection:
+// the counter renders the last polled figure with a trailing "+", which is
+// true between polls without the client or the server inventing digits.
 type indexStats struct {
-	GeneratedAt time.Time // when Total was last refreshed/projected (server clock, UTC)
-	Total       int64     // exact baseline, projected by the recent rate between recounts
-	RatePerMin  float64   // exact inserts per minute over statsRateWindow
+	GeneratedAt time.Time // when Total was last refreshed (server clock, UTC)
+	Total       int64     // exact row count as of GeneratedAt
+	// maxID is the highest samples.id included in Total. It is the watermark
+	// the next incremental poll counts forward from; unexported because it is
+	// poller bookkeeping, not something the page or /_/stats ever shows.
+	maxID int64
 }
 
 // statsLatest is the most recent snapshot, published by statsPollLoop and read
 // lock-free by the endpoint and the feed renderer. Every request just reads
-// this pointer and projects a short interval forward, so a client never
-// triggers or blocks on a query.
+// this pointer, so a client never triggers or blocks on a query.
 var statsLatest atomic.Pointer[indexStats]
 
 const (
-	// statsExactInterval bounds how often the expensive exact baseline is
-	// refreshed. On the local replica, COUNT(*) scans a 143 GB table/index set
-	// and exceeded five minutes, so it must not share the rate poll cadence.
-	statsExactInterval = 24 * time.Hour
-	// statsRateInterval controls the indexed recent-ingest query. It is long
-	// enough to avoid competing with the replica's normal work while still
-	// giving the client a useful rate for the display.
-	statsRateInterval = 15 * time.Minute
-	// statsRateWindow is the trailing window the ingestion rate — and the
-	// rate shown between exact snapshots — is measured over. Long enough to
-	// average out ingest bursts while keeping the displayed motion smooth.
-	statsRateWindow = 2 * time.Hour
-	// statsExactQueryTimeout bounds the exact count so a wedged read can't
-	// stall the poller forever. It is deliberately generous because counting
-	// the current replica takes multiple minutes.
-	statsExactQueryTimeout = 10 * time.Minute
-	// statsRateQueryTimeout bounds the indexed rate query independently of the
-	// much slower exact baseline.
-	statsRateQueryTimeout = 60 * time.Second
+	// statsPollInterval is how often the published total moves. Each poll is
+	// the incremental query below, not a full count.
+	statsPollInterval = 20 * time.Minute
+	// statsBaselineInterval bounds how often the full COUNT(*) re-runs. The
+	// incremental poll is exact for inserts but cannot see a delete below the
+	// watermark, so a periodic recount reconciles any drift. `samples` is
+	// effectively insert-only (n_tup_del = 0 on the replica), so this is a
+	// safety net rather than a correction that is expected to find anything.
+	statsBaselineInterval = 24 * time.Hour
+	// statsBaselineQueryTimeout bounds the full count. Counting the current
+	// replica is a ~208 GB sequential scan, measured at 80-90 s, so this is
+	// deliberately generous.
+	statsBaselineQueryTimeout = 10 * time.Minute
+	// statsDeltaQueryTimeout bounds the incremental poll. That query is a
+	// primary-key range scan over one interval's worth of new rows (~40 k),
+	// so it should finish in milliseconds; the timeout only catches a wedge.
+	statsDeltaQueryTimeout = 30 * time.Second
 )
 
-// statsPollLoop maintains an exact baseline and a cheaper recent-ingest rate.
-// COUNT(*) is refreshed daily because the local replica's 143 GB samples table
-// takes several minutes to count. The indexed rate query runs every fifteen
-// minutes. Between exact recounts the published total advances with that rate;
-// this avoids both a minute-by-minute full scan and planner-statistic bounce.
-// The loop runs for the life of ctx, independent of the hopper connection, so
-// failed reads simply leave the last snapshot in place and retry later.
+// statsPollLoop keeps the published total exact and cheap. It counts the table
+// once at startup to establish a baseline, then every statsPollInterval counts
+// only the rows above the previous high-water id and adds them. That keeps the
+// per-poll cost proportional to what was ingested rather than to the size of
+// the table -- the whole point, since the old rate query seq-scanned all
+// 208 GB every 15 minutes, took ~90 s against a 60 s timeout, and therefore
+// never once succeeded. The loop runs for the life of ctx, so a failed read
+// simply leaves the last snapshot in place and retries at the next tick.
 func statsPollLoop(ctx context.Context) {
-	refreshExact := func() {
-		qctx, cancel := context.WithTimeout(ctx, statsExactQueryTimeout)
+	refreshBaseline := func() {
+		qctx, cancel := context.WithTimeout(ctx, statsBaselineQueryTimeout)
 		defer cancel()
-		total, err := queryExactTotal(qctx)
+		total, maxID, err := queryExactTotal(qctx)
 		if err != nil {
-			logger.Debug("exact stats poll failed", "error", err)
+			logger.Debug("baseline stats poll failed", "error", err)
 			return
 		}
-		now := time.Now().UTC()
-		previous, ok := cachedIndexStats()
 		statsLatest.Store(&indexStats{
-			GeneratedAt: now,
+			GeneratedAt: time.Now().UTC(),
 			Total:       total,
-			RatePerMin:  previousRate(previous, ok),
+			maxID:       maxID,
 		})
 	}
-	refreshRate := func() {
-		qctx, cancel := context.WithTimeout(ctx, statsRateQueryTimeout)
-		defer cancel()
-		recent, err := queryRecentCount(qctx)
-		if err != nil {
-			logger.Debug("rate stats poll failed", "error", err)
-			return
-		}
+	refreshDelta := func() {
 		previous, ok := cachedIndexStats()
 		if !ok {
-			return // the initial exact baseline has not arrived yet
+			refreshBaseline() // no baseline yet -- an earlier count must have failed
+			return
 		}
-		now := time.Now().UTC()
-		projected := projectIndexStats(previous, now)
-		projected.RatePerMin = float64(recent) / statsRateWindow.Minutes()
-		statsLatest.Store(&projected)
+		qctx, cancel := context.WithTimeout(ctx, statsDeltaQueryTimeout)
+		defer cancel()
+		added, maxID, err := queryDeltaSince(qctx, previous.maxID)
+		if err != nil {
+			logger.Debug("incremental stats poll failed", "error", err)
+			return
+		}
+		statsLatest.Store(&indexStats{
+			GeneratedAt: time.Now().UTC(),
+			Total:       previous.Total + added,
+			maxID:       maxID,
+		})
 	}
-	refreshExact() // establish an exact baseline; it may take several minutes
-	rateTicker := time.NewTicker(statsRateInterval)
-	defer rateTicker.Stop()
-	exactTicker := time.NewTicker(statsExactInterval)
-	defer exactTicker.Stop()
+	refreshBaseline() // establish the baseline; it may take a couple of minutes
+	pollTicker := time.NewTicker(statsPollInterval)
+	defer pollTicker.Stop()
+	baselineTicker := time.NewTicker(statsBaselineInterval)
+	defer baselineTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-rateTicker.C:
-			refreshRate()
-		case <-exactTicker.C:
-			refreshExact()
+		case <-pollTicker.C:
+			refreshDelta()
+		case <-baselineTicker.C:
+			refreshBaseline()
 		}
 	}
 }
 
-func previousRate(previous indexStats, ok bool) float64 {
-	if !ok {
-		return 0
-	}
-	return previous.RatePerMin
-}
-
-// queryExactTotal reads the exact number of rows through the exposed pool.
-// COUNT(*) is deliberately used instead of planner statistics: ANALYZE and
-// VACUUM cannot change its value. This is run only by the daily baseline
-// refresh and never on a browser request.
-func queryExactTotal(ctx context.Context) (int64, error) {
+// statsCount runs a stats query through the exposed pool, gated behind the
+// shared hopper-db breaker so a degraded hopper sheds the read fast, exactly
+// like the feed and per-sample lookups. Both stats queries return the same
+// (count, high-water id) shape.
+func statsCount(ctx context.Context, operation, sql string, args ...any) (int64, int64, error) {
 	db := hopperDB.Load()
 	if db == nil {
-		return 0, errors.New("hopper not connected")
+		return 0, 0, errors.New("hopper not connected")
 	}
 	pool := db.Pool()
 	if pool == nil {
-		return 0, errors.New("hopper pool unavailable")
+		return 0, 0, errors.New("hopper pool unavailable")
 	}
-	// Gate behind the shared hopper-db breaker so a degraded hopper sheds the
-	// read fast, exactly like the feed and per-sample lookups.
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
-		return 0, fmt.Errorf("hopper-db stats: %w", berr)
+		return 0, 0, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	var total int64
-	err := pool.QueryRow(ctx, `SELECT count(*) FROM samples`).Scan(&total)
-	if err != nil {
+	var count, maxID int64
+	if err := pool.QueryRow(ctx, sql, args...).Scan(&count, &maxID); err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
-		return 0, fmt.Errorf("exact stats query: %w", err)
+		return 0, 0, fmt.Errorf("%s stats query: %w", operation, err)
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "stats", "ok", start)
-	return total, nil
+	return count, maxID, nil
 }
 
-// queryRecentCount reads only the trailing created_at range. The replica has
-// idx_samples_created_at, making this much cheaper than the exact baseline;
-// it is still isolated behind its own timeout because the index currently
-// incurs heap visibility checks during autovacuum.
-func queryRecentCount(ctx context.Context) (int64, error) {
-	db := hopperDB.Load()
-	if db == nil {
-		return 0, errors.New("hopper not connected")
-	}
-	pool := db.Pool()
-	if pool == nil {
-		return 0, errors.New("hopper pool unavailable")
-	}
-	if berr := dbBreaker.allow(); berr != nil {
-		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
-		return 0, fmt.Errorf("hopper-db stats: %w", berr)
-	}
-	start := time.Now()
-	window := fmt.Sprintf("%d seconds", int(statsRateWindow/time.Second))
-	var recent int64
-	err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM samples
-		WHERE created_at >= now() - $1::interval`, window).Scan(&recent)
-	if err != nil {
-		dbBreaker.failure()
-		recordDep(ctx, "hopper-db", "stats", "error", start)
-		return 0, fmt.Errorf("recent stats query: %w", err)
-	}
-	dbBreaker.success()
-	recordDep(ctx, "hopper-db", "stats", "ok", start)
-	return recent, nil
+// queryExactTotal reads the exact number of rows, plus the id watermark that
+// the incremental polls count forward from. COUNT(*) is deliberately used
+// instead of planner statistics: reltuples ran ~6% high on this replica
+// (129.3 M against a true 122.1 M), and ANALYZE and VACUUM move it.
+func queryExactTotal(ctx context.Context) (int64, int64, error) {
+	return statsCount(ctx, "exact",
+		`SELECT count(*), coalesce(max(id), 0) FROM samples`)
+}
+
+// queryDeltaSince counts the rows inserted above a previous high-water id and
+// returns the new watermark. This is an index range scan on samples_pkey over
+// only the new rows, so its cost tracks the ingest rate (~1.9 k rows/min) and
+// not the 122 M-row table. It cannot observe deletes below the watermark;
+// statsBaselineInterval is what reconciles those.
+func queryDeltaSince(ctx context.Context, since int64) (int64, int64, error) {
+	return statsCount(ctx, "delta",
+		`SELECT count(*), coalesce(max(id), $1::bigint) FROM samples WHERE id > $1::bigint`, since)
 }
 
 // cachedIndexStats returns the latest published snapshot, if the poller has
-// produced one yet. Serving paths should pass it through projectIndexStats so
-// a page load between polls still shows a live total.
+// produced one yet.
 func cachedIndexStats() (indexStats, bool) {
 	s := statsLatest.Load()
 	if s == nil {
@@ -192,21 +167,10 @@ func cachedIndexStats() (indexStats, bool) {
 	return *s, true
 }
 
-// projectIndexStats advances a snapshot to `now` at the measured 2h rate,
-// capped at one rate interval so a stalled poller cannot invent unbounded
-// growth. GeneratedAt is rewritten to now so the client does not apply the
-// same projection a second time.
-func projectIndexStats(s indexStats, now time.Time) indexStats {
-	elapsed := min(max(now.Sub(s.GeneratedAt), 0), statsRateInterval)
-	s.Total += int64(math.Round(s.RatePerMin * elapsed.Minutes()))
-	s.GeneratedAt = now
-	return s
-}
-
-// handleStats serves the latest exact index-size snapshot as JSON for the masthead
-// counter. It only ever reads statsLatest (published by statsPollLoop), so it
-// never touches the database and can't block. Before the first poll completes
-// it returns {"ready":false} and the client keeps polling.
+// handleStats serves the latest exact count as JSON for the masthead counter.
+// It only ever reads statsLatest (published by statsPollLoop), so it never
+// touches the database and can't block. Before the first poll completes it
+// returns {"ready":false} and the client keeps polling.
 func handleStats(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -215,11 +179,9 @@ func handleStats(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false}) //nolint:errcheck,errchkjson // JSON-safe; client tolerates and retries
 		return
 	}
-	live := projectIndexStats(snap, time.Now().UTC())
 	_ = json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck,errchkjson // primitive values are JSON-safe
-		"total":        live.Total,
-		"rate_per_min": math.Round(live.RatePerMin*10) / 10,
-		"as_of":        live.GeneratedAt.UnixMilli(),
+		"total": snap.Total,
+		"as_of": snap.GeneratedAt.UnixMilli(),
 	})
 }
 

@@ -68,14 +68,13 @@ func TestHandleStatsCold(t *testing.T) {
 }
 
 // TestHandleStatsWarm verifies the JSON shape once the poller has published an
-// exact snapshot: total, rate rounded to one decimal, and as_of in unix millis.
-// GeneratedAt is "now" so projectIndexStats does not add a poll-gap delta.
+// exact snapshot: the total exactly as counted, and as_of in unix millis. The
+// total is served verbatim — there is no rate and nothing is projected onto it.
 func TestHandleStatsWarm(t *testing.T) {
 	old := statsLatest.Load()
 	statsLatest.Store(&indexStats{
 		GeneratedAt: time.Now().UTC(),
 		Total:       2847213,
-		RatePerMin:  128.34,
 	})
 	t.Cleanup(func() { statsLatest.Store(old) })
 
@@ -92,8 +91,8 @@ func TestHandleStatsWarm(t *testing.T) {
 	if got, ok := body["total"].(float64); !ok || int64(got) != 2847213 {
 		t.Errorf("total = %v, want 2847213", body["total"])
 	}
-	if got, ok := body["rate_per_min"].(float64); !ok || got != 128.3 { // rounded to one decimal
-		t.Errorf("rate_per_min = %v, want 128.3", body["rate_per_min"])
+	if _, hasRate := body["rate_per_min"]; hasRate {
+		t.Errorf("response should not carry a rate, got %v", body)
 	}
 	gotAsOf, ok := body["as_of"].(float64)
 	if !ok {
@@ -104,48 +103,15 @@ func TestHandleStatsWarm(t *testing.T) {
 	}
 }
 
-// TestProjectIndexStats checks the presentation-only between-poll projection:
-// advance at the measured rate, never go backwards in time, and never invent
-// more than one statsRateInterval of growth.
-func TestProjectIndexStats(t *testing.T) {
-	t.Parallel()
-	base := time.Unix(1_700_000_000, 0).UTC()
-	snap := indexStats{GeneratedAt: base, Total: 1000, RatePerMin: 60} // 1/sec
-
-	got := projectIndexStats(snap, base)
-	if got.Total != 1000 || !got.GeneratedAt.Equal(base) {
-		t.Errorf("zero elapsed: total=%d at %s, want 1000 at base", got.Total, got.GeneratedAt)
-	}
-
-	got = projectIndexStats(snap, base.Add(10*time.Second))
-	if got.Total != 1010 {
-		t.Errorf("10s elapsed: total=%d, want 1010", got.Total)
-	}
-	if !got.GeneratedAt.Equal(base.Add(10 * time.Second)) {
-		t.Errorf("GeneratedAt = %s, want now", got.GeneratedAt)
-	}
-
-	got = projectIndexStats(snap, base.Add(-5*time.Second))
-	if got.Total != 1000 {
-		t.Errorf("clock skew: total=%d, want 1000 (no negative elapsed)", got.Total)
-	}
-
-	got = projectIndexStats(snap, base.Add(time.Hour))
-	want := 1000 + int64(60*statsRateInterval.Minutes()) // one rate interval
-	if got.Total != want {
-		t.Errorf("stale cap: total=%d, want %d (one poll interval)", got.Total, want)
-	}
-}
-
-// TestHandleStatsProjectsPollGap verifies that /_/stats advances the published
-// total by the 2h rate across a gap shorter than statsRateInterval, so a page
-// load a few seconds after the poll is still live.
-func TestHandleStatsProjectsPollGap(t *testing.T) {
+// TestHandleStatsDoesNotProject pins the contract that replaced the old
+// between-poll projection: however stale the snapshot is, /_/stats returns the
+// counted total unchanged. The trailing "+" in the masthead is what stands in
+// for rows ingested since — the server never invents digits.
+func TestHandleStatsDoesNotProject(t *testing.T) {
 	old := statsLatest.Load()
 	statsLatest.Store(&indexStats{
-		GeneratedAt: time.Now().UTC().Add(-10 * time.Second),
+		GeneratedAt: time.Now().UTC().Add(-3 * statsPollInterval),
 		Total:       100000,
-		RatePerMin:  60, // 1/sec → +10 over 10s
 	})
 	t.Cleanup(func() { statsLatest.Store(old) })
 
@@ -160,8 +126,17 @@ func TestHandleStatsProjectsPollGap(t *testing.T) {
 	if !ok {
 		t.Fatalf("total missing: %v", body)
 	}
-	if got < 100009 || got > 100012 {
-		t.Errorf("total = %v, want ~100010 (10s at 1/sec)", got)
+	if int64(got) != 100000 {
+		t.Errorf("total = %v, want 100000 (stale snapshot served verbatim)", got)
+	}
+	asOf, ok := body["as_of"].(float64)
+	if !ok {
+		t.Fatalf("as_of missing: %v", body)
+	}
+	// as_of must report when the count was taken, not when it was served, so a
+	// client (or /_/metrik) can tell a fresh number from a stuck poller.
+	if age := time.Since(time.UnixMilli(int64(asOf))); age < 2*statsPollInterval {
+		t.Errorf("as_of age = %s, want the snapshot's own age (~%s)", age, 3*statsPollInterval)
 	}
 }
 
@@ -177,7 +152,6 @@ func TestUploadTemplateRendersCounter(t *testing.T) {
 		Stats: &indexStats{
 			GeneratedAt: time.Unix(1_700_000_000, 0).UTC(),
 			Total:       2847213,
-			RatePerMin:  128.3,
 		},
 	}
 	if err := tmpl.Execute(&buf, data); err != nil {
@@ -186,11 +160,8 @@ func TestUploadTemplateRendersCounter(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		`id="index-counter"`,
-		`data-total="2847213"`,      // published total the client projects from
-		`data-rate="128.3"`,         // 2h ingest rate for between-poll ticks
-		`data-asof="1700000000000"`, // GeneratedAt.UnixMilli
-		`2,847,213`,                 // commaInt-formatted server-rendered value
-		`id="counter-meter"`,        // peak-meter mount point
+		`data-total="2847213"`, // published total, for the client's first paint
+		`2,847,213+`,           // commaInt-formatted value with the "+" suffix
 		"Files indexed",
 	} {
 		if !strings.Contains(out, want) {

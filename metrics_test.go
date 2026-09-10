@@ -37,7 +37,6 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 	statsLatest.Store(&indexStats{
 		GeneratedAt: time.Now().UTC().Add(-30 * time.Second),
 		Total:       1_234_567,
-		RatePerMin:  12.5,
 	})
 	t.Cleanup(func() { statsLatest.Store(nil) })
 
@@ -53,7 +52,6 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 		`prism_circuit_breaker_state{dependency="hopper-db"`,
 		"prism_hopper_db_connected",
 		"prism_index_samples",
-		"prism_index_rate_per_min",
 		"prism_index_age_seconds",
 		"prism_fallout_entries",
 		"prism_fallout_truncated",

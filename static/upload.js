@@ -305,150 +305,40 @@ if (input && form) {
   });
 }
 
-// --- Live "files indexed" counter ----------------------------------------
+// --- "Files indexed" counter ---------------------------------------------
 //
-// The masthead shows the latest exact published count of files in
-// the index. A background poller refreshes the exact baseline daily and the
-// indexed rate every 15m. The endpoint only serves that cached value
-// (projected to the request clock), so
-// a client never touches the database. Each response is an anchor {total,
-// rate_per_min, as_of}; the rate is the exact 2h insert average, and we
-// advance the digits at that speed between polls — capped at 15m so a stalled
-// poller cannot invent more growth than the skew budget. Re-anchors follow
-// the server in both directions when the real row count changes. Each whole-
-// number tick flicks the dot and kicks the peak meter. Progressive
-// enhancement: the server-rendered value shows without JS; a failed poll
-// holds after the 15m cap. Guarded so it no-ops on pages without the counter.
+// The masthead shows the last exact count the server published, with a
+// trailing "+" standing in for whatever has landed since. There is no ingest
+// rate and no client-side projection: the digits change only when the server
+// hands us a new number, which it does every 20 minutes. /_/stats is a cached
+// pointer read, so this poll never touches the database. Progressive
+// enhancement: the server already rendered the value, so this exists only to
+// keep a long-lived tab current. Guarded so it no-ops on pages without the
+// counter.
 (() => {
-  const el = document.getElementById("index-counter");
-  if (!el) return;
   const numEl = document.getElementById("counter-num");
-  const meterEl = document.getElementById("counter-meter");
-  const dotEl = document.getElementById("counter-dot");
-  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  // Poll more frequently than the server refreshes so a fresh rate is picked
-  // up promptly. The cap matches the server refresh cadence, so a
-  // failed poll cannot invent growth indefinitely.
-  const POLL_MS = 15000;
-  const STALE_CAP_SEC = 900;
+  if (!numEl) return;
+  // Poll a few times per server refresh so a tab left open picks a new number
+  // up reasonably promptly, without pretending to more resolution than the
+  // 20-minute cadence actually has.
+  const POLL_MS = 300000;
 
-  const SEGMENTS = 10;
-  const segs = [];
-  if (meterEl) {
-    for (let i = 0; i < SEGMENTS; i++) {
-      const s = document.createElement("div");
-      s.className = "peak-seg";
-      meterEl.appendChild(s);
-      segs.push(s);
-    }
-  }
-  let level = 0.14;
-  let peak = 0.14;
-
-  // anchor: { total, ratePerSec, asOfMs }. displayed is the eased on-screen
-  // value; started gates the loop until we have any anchor.
-  let anchor = null;
-  let displayed = 0;
-  let lastWhole = 0;
-  let started = false;
-
-  const fmt = (n) => Math.floor(n).toLocaleString("en-US");
-
-  // Projected value of an anchor at the current wall clock, capped at one
-  // server refresh interval so a stale anchor can't run away.
-  const projected = (a) => {
-    if (!a) return displayed;
-    const elapsed = Math.min(STALE_CAP_SEC, Math.max(0, (Date.now() - a.asOfMs) / 1000));
-    return a.total + a.ratePerSec * elapsed;
+  const render = (total) => {
+    if (!Number.isFinite(total)) return;
+    numEl.textContent = Math.floor(total).toLocaleString("en-US") + "+";
   };
-
-  const applyAnchor = (d) => {
-    const next = {
-      total: Number(d.total),
-      ratePerSec: Number(d.rate_per_min || 0) / 60,
-      asOfMs: Number(d.as_of),
-    };
-    if (!Number.isFinite(next.total) || !Number.isFinite(next.asOfMs)) return;
-    anchor = next;
-    started = true;
-  };
-
-  // Seed from the server-rendered attributes so the counter is live on first
-  // paint, before the first poll returns.
-  const seed = {
-    total: parseFloat(el.getAttribute("data-total")),
-    rate_per_min: parseFloat(el.getAttribute("data-rate")),
-    as_of: parseFloat(el.getAttribute("data-asof")),
-  };
-  if (Number.isFinite(seed.total) && Number.isFinite(seed.as_of)) {
-    applyAnchor(seed);
-    displayed = projected(anchor);
-    lastWhole = Math.floor(displayed);
-    if (numEl) numEl.textContent = fmt(displayed);
-  }
 
   const poll = () => {
     fetch("/_/stats", { headers: { Accept: "application/json" }, cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d && typeof d.total === "number") applyAnchor(d);
+        if (d && typeof d.total === "number") render(d.total);
       })
       .catch(() => {
-        /* hold after the 15m cap — do not invent further digits */
+        /* leave the last rendered number in place */
       });
-  };
-
-  let lastFrame = performance.now();
-  const frame = (now) => {
-    const dt = Math.min(0.1, (now - lastFrame) / 1000);
-    lastFrame = now;
-
-    if (started) {
-      const target = projected(anchor);
-      const delta = target - displayed;
-      if (reduceMotion || Math.abs(delta) < 0.5) {
-        displayed = target;
-      } else {
-        displayed += delta * Math.min(1, dt * 3);
-      }
-      const whole = Math.floor(displayed);
-      if (whole !== lastWhole) {
-        const ticks = Math.abs(whole - lastWhole);
-        lastWhole = whole;
-        if (numEl) numEl.textContent = fmt(displayed);
-        if (!reduceMotion) {
-          level = Math.min(1, level + 0.26 * Math.min(ticks, 3));
-          if (dotEl) {
-            dotEl.classList.add("blip");
-            setTimeout(() => dotEl.classList.remove("blip"), 110);
-          }
-        }
-      } else if (numEl && displayed === target && numEl.textContent !== fmt(displayed)) {
-        numEl.textContent = fmt(displayed);
-      }
-    }
-
-    if (segs.length) {
-      if (reduceMotion) {
-        level = 0.4;
-        peak = 0.6;
-      } else {
-        level *= 0.5 ** (dt / 0.55); // ~0.55s half-life
-        peak = Math.max(level, peak * 0.5 ** (dt / 2.4)); // slow peak-hold
-      }
-      const lit = Math.max(1, Math.round(level * SEGMENTS));
-      const pIdx = Math.min(SEGMENTS - 1, Math.max(0, Math.round(peak * SEGMENTS) - 1));
-      for (let i = 0; i < SEGMENTS; i++) {
-        const on = i < lit;
-        segs[i].classList.toggle("on", on);
-        segs[i].classList.toggle("hi", on && i >= SEGMENTS - 3);
-        segs[i].classList.toggle("peak", i === pIdx && pIdx >= lit);
-      }
-    }
-    requestAnimationFrame(frame);
   };
 
   poll();
   setInterval(poll, POLL_MS);
-  requestAnimationFrame(frame);
 })();

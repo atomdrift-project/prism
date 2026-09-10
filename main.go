@@ -5021,13 +5021,12 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 			paginateFeed(&data, r)
 		}
 	}
-	// Seed the live counter with the latest exact published snapshot, projected to
-	// this request's clock — a lock-free pointer read, no query on the feed
-	// path. When cold (before the first poll), the template omits the initial
-	// value and the client's /_/stats poll populates it.
+	// Seed the live counter with the latest exact published snapshot — a
+	// lock-free pointer read, no query on the feed path. When cold (before the
+	// first poll), the template omits the initial value and the client's
+	// /_/stats poll populates it.
 	if s, ok := cachedIndexStats(); ok {
-		live := projectIndexStats(s, time.Now().UTC())
-		data.Stats = &live
+		data.Stats = &s
 	}
 	if err := uploadTemplate.Execute(w, data); err != nil {
 		logger.Error("template execution failed",
