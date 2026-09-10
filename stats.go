@@ -113,7 +113,7 @@ func statsPollLoop(ctx context.Context) {
 // shared hopper-db breaker so a degraded hopper sheds the read fast, exactly
 // like the feed and per-sample lookups. Both stats queries return the same
 // (count, high-water id) shape.
-func statsCount(ctx context.Context, operation, sql string, args ...any) (int64, int64, error) {
+func statsCount(ctx context.Context, operation, sql string, args ...any) (count, maxID int64, err error) {
 	db := hopperDB.Load()
 	if db == nil {
 		return 0, 0, errors.New("hopper not connected")
@@ -127,11 +127,12 @@ func statsCount(ctx context.Context, operation, sql string, args ...any) (int64,
 		return 0, 0, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	var count, maxID int64
-	if err := pool.QueryRow(ctx, sql, args...).Scan(&count, &maxID); err != nil {
+	// Named result, so shadowing it here would be a trap: scan errors are
+	// reported through qerr and returned explicitly.
+	if qerr := pool.QueryRow(ctx, sql, args...).Scan(&count, &maxID); qerr != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
-		return 0, 0, fmt.Errorf("%s stats query: %w", operation, err)
+		return 0, 0, fmt.Errorf("%s stats query: %w", operation, qerr)
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "stats", "ok", start)
@@ -142,7 +143,7 @@ func statsCount(ctx context.Context, operation, sql string, args ...any) (int64,
 // the incremental polls count forward from. COUNT(*) is deliberately used
 // instead of planner statistics: reltuples ran ~6% high on this replica
 // (129.3 M against a true 122.1 M), and ANALYZE and VACUUM move it.
-func queryExactTotal(ctx context.Context) (int64, int64, error) {
+func queryExactTotal(ctx context.Context) (total, maxID int64, err error) {
 	return statsCount(ctx, "exact",
 		`SELECT count(*), coalesce(max(id), 0) FROM samples`)
 }
@@ -152,7 +153,7 @@ func queryExactTotal(ctx context.Context) (int64, int64, error) {
 // only the new rows, so its cost tracks the ingest rate (~1.9 k rows/min) and
 // not the 122 M-row table. It cannot observe deletes below the watermark;
 // statsBaselineInterval is what reconciles those.
-func queryDeltaSince(ctx context.Context, since int64) (int64, int64, error) {
+func queryDeltaSince(ctx context.Context, since int64) (added, maxID int64, err error) {
 	return statsCount(ctx, "delta",
 		`SELECT count(*), coalesce(max(id), $1::bigint) FROM samples WHERE id > $1::bigint`, since)
 }

@@ -325,7 +325,7 @@ if (input && form) {
 
   const render = (total) => {
     if (!Number.isFinite(total)) return;
-    numEl.textContent = Math.floor(total).toLocaleString("en-US") + "+";
+    numEl.textContent = `${Math.floor(total).toLocaleString("en-US")}+`;
   };
 
   const poll = () => {

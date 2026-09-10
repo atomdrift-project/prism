@@ -25,7 +25,7 @@ import (
 //	prism_circuit_breaker_state{dependency}
 //	prism_backend_up{dependency}
 //	prism_hopper_db_connected
-//	prism_index_samples / prism_index_rate_per_minute / prism_index_age_seconds
+//	prism_index_samples / prism_index_age_seconds
 //	prism_fallout_entries / prism_fallout_truncated
 //
 // All label values are bounded: dependency and operation are compile-time

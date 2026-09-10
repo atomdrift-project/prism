@@ -444,8 +444,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		CurrentURL:    falloutURL("", eco, verifiedRaw),
 	}
 	if s, ok := cachedIndexStats(); ok {
-		live := projectIndexStats(s, time.Now().UTC())
-		data.Stats = &live
+		data.Stats = &s
 	}
 	if data.HasHopper {
 		if dropdowns, err := feedDropdownOptions(r.Context()); err == nil {
