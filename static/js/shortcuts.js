@@ -5,6 +5,8 @@
 //   d       download the original bytes
 //   r       re-queue the sample for analysis
 //
+// Downloading also copies the sample's original filename to the clipboard.
+//
 // j/k only work when the reader arrived by clicking through a feed: upload.js
 // stashes the visible result set under prism_nav on that click, so the order
 // is the one they were actually looking at rather than a guess made here. No
@@ -104,4 +106,33 @@ document.addEventListener("keydown", (ev) => {
     }
     default:
   }
+});
+
+// Browser save dialogs default to the URL's basename — for the download route
+// that is `<sha>.dl`, useless to a reader who wants the original filename. Copy
+// the real basename on click so it can be pasted into the save dialog. The `d`
+// shortcut lands here too, since it calls .click().
+const downloadLink = document.querySelector("a.download-btn[data-basename]");
+downloadLink?.addEventListener("click", () => {
+  const name = downloadLink.dataset.basename;
+  if (!name || !navigator.clipboard?.writeText) return;
+  // Not awaited: the write has to start inside the user gesture, and the
+  // download navigates regardless of how it settles.
+  navigator.clipboard.writeText(name).then(
+    () => {
+      downloadLink.classList.add("is-done");
+      setTimeout(() => downloadLink.classList.remove("is-done"), 1500);
+      // Cleared first so a second download of the same name announces again.
+      const live = document.getElementById("a11y-live");
+      if (!live) return;
+      live.textContent = "";
+      requestAnimationFrame(() => {
+        live.textContent = `Filename ${name} copied to clipboard.`;
+      });
+    },
+    () => {
+      /* clipboard blocked (insecure origin, denied permission) — the
+         download still proceeds */
+    }
+  );
 });

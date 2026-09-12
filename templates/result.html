@@ -159,6 +159,8 @@
         .download-btn { background: var(--fu); color: #fff; border: 1px solid var(--fu); }
         .download-btn:hover { background: var(--fu-deep); border-color: var(--fu-deep); }
         .download-btn.is-disabled { background: var(--mist); color: var(--ink-light); border-color: var(--rule); cursor: not-allowed; }
+        /* Brief confirmation that the filename went to the clipboard alongside the download. */
+        .download-btn.is-done { background: #16a34a; border-color: #16a34a; }
         .refresh-btn { background: var(--paper); color: var(--fu-deep); border: 1px solid var(--fu-border); }
         .refresh-btn:hover { background: var(--fu-dim); }
         .refresh-btn:disabled { color: var(--ink-light); cursor: default; }
@@ -369,7 +371,7 @@
                     {{if .Ecosystem}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{end}}
                     {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
                     <span class="actions">
-                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
+                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/file/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
                         {{if .RefreshAllowed}}<button type="button" class="refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh this sample's analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Refresh</button>{{end}}
                     </span>
                 </div>

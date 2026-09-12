@@ -48,6 +48,9 @@ func TestStaticServesShortcuts(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "prism_nav") {
 		t.Error("served shortcuts.js does not read the feed's saved order")
 	}
+	if body := rec.Body.String(); !strings.Contains(body, "clipboard") {
+		t.Error("served shortcuts.js does not copy the filename on download")
+	}
 	req = httptest.NewRequest(http.MethodGet, "/static/js/nav-stash.js", http.NoBody)
 	rec = httptest.NewRecorder()
 	newMux().ServeHTTP(rec, req)
