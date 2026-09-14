@@ -801,7 +801,8 @@ type resultData struct {
 	// the row plain text.
 	PURLIndexURL string
 	// DetectedBy lists the external sources that have also cited this sample
-	// (hopper's sightings ledger, keyed by sha256 + purl_base), filtered to
+	// (hopper's sightings ledger, keyed by sha256 + purl_base, then narrowed to
+	// the claims that actually cover this release — see detectedBy), filtered to
 	// the sources we name publicly: open databases (osv, opensourcemalware) and blogs
 	// (cyclotron:*). Commercial vendors and scanners are not name-dropped;
 	// they are rolled up into MoreSources, a pre-formatted count chip ("+2
@@ -4139,12 +4140,28 @@ func citationDisplayName(source string) string {
 }
 
 // detectedBy reads hopper's sightings ledger for this sample and returns one
-// chip per distinct nameable source that cited it (by sha256 or version-less
-// purl_base), plus a count chip covering the sources we leave unnamed.
+// chip per distinct nameable source that cited THIS RELEASE, plus a count chip
+// covering the sources we leave unnamed.
 // Best-effort: a nil DB or a query error yields no chips (the row hides) rather
 // than failing the page. One small indexed read per detail render, so a citation
 // that arrived since the last analysis shows without waiting for a rescan.
-func detectedBy(ctx context.Context, sha, purlBase string) (named []Citation, more string) {
+//
+// version is why this takes three arguments. The ledger keys package claims on
+// the version-less purl_base, so SightingsFor answers about the PACKAGE: ask it
+// about is 0.1.2 and it returns MAL-2025-6020, which names is 3.3.1 and 5.0.0
+// and says nothing about 0.1.2. Rendering that told a reader an ordinary
+// release of a package compromised years later was flagged by OSV, on a page
+// whose own verdict was benign and whose label was clean.
+//
+// hopper narrows the same way everywhere a claim decides something — Assess
+// scores a scoped claim as Scoped and never counts it, and the corroborated
+// triggers match on samples.version — and this was the one consumer reading the
+// ledger raw. Sighting.Covers is that rule, exported so this is the same
+// judgement rather than a fourth copy of it.
+//
+// Claim is filtered here too: a CVE is a defect in legitimate software, and
+// listing one under "also flagged by" states the opposite of what it says.
+func detectedBy(ctx context.Context, sha, purlBase, version string) (named []Citation, more string) {
 	db := hopperDB.Load()
 	if db == nil {
 		return nil, ""
@@ -4164,6 +4181,9 @@ func detectedBy(ctx context.Context, sha, purlBase string) (named []Citation, mo
 		sightings := m[subj]
 		for i := range sightings {
 			s := &sightings[i]
+			if s.Claim == hopper.ClaimVulnerable || !s.Covers(version) {
+				continue
+			}
 			if seen[s.Source] {
 				continue
 			}
@@ -5212,7 +5232,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 	)
 	prepStart := time.Now()
 	data := prepareResultData(res.Filename, sha, &res)
-	data.DetectedBy, data.MoreSources = detectedBy(ctx, sha, res.PURLBase)
+	data.DetectedBy, data.MoreSources = detectedBy(ctx, sha, res.PURLBase, res.Version)
 	prepDur := time.Since(prepStart)
 	data.Nonce = nonceFor(r)
 	data.StyleNonce = styleNonceFor(r)
