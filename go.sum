@@ -14,6 +14,8 @@ github.com/atomdrift-project/hopper v0.0.0-20260907223359-0b7a333bb19d h1:EmVkmj
 github.com/atomdrift-project/hopper v0.0.0-20260907223359-0b7a333bb19d/go.mod h1:f+S/ZJfXn1Jd+SCFer8co1R0UtRqGp8iQSZpBZ1t1/U=
 github.com/atomdrift-project/hopper v0.0.0-20260914164146-9570c1ff4287 h1:JXi9fw/IEqJzq+IHPIShdt6QbJdXekGLlmgv06J2eqA=
 github.com/atomdrift-project/hopper v0.0.0-20260914164146-9570c1ff4287/go.mod h1:f+S/ZJfXn1Jd+SCFer8co1R0UtRqGp8iQSZpBZ1t1/U=
+github.com/atomdrift-project/hopper v0.0.0-20260917110758-64404fdd9445 h1:aRuN3SB9hC1sdhDl1GqC2ChHAkvw70nJpYlw7SVsJ5k=
+github.com/atomdrift-project/hopper v0.0.0-20260917110758-64404fdd9445/go.mod h1:f+S/ZJfXn1Jd+SCFer8co1R0UtRqGp8iQSZpBZ1t1/U=
 github.com/atomdrift-project/obs v0.0.0-20260819141836-f9e00a0e1174 h1:wHU2OZLm25uOfuhczNK9eCtLFbaL0w1r0l8jTrXVYQg=
 github.com/atomdrift-project/obs v0.0.0-20260819141836-f9e00a0e1174/go.mod h1:9k/ifvPZ6fqp+qG/02fKMxCnA5C1SbUytmygMFHomBw=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
@@ -83,6 +85,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/pierrec/lz4/v4 v4.1.29 h1:CDQY6qZOLI4DW0Nx6R1vRrifrCeQHnNXkMb0hZWXFjg=
 github.com/pierrec/lz4/v4 v4.1.29/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
+github.com/pierrec/lz4/v4 v4.1.30 h1:cchX8N2DVP668WkElI9QMwVyoNabLkq1LofDHFeIrdg=
+github.com/pierrec/lz4/v4 v4.1.30/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=
 github.com/prometheus/client_golang v1.24.1/go.mod h1:F+oSRECHg4sse5ucfYpYDeIv/hu68Zo0uoHKetWnzcE=
