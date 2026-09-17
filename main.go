@@ -593,6 +593,10 @@ type FindingMatch struct {
 	// back to plain Evidence text.
 	Tokens []EvidenceToken
 	Count  int
+	// hex records whether Evidence is a hex dump rather than source text.
+	// Unexported: it is not rendered, it only survives long enough for
+	// highlightMatches to pick the right lexer after the top-N cap.
+	hex bool
 }
 
 // EvidenceToken is one chroma-classified slice of an evidence string. Class
@@ -8495,9 +8499,13 @@ func confPct(conf float64) int {
 // confidence used to rank it against the top-N cap.
 type scoredTrait struct {
 	topLevel string
-	display  FindingDisplay
-	crit     int
-	conf     float64
+	// highlightFallback names the lexer for this trait's matches that carry no
+	// per-match filename. Highlighting is deferred all the way to
+	// selectTopTraits, so it has to survive scoring; see highlightMatches.
+	highlightFallback string
+	display           FindingDisplay
+	crit              int
+	conf              float64
 }
 
 // selectTopTraits keeps the highest criticality*confidence traits up to
@@ -8530,6 +8538,17 @@ func selectTopTraits(scored []scoredTrait, displayNames map[string]string) (grou
 		scored = scored[:maxSampleTraits]
 	}
 	shown = len(scored)
+
+	// Syntax-highlight here and nowhere else: this is the last cut, so these
+	// are exactly the matches that reach the template. Doing it at build time
+	// meant a sample with hundreds of traits highlighted every trait's rows
+	// and then discarded all but maxSampleTraits of them -- the same
+	// compute-then-throw-away shape as the per-trait match cap, one layer up.
+	// Matches is a slice, so mutating in place here is visible through the
+	// copies byCat makes below.
+	for i := range scored {
+		highlightMatches(scored[i].display.Matches, scored[i].highlightFallback)
+	}
 
 	byCat := make(map[string][]scoredTrait)
 	for i := range scored {
@@ -8693,8 +8712,22 @@ func matchLexer(filename string) chroma.Lexer {
 	return lexer
 }
 
+// maxHighlightBytes caps the snippet size handed to chroma. chroma's
+// RegexLexer runs on regexp2, which allocates a fresh match-text buffer per
+// match (regexp2.newMatchText), so tokenising a large fragment allocates in
+// proportion to its size times its match count -- superlinear in practice. On
+// 2026-09-17 this path accounted for 89% of 6.43 TB of cumulative allocation
+// and was what drove prism's heap_sys to 53 GB against a 3 GB live set, i.e.
+// the OOM kills. A fragment past this size is not readable in a table cell
+// anyway, and the template falls back to plain Evidence text when Tokens is
+// empty, so an oversized snippet degrades to unhighlighted rather than absent.
+const maxHighlightBytes = 8 << 10
+
 func highlightEvidence(evidence, filename string) []EvidenceToken {
 	if evidence == "" || filename == "" {
+		return nil
+	}
+	if len(evidence) > maxHighlightBytes {
 		return nil
 	}
 	lexer := matchLexer(filename)
@@ -8848,6 +8881,31 @@ func formatOffset(off int64, isHex bool) string {
 	return strconv.FormatInt(off, 10)
 }
 
+// highlightMatches syntax-highlights exactly the matches that survived the
+// top-N cap, and nothing else.
+//
+// WHY THIS IS SEPARATE FROM BUILDING THE MATCH. Both aggregation paths build
+// every deduped evidence row, sort by count, then truncate to 24 (archive) or
+// 8 (per-file). Highlighting at build time meant an archive with thousands of
+// evidence rows tokenised all of them and then discarded all but a couple of
+// dozen -- the dominant source of prism's allocation churn. Sorting has to
+// happen before truncation, so which rows survive is not knowable earlier;
+// deferring is what makes the existing cap actually bound the work.
+//
+// fallback names the lexer for matches with no per-match attribution (the
+// per-file path, where every row belongs to the file being rendered). An empty
+// name yields no highlighting, matching the previous behaviour for rows whose
+// path was suppressed.
+func highlightMatches(matches []FindingMatch, fallback string) {
+	for i := range matches {
+		name := matches[i].Filename
+		if name == "" {
+			name = fallback
+		}
+		matches[i].Tokens = matchTokens(matches[i].Evidence, name, matches[i].hex)
+	}
+}
+
 // matchTokens highlights ev as source unless it is a hex dump, which is not
 // lexable as code.
 func matchTokens(ev, filename string, isHex bool) []EvidenceToken {
@@ -8924,9 +8982,12 @@ func (a *archiveAgg) addEvidenceMatches(f finding, ctxIdx map[string][]evidenceR
 		}
 		base := extractBasename(path)
 		a.addMatch(ev+"\x00"+path+"\x00"+loc, func() *FindingMatch {
+			// Tokens is deliberately left nil here; highlightMatches fills it
+			// in after the top-N cap, so the ~99% of matches that never render
+			// are never tokenised. See highlightMatches.
 			return &FindingMatch{
 				Evidence: ev, Path: path, Filename: base, Location: loc,
-				Tokens: matchTokens(ev, base, row.hex), Count: 1,
+				hex: row.hex, Count: 1,
 			}
 		})
 	}
@@ -9047,8 +9108,10 @@ func aggregateArchiveCategories(files []cleaveFile) (groups []CategoryGroup, tot
 		}
 		scored = append(scored, scoredTrait{
 			topLevel: agg.topLevel,
-			crit:     agg.crit,
-			conf:     agg.conf,
+			// Each match carries its own Filename here, so no fallback lexer.
+			highlightFallback: "",
+			crit:              agg.crit,
+			conf:              agg.conf,
 			display: FindingDisplay{
 				ID:      agg.dirPath,
 				Crit:    critIntToString(agg.crit),
@@ -9109,10 +9172,11 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 				m.Count++
 				return
 			}
+			// Tokens filled in by highlightMatches after the cap below.
 			agg.matches[mk] = &FindingMatch{
 				Evidence: row.text,
 				Location: row.offset,
-				Tokens:   matchTokens(row.text, base, row.hex),
+				hex:      row.hex,
 				Count:    1,
 			}
 			agg.order = append(agg.order, mk)
@@ -9188,9 +9252,10 @@ func buildStructuredFindings(files []cleaveFile) []FileFindingsDisplay {
 			}
 
 			scored = append(scored, scoredTrait{
-				topLevel: agg.topLevel,
-				crit:     agg.crit,
-				conf:     agg.conf,
+				topLevel:          agg.topLevel,
+				highlightFallback: base,
+				crit:              agg.crit,
+				conf:              agg.conf,
 				display: FindingDisplay{
 					ID:      agg.dirPath, // Show directory path without top-level
 					Crit:    critIntToString(agg.crit),
