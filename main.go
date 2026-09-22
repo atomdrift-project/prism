@@ -2117,7 +2117,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort(listenAddr, port),
-		Handler:           obs.Middleware(requestLogger(rl.limit(securityHeaders(mux)))),
+		Handler:           obs.Middleware(requestLogger(rl.limit(redirectLegacyHost(securityHeaders(mux))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      150 * time.Second, // 120s analysis + buffer
@@ -9981,3 +9981,33 @@ func bandProgressV5(p, threshold float64, class int) float64 {
 
 // v4: cleave output deserializes directly into cleaveReport via json tags.
 // parseAPIResponse and uploadToGCS removed.
+
+// Hosts on the retired isotope13.ai domain and the isotope13.io host each one
+// is served from now. Exact hosts only: a rewritten suffix would turn any
+// Host header ending in ".isotope13.ai" into a redirect target.
+var legacyHosts = map[string]string{
+	"isotope13.ai":     "isotope13.io",
+	"www.isotope13.ai": "www.isotope13.io",
+}
+
+// redirectLegacyHost sends requests for a retired isotope13.ai host to the
+// identical path and query on isotope13.io. 308 preserves the method and body,
+// so a POST isn't silently downgraded to GET.
+func redirectLegacyHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.ToLower(r.Host)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		canonical, ok := legacyHosts[host]
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// The target host is a constant from the table above and the path is
+		// re-escaped from the parsed URL, so the redirect can only ever point
+		// back at our own domain.
+		target := url.URL{Scheme: "https", Host: canonical, Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+		http.Redirect(w, r, target.String(), http.StatusPermanentRedirect)
+	})
+}
