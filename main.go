@@ -9988,6 +9988,7 @@ func bandProgressV5(p, threshold float64, class int) float64 {
 var legacyHosts = map[string]string{
 	"isotope13.ai":     "isotope13.io",
 	"www.isotope13.ai": "www.isotope13.io",
+	"lab.isotope13.ai": "lab.isotope13.io",
 }
 
 // redirectLegacyHost sends requests for a retired isotope13.ai host to the
