@@ -10,6 +10,7 @@ help:
 	@echo "  make dev-watch              Like 'dev' but auto-rebuilds/restarts on changes (needs air)"
 	@echo "  make clean                  Clean build artifacts"
 	@echo "  make deploy                 git pull + native rollout (Bastille or systemd + Cloudflare)"
+	@echo "                              PRISM_TUNNEL=none skips cloudflared setup (systemd only)"
 	@echo "  make install-precommit      Install the pre-commit hook (test + lint + no go.mod overrides)"
 	@echo ""
 
