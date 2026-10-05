@@ -66,32 +66,55 @@ func itoaTest(i int) string {
 
 // TestIsHardRefresh pins the hard-reload detection: a hard refresh sends
 // Cache-Control: no-cache (or Pragma: no-cache); a normal reload sends
-// max-age=0, which must NOT count so it still serves from cache.
+// max-age=0, which must NOT count so it still serves from cache. Only a browser
+// navigation earns the bypass: monitors and scrapers send no-cache on every
+// request and must keep being served from cache.
 func TestIsHardRefresh(t *testing.T) {
+	const (
+		chrome  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+		firefox = "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0"
+		uptime  = "Mozilla/5.0+(compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)"
+		gptbot  = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.4; +https://openai.com/gptbot)"
+		curlUA  = "curl/8.10.1"
+	)
 	cases := []struct {
 		name         string
 		cacheControl string
 		pragma       string
+		secFetchMode string
+		userAgent    string
 		want         bool
 	}{
-		{"hard reload cache-control", "no-cache", "", true},
-		{"hard reload pragma", "", "no-cache", true},
-		{"chrome hard reload both", "no-cache", "no-cache", true},
-		{"normal reload", "max-age=0", "", false},
-		{"plain navigation", "", "", false},
-		{"mixed directives", "no-cache, no-store", "", true},
+		{"hard reload cache-control", "no-cache", "", "navigate", chrome, true},
+		{"hard reload pragma", "", "no-cache", "navigate", chrome, true},
+		{"chrome hard reload both", "no-cache", "no-cache", "navigate", chrome, true},
+		{"firefox hard reload", "no-cache", "", "navigate", firefox, true},
+		{"mixed directives", "no-cache, no-store", "", "navigate", chrome, true},
+		{"normal reload", "max-age=0", "", "navigate", chrome, false},
+		{"plain navigation", "", "", "navigate", chrome, false},
+		{"uptimerobot", "no-cache", "", "", uptime, false},
+		{"spoofed chrome without fetch metadata", "no-cache", "no-cache", "", chrome, false},
+		{"fetch from script", "no-cache", "", "cors", chrome, false},
+		{"self-identified bot in a browser", "no-cache", "", "navigate", gptbot, false},
+		{"curl with fetch metadata", "no-cache", "", "navigate", curlUA, false},
+		{"empty user agent", "no-cache", "", "navigate", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/file/abc", http.NoBody)
+			r.Header.Set("User-Agent", tc.userAgent)
 			if tc.cacheControl != "" {
 				r.Header.Set("Cache-Control", tc.cacheControl)
 			}
 			if tc.pragma != "" {
 				r.Header.Set("Pragma", tc.pragma)
 			}
+			if tc.secFetchMode != "" {
+				r.Header.Set("Sec-Fetch-Mode", tc.secFetchMode)
+			}
 			if got := isHardRefresh(r); got != tc.want {
-				t.Errorf("isHardRefresh(cc=%q pragma=%q) = %v, want %v", tc.cacheControl, tc.pragma, got, tc.want)
+				t.Errorf("isHardRefresh(cc=%q pragma=%q mode=%q ua=%q) = %v, want %v",
+					tc.cacheControl, tc.pragma, tc.secFetchMode, tc.userAgent, got, tc.want)
 			}
 		})
 	}

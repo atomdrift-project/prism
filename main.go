@@ -3564,11 +3564,70 @@ func requestRefresh(ctx context.Context, sha string) (bool, error) {
 // reload (Chrome and friends also send Pragma: no-cache); we honor that as the
 // user's explicit "skip the cache, rebuild, and repopulate" signal. A normal
 // reload sends max-age=0, which we deliberately ignore so it still hits cache.
+//
+// Only a person at a browser gets that power. Uptime monitors and scrapers send
+// no-cache on every request: UptimeRobot alone forced a ~2-minute rebuild of
+// the current Fallout week every 5 minutes (stalling every visitor who joined
+// that rebuild), and spoofed-Chrome scrapers wiped per-sample caches thousands
+// of times a day. Their no-cache is ignored and they are served from cache.
 func isHardRefresh(r *http.Request) bool {
+	if !requestsNoCache(r) {
+		return false
+	}
+	if !isBrowserNavigation(r) {
+		logger.Debug("ignoring no-cache from non-browser client",
+			"path", r.URL.Path,
+			"sec_fetch_mode", r.Header.Get("Sec-Fetch-Mode"),
+			"user_agent", r.UserAgent(),
+		)
+		return false
+	}
+	return true
+}
+
+// requestsNoCache reports whether the request asks to bypass caches.
+func requestsNoCache(r *http.Request) bool {
 	if strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") {
 		return true
 	}
 	return strings.EqualFold(r.Header.Get("Pragma"), "no-cache")
+}
+
+// isBrowserNavigation reports whether the request looks like a person
+// navigating in a real browser. Every current browser (Chrome 76+, Firefox 90+,
+// Safari 16.4+) sends Sec-Fetch-Mode: navigate on a top-level load, including a
+// hard reload; HTTP libraries, monitors, and most scrapers send no Fetch
+// Metadata at all. That positive signal matters more than the User-Agent check:
+// most cache-busting scrapers present a stock Windows Chrome UA. The UA
+// denylist then catches self-identified bots that drive a real browser engine.
+func isBrowserNavigation(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Mode") != "navigate" {
+		return false
+	}
+	return !looksLikeBot(r.UserAgent())
+}
+
+// botUAMarkers are lower-case User-Agent substrings that identify crawlers,
+// monitors, and HTTP libraries.
+var botUAMarkers = []string{
+	"bot", "crawl", "spider", "slurp", "scrapy", "uptime", "monitor",
+	"headless", "phantomjs", "lighthouse", "pingdom", "statuscake",
+	"curl/", "wget/", "python", "go-http-client", "okhttp", "java/",
+	"node-fetch", "axios/", "libwww", "httpclient", "facebookexternalhit",
+}
+
+// looksLikeBot reports whether ua is empty or self-identifies as automation.
+func looksLikeBot(ua string) bool {
+	if ua == "" {
+		return true
+	}
+	ua = strings.ToLower(ua)
+	for _, m := range botUAMarkers {
+		if strings.Contains(ua, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // invalidateSampleCaches drops every per-sha cache entry for sha: the rendered
