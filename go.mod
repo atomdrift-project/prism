@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
-	github.com/atomdrift-project/hopper v0.0.0-20260927181615-81974e40b569
+	github.com/atomdrift-project/hopper v0.0.0-20261009021853-de79729f80e1
 	github.com/atomdrift-project/obs v0.0.0-20260819141836-f9e00a0e1174
 	github.com/codeGROOVE-dev/fido v1.11.1-0.20260923181850-2fcd14cd89d4
 	github.com/codeGROOVE-dev/fido/pkg/store/localfs v1.11.0
@@ -12,7 +12,7 @@ require (
 	github.com/codeGROOVE-dev/retry v1.3.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -24,7 +24,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/codeGROOVE-dev/fido/pkg/store/compress v1.11.0 // indirect
-	github.com/dlclark/regexp2/v2 v2.8.3 // indirect
+	github.com/dlclark/regexp2/v2 v2.8.4 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -34,14 +34,14 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/mattn/go-sqlite3 v1.14.52 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
-	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
-	github.com/prometheus/common v0.72.0 // indirect
+	github.com/prometheus/common v0.72.1 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
@@ -63,11 +63,11 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.1 // indirect
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
-	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
