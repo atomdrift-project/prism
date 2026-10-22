@@ -10,17 +10,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atomdrift-project/obs"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 
 func TestReliabilityMetricsScrape(t *testing.T) {
-	shutdown, err := obs.Init(context.Background(), obs.Config{ServiceName: "prism-test", DisableSlog: true})
+	// Scrape a local provider without starting the production OTLP exporters.
+	registry := prometheus.NewRegistry()
+	exporter, err := otelprom.New(otelprom.WithRegisterer(registry))
 	if err != nil {
-		t.Fatalf("obs.Init: %v", err)
+		t.Fatalf("prometheus exporter: %v", err)
 	}
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(exporter))
+	oldProvider := otel.GetMeterProvider()
+	oldRequests, oldDuration, oldClientRender := depRequests, depDuration, clientRenderDuration
+	otel.SetMeterProvider(provider)
 	t.Cleanup(func() {
-		if err := shutdown(context.Background()); err != nil {
-			t.Logf("obs shutdown: %v", err)
+		otel.SetMeterProvider(oldProvider)
+		depRequests, depDuration, clientRenderDuration = oldRequests, oldDuration, oldClientRender
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := provider.Shutdown(ctx); err != nil {
+			t.Errorf("metrics shutdown: %v", err)
 		}
 	})
 
@@ -34,16 +48,17 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 	backendStatus.litmus.state.Store(int32(backendUnhealthy))
 	t.Cleanup(func() { backendStatus = oldStatus })
 
+	oldStats := statsLatest.Load()
 	statsLatest.Store(&indexStats{
 		GeneratedAt: time.Now().UTC().Add(-30 * time.Second),
 		Total:       1_234_567,
 	})
-	t.Cleanup(func() { statsLatest.Store(nil) })
+	t.Cleanup(func() { statsLatest.Store(oldStats) })
 
 	initDependencyMetrics()
 
 	rec := httptest.NewRecorder()
-	obs.MetricsHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_/metrik", http.NoBody))
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_/metrik", http.NoBody))
 	body := rec.Body.String()
 	for _, want := range []string{
 		`prism_backend_up{dependency="hopper-api"`,

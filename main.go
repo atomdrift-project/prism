@@ -1248,9 +1248,9 @@ type feedPageData struct {
 	// liveness state so the template can pick the real upload form vs. the
 	// disabled placeholder without probing either backend per request.
 	UploadEnabled bool
-	// FeedsOnly restricts the feed to label='bad' samples (threat-intel +
-	// curated open-source malware sources) — the rows that carry the
-	// "✓ corroborated" mark. Toggled by the filter bar's checkbox (?feeds=1).
+	// FeedsOnly restricts the feed to samples cited by external sources through
+	// Hopper's version-aware sightings flag, also shown by the per-row checkmark.
+	// Toggled by the "Sighted elsewhere" checkbox (?feeds=1).
 	FeedsOnly bool
 }
 
@@ -2639,14 +2639,9 @@ type feedQueryArgs struct {
 	domain      string
 	criticality string
 	formula     string
-	// search is the free-text filter behind ?q=: case-insensitive filename
-	// substring OR exact sha256 OR exact package name, applied as a hopper SQL
-	// predicate (not an in-memory pass) so it spans the whole index rather than
-	// the cached page. The exact package-name disjunct means a bare name typed
-	// into the box (e.g. "xz-utils") resolves to the package even when the
-	// filename embeds no such substring. (A full sha pasted into the box is
-	// caught earlier and redirected to the file page; this equality is the
-	// no-JS / belt-and-suspenders path.)
+	// search resolves a bare package name to its indexed PURL identities first.
+	// If none exists, it falls back to a bounded filename-substring search.
+	// A full SHA is redirected to the file page before entering this pipeline.
 	search string
 	// purlBase / purlVersion filter the feed to one package identity: an exact
 	// match on the indexed purl_base column (version-less canonical PURL),
@@ -2662,9 +2657,8 @@ type feedQueryArgs struct {
 	// each installer that ships it), so these disable TopLevelOnly.
 	claimName   string
 	claimSigner string
-	// feedsOnly toggles the "malware feeds" view: only label='bad'
-	// samples (curated threat-intel / open-source malware sources) are
-	// returned, and the table picks up a Feed column.
+	// feedsOnly restricts the stream to samples cited by external sources,
+	// independently of the sample's label or analysis verdict.
 	feedsOnly bool
 }
 
@@ -2677,7 +2671,7 @@ func feedCacheKey(a *feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v13:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v14:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
 		":cn=" + a.claimName + ":cs=" + a.claimSigner +
@@ -2966,7 +2960,15 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 	}
 
 	q.Since, q.Until = args.since, args.until
-	samples, truncated, err := feedSamplesInWindow(ctx, db, &q)
+	purls, err := resolvePackageSearch(ctx, db, packageSearchPURLs(q.Search, dropdowns.Ecosystems, dropdowns.Domains))
+	if err != nil {
+		fail()
+		return feedFetch{}, err
+	}
+	if len(purls) > 0 {
+		q.Search = ""
+	}
+	samples, truncated, err := feedSamplesInWindow(ctx, db, &q, purls)
 	if err != nil {
 		fail()
 		return feedFetch{}, err
@@ -2987,8 +2989,11 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		// to consult (and churn) the shared per-SHA result cache: doing so
 		// added a disk round-trip per row and evicted genuinely-hot detail-page
 		// entries from the shared in-memory tier under crawler load.
-		res := storedResultFromHopperSample(sample)
-		classification := res.Classification
+		var verdict litmusMlResponse
+		classification := ""
+		if len(sample.LitmusResult) > 0 && json.Unmarshal(sample.LitmusResult, &verdict) == nil {
+			classification = classificationName(verdict.verdictClass())
+		}
 		if classification == "" {
 			continue
 		}
@@ -2998,7 +3003,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		// excludes them (file_type <> 'registry'), so this is a fallback that
 		// keeps the index clean when served by an older hopper predating that
 		// filter, mirroring the criticality recheck below.
-		if firstNonEmpty(res.FileType, sample.FileType) == "registry" {
+		if sample.FileType == "registry" {
 			continue
 		}
 		// Belt-and-suspenders check that the row's class falls into the
@@ -3016,7 +3021,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 				continue
 			}
 		}
-		if args.formula != "" && firstNonEmpty(res.Formula, sample.Formula) != args.formula {
+		if args.formula != "" && sample.Formula != args.formula {
 			continue
 		}
 
@@ -3032,20 +3037,20 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		out.rows = append(out.rows, feedRow{
 			SHA256:         sample.SHA256,
 			SHA256Short:    shortSHA(sample.SHA256),
-			Filename:       firstNonEmpty(res.Filename, sample.Filename, filepath.Base(sample.Path)),
+			Filename:       firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
 			Classification: classification,
 			Probability:    sample.LitmusScore,
 			SuspiciousT:    suspiciousT,
 			HostileT:       hostileT,
-			Formula:        res.Formula,
-			FileType:       firstNonEmpty(res.FileType, sample.FileType),
+			Formula:        sample.Formula,
+			FileType:       sample.FileType,
 			Source:         sample.Source,
 			Feed:           sample.Feed,
 			Ecosystem:      sample.Ecosystem,
 			EcosystemURL:   ecosystemURL(sample.Ecosystem),
 			Package:        sample.Package,
 			Version:        sample.Version,
-			PURLBase:       res.PURLBase,
+			PURLBase:       sample.PURLBase,
 			RegistryTitle:  sample.RegistryTitle,
 			Desc:           truncDesc(sample.RegistryDescription),
 			Users:          formatCount(sample.RegistryDownloads),
@@ -3073,16 +3078,16 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 // new. Ties on the boundary instant are why the next bound is inclusive of the
 // last row (created_at has microsecond resolution) and why rows are deduped by
 // sha256: re-reading one row beats losing the ones beside it.
-func feedSamplesInWindow(ctx context.Context, db *hopper.DB, q *hopper.FeedQuery) ([]*hopper.Sample, bool, error) {
+func feedSamplesInWindow(ctx context.Context, db *hopper.DB, q *hopper.FeedQuery, purls []string) ([]*hopper.Sample, bool, error) {
 	if q.Since.IsZero() && q.Until.IsZero() {
-		samples, err := db.FeedSamples(ctx, q)
+		samples, err := feedSummarySamples(ctx, db, q, purls)
 		return samples, false, err
 	}
 	q.Limit = feedWindowPageSize
 	var out []*hopper.Sample
 	seen := make(map[string]bool, feedWindowPageSize)
 	for range feedWindowPages {
-		page, err := db.FeedSamples(ctx, q)
+		page, err := feedSummarySamples(ctx, db, q, purls)
 		if err != nil {
 			return nil, false, err
 		}
@@ -4864,14 +4869,14 @@ func soleSampleByPURL(ctx context.Context, base, version string) string {
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
 	start := time.Now()
-	samples, err := db.FeedSamples(ctx, &hopper.FeedQuery{
+	samples, err := feedSummarySamples(ctx, db, &hopper.FeedQuery{
 		PURLBase:      base,
 		PURLVersion:   version,
 		OrderBy:       "created_at",
 		TopLevelOnly:  true,
 		Limit:         2,
 		CriticalLevel: CriticalLevel,
-	})
+	}, nil)
 	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "purl", "error", start)
