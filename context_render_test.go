@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,114 @@ func TestZ85DecodeVector(t *testing.T) {
 	}
 	if _, err := z85Decode("x"); err == nil {
 		t.Error("a one-character group must be rejected")
+	}
+}
+
+// byteText encodes b the way cleave writes v9 "s": byte b as U+00bb, NUL as U+0100.
+func byteText(b []byte) string {
+	var sb strings.Builder
+	for _, c := range b {
+		r := rune(c)
+		if c == 0 {
+			r = 0x100
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// TestByteTextDecodeRoundTrip checks every byte value survives the v9 encoding,
+// including NUL (U+0100) and the high half (two-byte UTF-8).
+func TestByteTextDecodeRoundTrip(t *testing.T) {
+	want := make([]byte, 256)
+	for i := range want {
+		want[i] = byte(i)
+	}
+	got, err := byteTextDecode(byteText(want))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("decode = % x, want % x", got, want)
+	}
+	if got, err := byteTextDecode(""); err != nil || len(got) != 0 {
+		t.Errorf("empty input = %q, %v; want empty, nil", got, err)
+	}
+}
+
+// TestByteTextDecodeRejects checks code points no valid encoder produces.
+func TestByteTextDecodeRejects(t *testing.T) {
+	for _, s := range []string{"\x00", "a\x00b", "\u0101", "\u20ac", "\U0001F600", "\ufffd", "\xff"} {
+		if _, err := byteTextDecode(s); err == nil {
+			t.Errorf("byteTextDecode(%q) succeeded, want error", s)
+		}
+	}
+}
+
+// TestByteTextWindowMatchesZ85 confirms a v9 window carrying "s" yields the same
+// Data as the equivalent v8 window carrying Z85 "b", and that a bad code point
+// fails the window like a Z85 error does.
+func TestByteTextWindowMatchesZ85(t *testing.T) {
+	data := []byte{0x86, 0x4f, 0xd2, 0x6f, 0xb5, 0x59, 0xf7, 0x5b} // "HelloWorld" in Z85
+	s, err := json.Marshal(byteText(data))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var v8, v9 contextWindow
+	if err := json.Unmarshal([]byte(`{"ln":64,"b":"HelloWorld"}`), &v8); err != nil {
+		t.Fatalf("v8 window: %v", err)
+	}
+	if err := json.Unmarshal([]byte(`{"ln":64,"s":`+string(s)+`}`), &v9); err != nil {
+		t.Fatalf("v9 window: %v", err)
+	}
+	if !bytes.Equal(v9.Data, v8.Data) || !bytes.Equal(v9.Data, data) {
+		t.Errorf("v9 Data = % x, v8 Data = % x, want % x", v9.Data, v8.Data, data)
+	}
+	if v9.Offset != v8.Offset {
+		t.Errorf("v9 offset = %d, want %d", v9.Offset, v8.Offset)
+	}
+	var bad contextWindow
+	if err := json.Unmarshal([]byte(`{"ln":0,"s":"a\u0000b"}`), &bad); err == nil {
+		t.Error("a window with U+0000 in s must fail to decode")
+	}
+}
+
+// TestV9FileRendersContext confirms a v9-shaped file — byte text in "s", no ctx
+// annotations, facts reduced to model metrics — unmarshals and renders.
+func TestV9FileRendersContext(t *testing.T) {
+	src, err := json.Marshal(byteText([]byte("ctx before\nexec(data)\x00")))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	doc := `{"v":"9","files":[{"id":0,"path":"payload.py","type":"python","sha":"` + strings.Repeat("a", 64) + `",
+		"size":22,"depth":0,
+		"facts":{"metrics":{"text.lines":2}},
+		"traits":[{"id":"t/x","crit":5,"spans":[[11,4]]}],
+		"ctx":[{"ln":0,"line":1,"col":1,"s":` + string(src) + `}]}]}`
+	var report cleaveReport
+	if err := json.Unmarshal([]byte(doc), &report); err != nil {
+		t.Fatalf("unmarshal v9 report: %v", err)
+	}
+	if len(report.Files) != 1 {
+		t.Fatalf("want one file, got %d", len(report.Files))
+	}
+	file := &report.Files[0]
+	if len(file.Imports) != 0 || len(file.Exports) != 0 || len(file.Sections) != 0 {
+		t.Errorf("reduced facts produced imports/exports/sections: %+v", file)
+	}
+	if len(file.Metrics) == 0 {
+		t.Error("facts.metrics should populate the file's metrics")
+	}
+	blocks := buildContextBlocks(file, "t/x")
+	if len(blocks) != 1 || len(blocks[0].Rows) != 2 {
+		t.Fatalf("want one block with two rows, got %+v", blocks)
+	}
+	hit := blocks[0].Rows[1]
+	if hit.Loc != "2" || hit.Crit != "hostile" {
+		t.Errorf("hit row loc/crit = %q/%q, want 2/hostile", hit.Loc, hit.Crit)
+	}
+	if len(hit.Segs) < 1 || hit.Segs[0].Text != "exec" || hit.Segs[0].Crit != "hostile" {
+		t.Errorf("hit row segs = %+v, want exec lit hostile", hit.Segs)
 	}
 }
 

@@ -216,11 +216,12 @@ func feedSummarySamples(ctx context.Context, db *hopper.DB, q *hopper.FeedQuery,
 	var samples []*hopper.Sample
 	for rows.Next() {
 		sample := &hopper.Sample{}
-		if err := rows.Scan(&sample.SHA256, &sample.Filename, &sample.Path, &sample.FileType,
+		err := rows.Scan(&sample.SHA256, &sample.Filename, &sample.Path, &sample.FileType,
 			&sample.Source, &sample.Feed, &sample.Ecosystem, &sample.Package, &sample.Version,
 			&sample.PURLBase, &sample.Formula, &sample.LitmusScore, &sample.LitmusResult,
 			&sample.LLMResult, &sample.TopTraits, &sample.CreatedAt, &sample.RegistryTitle,
-			&sample.RegistryDescription, &sample.RegistryDownloads, &sample.Corroborated); err != nil {
+			&sample.RegistryDescription, &sample.RegistryDownloads, &sample.Corroborated)
+		if err != nil {
 			return nil, err
 		}
 		samples = append(samples, sample)

@@ -1700,9 +1700,10 @@ type sectionInfo struct {
 // `ln` is a byte offset. No `line`/`col`.
 //
 // The presence of `line` unambiguously marks a v8 textual chunk; `addr` without
-// `line` marks a v7 source line; neither marks a binary unit. `b` holds the raw
-// bytes Z85-encoded. Legacy (v6 and earlier): pre-rendered text in `t`, offset
-// in `l`.
+// `line` marks a v7 source line; neither marks a binary unit. The raw bytes are
+// in `s` as byte text (v9, see byteTextDecode) or in `b` Z85-encoded (v7/v8);
+// a window carries one or the other. Legacy (v6 and earlier): pre-rendered text
+// in `t`, offset in `l`.
 type contextWindow struct {
 	Line   *int64 `json:"-"` // v8: source line of the first byte
 	Col    *int64 `json:"-"` // v8: source column of the first byte
@@ -1720,6 +1721,7 @@ func (w *contextWindow) UnmarshalJSON(data []byte) error {
 		OldAddr *int64 `json:"a"`
 		Text    string `json:"t"`
 		Bytes   string `json:"b"`
+		ByteStr string `json:"s"`
 		Offset  int64  `json:"ln"`
 		OldOff  int64  `json:"l"`
 	}
@@ -1737,7 +1739,14 @@ func (w *contextWindow) UnmarshalJSON(data []byte) error {
 		w.Addr = raw.OldAddr
 	}
 	w.Text = raw.Text
-	if raw.Bytes != "" {
+	switch {
+	case raw.ByteStr != "":
+		decoded, err := byteTextDecode(raw.ByteStr)
+		if err != nil {
+			return fmt.Errorf("ctx window byte text: %w", err)
+		}
+		w.Data = decoded
+	case raw.Bytes != "":
 		decoded, err := z85Decode(raw.Bytes)
 		if err != nil {
 			return fmt.Errorf("ctx window z85: %w", err)

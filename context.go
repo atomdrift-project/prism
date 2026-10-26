@@ -68,6 +68,25 @@ var z85Decode = func() func(string) ([]byte, error) {
 	}
 }()
 
+// byteTextDecode inverts cleave's v9 byte text carried in "s": byte b in
+// 0x01..0xFF is the code point U+00bb, and 0x00 is U+0100 so the JSON string
+// never holds a NUL. Any other code point — U+0000, or anything above U+0100
+// (including the U+FFFD that stands in for invalid UTF-8) — is rejected.
+func byteTextDecode(s string) ([]byte, error) {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		switch {
+		case r > 0 && r < 0x100:
+			out = append(out, byte(r))
+		case r == 0x100:
+			out = append(out, 0)
+		default:
+			return nil, fmt.Errorf("invalid byte-text code point %U", r)
+		}
+	}
+	return out, nil
+}
+
 // contextBlock is one rendered context window: a contiguous run of source lines
 // or a single hex unit. It is the shared shape behind the File tab and the
 // per-trait expansion.

@@ -119,7 +119,7 @@ shellcheck-fix: $(SHELLCHECK_BIN)
 	$(SHELLCHECK_BIN) $(shell find . -name "*.sh") -f diff | { read -t 1 line || exit 0; { echo "$$line" && cat; } | git apply -p2; }
 
 GOLANGCI_LINT_CONFIG := $(LINT_ROOT)/.golangci.yml
-GOLANGCI_LINT_VERSION ?= v2.13.1
+GOLANGCI_LINT_VERSION ?= v2.15.0
 GOLANGCI_LINT_BIN := $(LINT_ROOT)/out/linters/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(LINT_ARCH)
 $(GOLANGCI_LINT_BIN):
 	mkdir -p $(LINT_ROOT)/out/linters
@@ -150,14 +150,7 @@ $(YAMLLINT_BIN):
 	mkdir -p $(LINT_ROOT)/out/linters
 	rm -rf $(LINT_ROOT)/out/linters/yamllint-*
 	curl -sSfL https://github.com/adrienverge/yamllint/archive/refs/tags/v$(YAMLLINT_VERSION).tar.gz | tar -C $(LINT_ROOT)/out/linters -zxf -
-	# Distros that mark Python "externally managed" (CachyOS/Arch on galadriel)
-	# ship no pip3/pip at all, which made this target unbuildable there. Fall
-	# back to a throwaway venv, which carries its own pip via ensurepip, so the
-	# install still lands in dist/ and never touches the system Python.
-	cd $(YAMLLINT_ROOT) && ( pip3 install --target dist . \
-		|| pip install --target dist . \
-		|| python3 -m pip install --target dist . \
-		|| ( python3 -m venv .bootstrap && .bootstrap/bin/pip install --target dist . ) )
+	cd $(YAMLLINT_ROOT) && pip3 install --target dist . || pip install --target dist .
 
 LINTERS += yamllint-lint
 yamllint-lint: $(YAMLLINT_BIN)

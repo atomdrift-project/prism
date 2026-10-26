@@ -16,10 +16,7 @@
       "!**/coverage",
       "!**/.next",
       "!**/.nuxt",
-      "!templates",
-      "!static/js/three.module.js",
-      "!static/js/OrbitControls.js",
-      "!static/js/CSS2DRenderer.js"
+      "!templates"
     ]
   },
   "formatter": {

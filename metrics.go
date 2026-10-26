@@ -57,33 +57,36 @@ var depLatencyBucketsSec = []float64{
 func initDependencyMetrics() {
 	m := otel.Meter("github.com/atomdrift-project/prism")
 
-	if c, err := m.Int64Counter(
+	counter, err := m.Int64Counter(
 		"prism.dependency.requests",
 		metric.WithDescription("Outbound dependency calls by outcome (ok/error/rejected)."),
-	); err == nil {
-		depRequests = c
+	)
+	if err == nil {
+		depRequests = counter
 	} else {
 		logger.Warn("dependency request counter unavailable", "error", err)
 	}
 
-	if h, err := m.Float64Histogram(
+	duration, err := m.Float64Histogram(
 		"prism.dependency.duration",
 		metric.WithDescription("Latency of outbound dependency calls."),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(depLatencyBucketsSec...),
-	); err == nil {
-		depDuration = h
+	)
+	if err == nil {
+		depDuration = duration
 	} else {
 		logger.Warn("dependency duration histogram unavailable", "error", err)
 	}
 
-	if h, err := m.Float64Histogram(
+	clientDuration, err := m.Float64Histogram(
 		"prism.page.client_render.duration",
 		metric.WithDescription("Browser-side detail-page render phases reported by the RUM beacon."),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(depLatencyBucketsSec...),
-	); err == nil {
-		clientRenderDuration = h
+	)
+	if err == nil {
+		clientRenderDuration = clientDuration
 	} else {
 		logger.Warn("client render histogram unavailable", "error", err)
 	}
@@ -165,7 +168,7 @@ func registerReliabilityGauges(m metric.Meter) {
 		return
 	}
 
-	if _, err := m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+	_, err := m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		for _, b := range []*breaker{apiBreaker, dbBreaker} {
 			o.ObserveInt64(breakerState, int64(b.currentState()),
 				metric.WithAttributes(attribute.String("dependency", b.name)))
@@ -210,7 +213,8 @@ func registerReliabilityGauges(m metric.Meter) {
 		}
 		o.ObserveInt64(falloutTruncated, trunc)
 		return nil
-	}, all...); err != nil {
+	}, all...)
+	if err != nil {
 		logger.Warn("reliability gauges callback registration failed", "error", err)
 	}
 }

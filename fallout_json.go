@@ -123,9 +123,10 @@ func writeFalloutJSONError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(struct {
+	response := struct {
 		Error string `json:"error"`
-	}{Error: message}); err != nil {
+	}{Error: message}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Debug("fallout JSON: error write failed", "error", err)
 	}
 }

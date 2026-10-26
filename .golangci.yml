@@ -34,8 +34,8 @@ linters:
     # linters that give advice contrary to what the Go authors advise
     - decorder # checks declaration order and count of types, constants, variables and functions
     - dupword # [useless without config] checks for duplicate words in the source code
-    - exhaustruct # [highly recommend to enable] checks if all structure fields are initialized
-    - exhaustruct_v5 # same linter, post-rename name: both are in "default: all"
+    - exhaustruct # checks if all structure fields are initialized
+    - exhaustruct_v5 # no
     - forcetypeassert # [replaced by errcheck] finds forced type assertions
     - ginkgolinter # [if you use ginkgo/gomega] enforces standards of using ginkgo and gomega
     - gochecknoglobals # checks that no global variables exist
@@ -103,17 +103,13 @@ linters:
       # Report about not checking of errors in type assertions: `a := b.(MyStruct)`.
       check-type-assertions: true
       check-blank: true
-      # errors.AsType's first result is the matched error VALUE, not a failure
-      # to handle; check-blank would otherwise flag every `if _, ok := ...`.
-      exclude-functions:
-        - errors.AsType
 
     exhaustive:
       # Program elements to check for exhaustiveness.
       # Default: [ switch ]
       check:
         - switch
-        - map
+        - mapliteral
       default-signifies-exhaustive: true
 
     fatcontext:
