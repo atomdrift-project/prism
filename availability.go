@@ -14,7 +14,7 @@ import (
 const (
 	// backendProbeInterval is deliberately process-wide: page renders only read
 	// an atomic status bit, so traffic volume can never turn health monitoring
-	// into extra load on hopper-api or litmus.
+	// into extra load on hopper-api or Beamline.
 	backendProbeInterval = 15 * time.Second
 	backendProbeTimeout  = 3 * time.Second
 )
@@ -35,14 +35,13 @@ type backendProbe struct {
 type backendAvailabilityMonitor struct {
 	client   *http.Client
 	hopper   *backendProbe
-	litmus   *backendProbe
 	beamline *backendProbe
 	interval time.Duration
 }
 
 var backendStatus *backendAvailabilityMonitor
 
-func newBackendAvailabilityMonitor(hopperAddr, litmusServer string, client *http.Client) *backendAvailabilityMonitor {
+func newBackendAvailabilityMonitor(hopperAddr string, client *http.Client) *backendAvailabilityMonitor {
 	if client == nil {
 		client = &http.Client{
 			Timeout:   backendProbeTimeout,
@@ -54,10 +53,6 @@ func newBackendAvailabilityMonitor(hopperAddr, litmusServer string, client *http
 		hopper: &backendProbe{
 			name: "hopper-api",
 			url:  backendHealthURL(hopperAddr, "/healthz"),
-		},
-		litmus: &backendProbe{
-			name: "litmus",
-			url:  backendHealthURL(litmusServer, "/_/health"),
 		},
 		beamline: &backendProbe{
 			name: "beamline-api",
@@ -88,13 +83,12 @@ func backendHealthURL(addr, healthPath string) string {
 	return u.String()
 }
 
-// refresh probes the two independent servers concurrently. It is called once
+// refresh probes the independent servers concurrently. It is called once
 // before serving and then only by run's single ticker, so each server receives
 // at most one liveness request per backendProbeInterval.
 func (m *backendAvailabilityMonitor) refresh(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { m.hopper.refresh(ctx, m.client) })
-	wg.Go(func() { m.litmus.refresh(ctx, m.client) })
 	wg.Go(func() { m.beamline.refresh(ctx, m.client) })
 	wg.Wait()
 }
@@ -168,11 +162,4 @@ func hopperAPIAvailable() bool {
 
 func uploadBackendsAvailable() bool {
 	return backendStatus != nil && backendStatus.beamline.available() && backendStatus.hopper.available()
-}
-
-// litmusAvailable reports whether the legacy scan server is up. Escalation
-// still uses it after fetching samples from Hopper; browser uploads use
-// Beamline directly.
-func litmusAvailable() bool {
-	return backendStatus != nil && backendStatus.litmus.available()
 }

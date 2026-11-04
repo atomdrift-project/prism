@@ -43,9 +43,9 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 	t.Cleanup(func() { logger = oldLogger })
 
 	oldStatus := backendStatus
-	backendStatus = newBackendAvailabilityMonitor("", "", &http.Client{Timeout: time.Second})
+	backendStatus = newBackendAvailabilityMonitor("", &http.Client{Timeout: time.Second})
 	backendStatus.hopper.state.Store(int32(backendHealthy))
-	backendStatus.litmus.state.Store(int32(backendUnhealthy))
+	backendStatus.beamline.state.Store(int32(backendUnhealthy))
 	t.Cleanup(func() { backendStatus = oldStatus })
 
 	oldStats := statsLatest.Load()
@@ -62,7 +62,7 @@ func TestReliabilityMetricsScrape(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`prism_backend_up{dependency="hopper-api"`,
-		`prism_backend_up{dependency="litmus"`,
+		`prism_backend_up{dependency="beamline-api"`,
 		`prism_circuit_breaker_state{dependency="hopper-api"`,
 		`prism_circuit_breaker_state{dependency="hopper-db"`,
 		"prism_hopper_db_connected",

@@ -94,8 +94,6 @@ var (
 	hopperClient      *http.Client // HTTP client for hopper API server
 	beamlineAPIAddr   string       // Public Beamline API base URL
 	beamlineClient    *http.Client // HTTP client for Beamline analysis
-	litmusAddr        string       // Address of the dedicated litmus analysis server; empty disables it
-	litmusClient      *http.Client // HTTP client for the litmus analysis server
 	cache             *fido.TieredCache[string, storedResult]
 	feedCache         *fido.TieredCache[string, cachedFeedSnapshot]
 	// feedStaleCache holds the last-known-good snapshot per feed key with a long
@@ -128,13 +126,6 @@ const (
 	defaultHopperDSN       = "postgres://hopper@hopper-replica:5432/hopper?sslmode=disable&application_name=prism"
 	defaultHopperAPIAddr   = "hopper-api:8081"
 	defaultBeamlineAPIAddr = "https://api.isotope13.ai"
-	// defaultLitmusAddr is the dedicated analysis server (atomscan serve's
-	// default listen port), reachable as "scan" — "litmus" is the service's
-	// former name and no longer resolves. Uploads are analyzed here first; when
-	// it returns, prism publishes the result to hopper so hopper's own worker
-	// pool doesn't duplicate the work. Optional — when unreachable, hopper
-	// analyzes instead.
-	defaultLitmusAddr = "scan:49999"
 	// feedCacheTTL is the absolute lifetime of any cached feed query
 	// (frontpage default, criticality variants, ecosystem/domain/formula
 	// filtered, and free-text ?q= searches). Every feed query goes through
@@ -453,8 +444,7 @@ func (tl *tokenLimiter) reap() {
 
 // Upload: 1 every 10 seconds per IP, burst of 5. A burst of 2 rejected anyone
 // comparing a handful of samples back to back, which is ordinary use, not abuse
-// — the real capacity backstop is the litmusSlots semaphore, which sheds to
-// hopper-only analysis rather than failing.
+// — the real capacity backstop is the beamlineSlots semaphore.
 var uploadRateLimiter = newTokenLimiter(5, 1.0/10.0)
 
 // uploadGlobalLimiter caps the total upload rate across all clients so a
@@ -1914,13 +1904,11 @@ func main() {
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
 	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: isotope13 labs branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
-	cli.BoolVar(&noEscalateScan, "no-escalate-scan", noEscalateScan, "when someone waits on an unanalyzed sample, only promote it in hopper's queue instead of also analyzing it on the litmus server (also reads PRISM_NO_ESCALATE_SCAN env, set to 1/true to disable the local scan)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
 	cli.StringVar(&listenAddr, "listen", os.Getenv("LISTEN_ADDR"), "HTTP listen address (overrides LISTEN_ADDR env; empty means all interfaces)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
 	cli.StringVar(&beamlineAPIAddr, "beamline-api-addr", beamlineAPIAddr, "Beamline API base URL (also reads BEAMLINE_API_ADDR)")
-	cli.StringVar(&litmusAddr, "litmus", litmusAddr, "legacy scan server host:port for escalation (also reads LITMUS_ADDR env; empty disables)")
 	var rateLimit int
 	var rateWindow time.Duration
 	cli.IntVar(&rateLimit, "rate-limit", 20, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
@@ -1934,9 +1922,6 @@ func main() {
 	cli.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	if !set["uploads"] {
 		uploadEnabled = envBool("PRISM_UPLOADS", uploadEnabled)
-	}
-	if !set["no-escalate-scan"] {
-		noEscalateScan = envBool("PRISM_NO_ESCALATE_SCAN", noEscalateScan)
 	}
 
 	if dbDSN == "" {
@@ -1967,9 +1952,9 @@ func main() {
 	// Load configuration from environment
 	loadConfig()
 	// Optional controls depend on live HTTP backends, but page renders must not
-	// fan out into per-request probes. Check both servers once now, then refresh
+	// fan out into per-request probes. Check the servers once now, then refresh
 	// their process-wide atomic status at most every 15 seconds.
-	backendStatus = newBackendAvailabilityMonitor(hopperAPIAddr, litmusAddr, nil)
+	backendStatus = newBackendAvailabilityMonitor(hopperAPIAddr, nil)
 	backendStatus.refresh(ctx)
 	go backendStatus.run(ctx)
 
@@ -2372,36 +2357,17 @@ func loadConfig() {
 		Transport: backendTransport(),
 	}
 
-	// litmus analysis server, retained for rescan/escalation operations. It is
-	// not used by the browser upload path.
-	if litmusAddr == "" {
-		litmusAddr = os.Getenv("LITMUS_ADDR")
-	}
-	switch strings.ToLower(strings.TrimSpace(litmusAddr)) {
-	case "":
-		litmusAddr = defaultLitmusAddr
-	case "off", "none", "disabled":
-		litmusAddr = ""
-	}
-	// The litmus analyze can run the full ingest budget; give the client a
-	// slightly longer backstop so the context deadline fires first.
-	litmusClient = &http.Client{
-		Timeout:   uploadIngestTimeout + time.Minute,
-		Transport: backendTransport(),
-	}
-
 	csrfKey = loadCSRFKey()
 
 	logger.Debug("configuration loaded",
 		"HOPPER_API_ADDR", hopperAPIAddr,
 		"BEAMLINE_API_ADDR", beamlineAPIAddr,
-		"LITMUS_ADDR", litmusAddr,
 		"PORT", os.Getenv("PORT"),
 	)
 }
 
-// backendTransport builds an HTTP transport tuned for prism's backends. Both
-// the hopper and litmus clients talk to a single host each, so the default
+// backendTransport builds an HTTP transport tuned for prism's backends. The
+// hopper and Beamline clients talk to a single host each, so the default
 // transport's MaxIdleConnsPerHost of 2 would force connection churn (a fresh
 // TCP+TLS handshake and teardown) once more than two calls to a backend are in
 // flight — exactly the case under a download burst or concurrent uploads.
@@ -6445,13 +6411,6 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 
 	reqLogger := logger.With("sha256", sha, "client_ip", ip)
 
-	if !hopperAPIAvailable() {
-		reqLogger.Info("download rejected: hopper-api unavailable")
-		w.Header().Set("Retry-After", "15")
-		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
-		return
-	}
-
 	// Gate downloads to button-driven flows. The token in ?t=<…> is
 	// session-bound and short-lived (csrfMaxAge), so a copy-pasted URL,
 	// a search-engine fetch, or a wayback capture all fail. Mirrors the
@@ -6460,6 +6419,13 @@ func serveFileDownload(w http.ResponseWriter, r *http.Request, sha, ip string) {
 	if !csrfValid(r, "download", r.URL.Query().Get("t")) {
 		reqLogger.Warn("download rejected: missing or invalid token")
 		http.Error(w, "download is button-only; reload the file page and try again", http.StatusForbidden)
+		return
+	}
+
+	if !hopperAPIAvailable() {
+		reqLogger.Info("download rejected: hopper-api unavailable")
+		w.Header().Set("Retry-After", "15")
+		http.Error(w, "download temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -6912,8 +6878,7 @@ func handleFileEvents(w http.ResponseWriter, r *http.Request) {
 	heartbeat := time.NewTicker(waitHeartbeatInterval)
 	defer heartbeat.Stop()
 	checkReady := func() bool {
-		state, _ := uploadViewState(ctx, sha)
-		switch state {
+		switch uploadViewState(ctx, sha) {
 		case "ready":
 			emit("ready", []byte(readyPayload(sha)))
 			return true
@@ -7022,36 +6987,33 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	// pick up the already-stale analysis the rescan was meant to replace.
 	after := parseAfterMillis(r.URL.Query().Get("after"))
 
-	// name is hopper's filename for a still-pending sample, which escalation
-	// hands the scan server as a format hint. Empty in every other state.
-	check := func() (state, payload, name string) {
+	check := func() (state, payload string) {
 		if after.IsZero() {
-			st, filename := uploadViewState(ctx, sha)
-			switch st {
+			switch uploadViewState(ctx, sha) {
 			case "ready":
-				return "ready", readyPayload(sha), ""
+				return "ready", readyPayload(sha)
 			case "missing":
-				return "missing", `{"reason":"not found"}`, ""
+				return "missing", `{"reason":"not found"}`
 			}
-			return "pending", "", filename
+			return "pending", ""
 		}
 		// Fresh-analysis mode: pull the full row so we can compare the
 		// timestamp. This is a heavier query than SampleAnalyzed but
 		// only fires once per poll, well within hopper's budget.
 		sample, err := db.SampleBySHA256(ctx, sha)
 		if err != nil || sample == nil {
-			return "missing", `{"reason":"not found"}`, ""
+			return "missing", `{"reason":"not found"}`
 		}
 		if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(after) {
-			return "ready", readyPayload(sha), ""
+			return "ready", readyPayload(sha)
 		}
-		return "pending", "", ""
+		return "pending", ""
 	}
 
 	// Initial probe before the first tick — covers the worker-finishes-
 	// before-SSE-open race so the browser doesn't wait an extra 50 ms
 	// for a result that already exists.
-	state, payload, name := check()
+	state, payload := check()
 	if state == "missing" || state == "ready" {
 		emit(state, payload)
 		return
@@ -7070,7 +7032,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 	// this is meant to capture.
 	if after.IsZero() {
 		if _, browserUpload := uploadsInFlight.Load(sha); !browserUpload {
-			go escalate(context.WithoutCancel(ctx), sha, name, logger.With("sha256", sha, "client_ip", ip))
+			go escalate(context.WithoutCancel(ctx), sha, logger.With("sha256", sha, "client_ip", ip))
 		}
 	}
 
@@ -7083,7 +7045,7 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-pollTicker.C:
-			state, payload, _ := check()
+			state, payload := check()
 			if state == "missing" || state == "ready" {
 				emit(state, payload)
 				return
@@ -7094,22 +7056,20 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 
 // uploadViewState reports whether sha is viewable yet on the normal (non-
 // rescan) Hopper-backed path: "ready" once Hopper has the result, "pending"
-// while Beamline/Hopper ingestion is still in flight, and "missing" otherwise.
-//
-// The second result is hopper's filename for a pending sample, which escalation
-// passes to the scan server as a format hint. It is empty in every other state.
-func uploadViewState(ctx context.Context, sha string) (state, filename string) {
+// while Beamline/Hopper ingestion is still in flight, "failed" once a browser
+// upload's ingestion gave up, and "missing" otherwise.
+func uploadViewState(ctx context.Context, sha string) string {
 	_, _, err := lookupResult(ctx, sha, logger)
 	if err == nil {
-		return "ready", ""
+		return "ready"
 	}
-	if pend, ok := errors.AsType[*pendingAnalysisError](err); ok {
-		return "pending", pend.Filename
+	if _, ok := errors.AsType[*pendingAnalysisError](err); ok {
+		return "pending"
 	}
-	if failed, ok := errors.AsType[*uploadFailedError](err); ok {
-		return "failed", failed.Filename
+	if _, ok := errors.AsType[*uploadFailedError](err); ok {
+		return "failed"
 	}
-	return "missing", ""
+	return "missing"
 }
 
 // parseAfterMillis parses an ?after=<unix-ms> query value into a UTC
@@ -7164,8 +7124,7 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		state, _ := uploadViewState(ctx, sha)
-		switch state {
+		switch uploadViewState(ctx, sha) {
 		case "ready":
 			exists, ready = true, true
 		case "pending":
@@ -7194,14 +7153,6 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 // to off so a fresh deploy is closed-by-default. When false the handler
 // short-circuits to a 503 and the UI greys out the button.
 var uploadEnabled = false
-
-// noEscalateScan keeps the scan server for uploads only, leaving escalated
-// samples to hopper's workers. Set via --no-escalate-scan or
-// PRISM_NO_ESCALATE_SCAN (1/true/yes/on).
-//
-// The flag is negative because pointing --litmus at a scan server is already
-// the opt-in; see escalate.go for why that is the right default.
-var noEscalateScan = false
 
 // envBool reads a 1/true/yes/on or 0/false/no/off environment variable,
 // returning cur when it is unset or unrecognized.
@@ -7547,34 +7498,21 @@ const (
 	// uploadIngestTimeout bounds the background Beamline analysis. Beamline may
 	// hold an analysis stream for up to 30 minutes on the heaviest artifact.
 	uploadIngestTimeout = 35 * time.Minute
-	// litmusWorkerName identifies prism when it publishes a result to hopper's
-	// POST /api/result — the same channel hopper's pull workers use.
-	litmusWorkerName = "prism"
-	// maxLitmusResponseBytes bounds the /analyze response we'll read, matching
-	// hopper's own result-body ceiling so a runaway report can't exhaust memory.
+	// maxLitmusResponseBytes bounds the Beamline analysis stream we'll read,
+	// matching hopper's own result-body ceiling so a runaway report can't
+	// exhaust memory.
 	maxLitmusResponseBytes = 256 << 20
-	// maxConcurrentLitmus caps in-flight litmus analyses. Each holds a multipart
-	// copy of the file (up to the upload cap) for the analysis duration, so
-	// without a bound an upload burst could pin large amounts of memory and
-	// overrun the litmus server. When all slots are busy a new upload skips the
-	// fast path; hopper still stores it durably and its own worker analyzes it.
-	maxConcurrentLitmus = 8
 	// Uploads are disk-spooled, so sixteen concurrent analyses do not imply a
 	// sixteen-file heap commitment. Excess requests fail quickly with Retry-After.
 	maxConcurrentBeamline = 16
 )
-
-// litmusSlots is the maxConcurrentLitmus semaphore: a token per in-flight
-// litmus analysis, acquired non-blocking so a saturated fast path degrades to
-// hopper rather than queueing memory-heavy work.
-var litmusSlots = make(chan struct{}, maxConcurrentLitmus)
 
 var beamlineSlots = make(chan struct{}, maxConcurrentBeamline)
 
 // uploadsInFlight tracks shas whose upload is being ingested in the background
 // (sha -> uploadState). lookupResult renders a pending "analyzing" page for
 // these instead of a 404 during the window before hopper has the sample row or
-// litmus has cached a verdict, and an explicit failure page once ingestion has
+// Beamline's verdict is cached, and an explicit failure page once ingestion has
 // given up.
 var uploadsInFlight sync.Map
 
@@ -7620,34 +7558,12 @@ type uploadFailedError struct {
 
 func (e *uploadFailedError) Error() string { return "upload ingestion failed for " + e.SHA }
 
-// litmusEnvelope is the subset of litmus /analyze's {"ml":…,"raw":…} response
-// that prism forwards to hopper. Error is set when litmus reports a structured
-// failure.
+// litmusEnvelope is the {"ml":…,"llm":…,"raw":…} analysis envelope prism
+// caches as a result's RawLitmus.
 type litmusEnvelope struct {
-	Error string          `json:"error"`
-	ML    json.RawMessage `json:"ml"`
-	LLM   json.RawMessage `json:"llm"`
-	Raw   json.RawMessage `json:"raw"`
-}
-
-// litmusAnalyzeURL builds the absolute URL of the litmus server's POST
-// /analyze endpoint, or "" when litmus is disabled.
-func litmusAnalyzeURL() string {
-	base := strings.TrimSpace(litmusAddr)
-	if base == "" {
-		return ""
-	}
-	if !strings.Contains(base, "://") {
-		base = "http://" + base
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		return ""
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/analyze"
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
+	ML  json.RawMessage `json:"ml"`
+	LLM json.RawMessage `json:"llm"`
+	Raw json.RawMessage `json:"raw"`
 }
 
 // ingestUpload sends the uploaded bytes to Beamline's public analysis API and
@@ -7902,19 +7818,7 @@ func openBeamlineStream(ctx context.Context, target string, size int64, filename
 	return nil, lastErr
 }
 
-// cacheLitmusResult stores a litmus verdict in prism's result cache so
-// /file/<sha> renders without waiting on (or needing) hopper. The litmus
-// /analyze envelope is already the {ml,llm,raw} shape prism stores as RawLitmus.
-func cacheLitmusResult(ctx context.Context, sha, filename string, env *litmusEnvelope, size int64, log *slog.Logger) {
-	// Synchronous Set (not SetAsync): the value must be visible in the cache
-	// before the caller marks the litmus path done and the in-flight marker is
-	// cleared, otherwise a poll could briefly 404 a result we already have.
-	if err := cache.Set(ctx, sha, storedResultFromLitmus(filename, env, size)); err != nil {
-		log.Warn("caching litmus result failed", "error", err)
-	}
-}
-
-// storedResultFromLitmus builds a cacheable result from a litmus /analyze
+// storedResultFromLitmus builds a cacheable result from an analysis
 // envelope. Mirrors storedResultFromHopperSample but sources everything from
 // the envelope plus the known upload metadata (uploads carry no provenance).
 func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) storedResult {
@@ -7951,135 +7855,6 @@ func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) st
 	}
 }
 
-// analyzeWithLitmus POSTs buf to litmus POST /analyze as multipart/form-data
-// (one part named "file") and returns the ml/llm/raw sections of the response
-// envelope. A non-200 status, a structured error body, or a missing ml
-// section is reported as an error so the caller falls back to hopper's worker.
-func analyzeWithLitmus(ctx context.Context, target string, buf []byte, filename string) (*litmusEnvelope, error) {
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	part, err := mw.CreateFormFile("file", filename)
-	if err != nil {
-		return nil, fmt.Errorf("build multipart: %w", err)
-	}
-	if _, err := part.Write(buf); err != nil {
-		return nil, fmt.Errorf("write multipart: %w", err)
-	}
-	if err := mw.Close(); err != nil {
-		return nil, fmt.Errorf("close multipart: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, &body)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	start := time.Now()
-	resp, err := litmusClient.Do(req)
-	if err != nil {
-		recordDep(ctx, "litmus", "analyze", "error", start)
-		return nil, fmt.Errorf("litmus request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
-	rd := io.LimitReader(resp.Body, maxLitmusResponseBytes)
-	if resp.StatusCode != http.StatusOK {
-		recordDep(ctx, "litmus", "analyze", "error", start)
-		snippet, _ := io.ReadAll(io.LimitReader(rd, 1024)) //nolint:errcheck // diagnostics only
-		return nil, fmt.Errorf("litmus status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-	recordDep(ctx, "litmus", "analyze", "ok", start)
-	var env litmusEnvelope
-	if err := json.NewDecoder(rd).Decode(&env); err != nil {
-		return nil, fmt.Errorf("decode litmus response: %w", err)
-	}
-	if env.Error != "" {
-		return nil, fmt.Errorf("litmus error: %s", env.Error)
-	}
-	if len(env.ML) == 0 {
-		return nil, errors.New("litmus response missing ml section")
-	}
-	return &env, nil
-}
-
-// hopperResultRequest mirrors hopper's POST /api/result body — the same shape
-// a litmus worker posts. prism uses it to publish a fast-path verdict for an
-// already-uploaded sample.
-type hopperResultRequest struct {
-	SHA256     string          `json:"sha256"`
-	Worker     string          `json:"worker"`
-	ML         json.RawMessage `json:"ml"`
-	LLM        json.RawMessage `json:"llm,omitempty"`
-	Raw        json.RawMessage `json:"raw"`
-	DurationMs int64           `json:"duration_ms"`
-}
-
-// hopperResultURL builds the absolute URL of hopper's POST /api/result
-// endpoint from the same admin-configured hopper-api host as the other routes.
-func hopperResultURL() string {
-	base := strings.TrimSpace(hopperAPIAddr)
-	if base == "" {
-		base = defaultHopperAPIAddr
-	}
-	if !strings.Contains(base, "://") {
-		base = "http://" + base
-	}
-	u, err := url.Parse(base)
-	if err != nil {
-		u = &url.URL{Scheme: "http", Host: defaultHopperAPIAddr}
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/result"
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
-}
-
-// publishResultToHopper POSTs a litmus verdict to hopper's /api/result so the
-// sample is marked analyzed without hopper's worker pool repeating the work.
-// The same per-dependency breaker that guards other hopper-api calls applies.
-func publishResultToHopper(ctx context.Context, sha string, env *litmusEnvelope, durationMs int64) error {
-	if err := apiBreaker.allow(); err != nil {
-		recordDep(ctx, "hopper-api", "result", "rejected", time.Time{})
-		return fmt.Errorf("hopper-api result: %w", err)
-	}
-	body, err := json.Marshal(hopperResultRequest{
-		SHA256:     sha,
-		Worker:     litmusWorkerName,
-		ML:         env.ML,
-		LLM:        env.LLM,
-		Raw:        env.Raw,
-		DurationMs: durationMs,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal result: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hopperResultURL(), bytes.NewReader(body))
-	if err != nil {
-		// Local build error: hopper was never contacted; don't move the breaker.
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	hopper.Authorize(req)
-	start := time.Now()
-	resp, err := hopperClient.Do(req)
-	if err != nil {
-		apiBreaker.failure()
-		recordDep(ctx, "hopper-api", "result", "error", start)
-		return fmt.Errorf("hopper request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // best-effort
-	if resp.StatusCode >= http.StatusInternalServerError {
-		apiBreaker.failure()
-		recordDep(ctx, "hopper-api", "result", "error", start)
-	} else {
-		apiBreaker.success()
-		recordDep(ctx, "hopper-api", "result", "ok", start)
-	}
-	if resp.StatusCode != http.StatusOK {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024)) //nolint:errcheck // diagnostics only
-		return fmt.Errorf("hopper /api/result status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-	return nil
-}
-
 // hopperRescanURL builds the absolute URL of hopper's POST /api/rescan/{sha256}
 // endpoint from the admin-configured hopper-api host. Mirrors hopperFileURL.
 func hopperRescanURL(sha string) string {
@@ -8103,10 +7878,10 @@ func hopperRescanURL(sha string) string {
 // postRescanToHopper POSTs to hopper's /api/rescan/{sha256} so the sample is
 // re-queued on the master. The same per-dependency breaker that guards other
 // hopper-api calls applies. hopper's 409 (sample not eligible, or within its
-// re-queue cooldown) maps to errSampleNotEligible so the handler surfaces the
-// familiar user-facing message; any other non-200 is a generic error. A single
-// attempt is enough — the breaker sheds load when hopper-api is down and the
-// user can simply click again.
+// re-queue cooldown) maps to errSampleNotEligible so the caller can tell a
+// routine refusal from a failure; any other non-200 is a generic error. A
+// single attempt is enough — the breaker sheds load when hopper-api is down and
+// the next escalation will try again.
 func postRescanToHopper(ctx context.Context, sha string) error {
 	if err := apiBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-api", "rescan", "rejected", time.Time{})
@@ -9435,11 +9210,6 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// litmusAPIResponse represents the JSON response from litmus server's /analyze endpoint.
-// It wraps the cleave analysis report with an ML-based classification outcome.
-// litmusAPIResponse matches the v4 compact litmus JSON output.
-// Fields like formula, file_type, sha256 are embedded in cleave files[0],
-// not at the top level.
 // litmusFullResponse matches the top-level {"ml": {...}, "raw": {...}} envelope.
 type litmusFullResponse struct {
 	ML  json.RawMessage `json:"ml"`

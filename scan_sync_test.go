@@ -12,7 +12,7 @@ import (
 // verdict-band cutoffs match scan's. Both derive the same 0/1/2 class from an
 // envelope's fired `lvl`, so if the two drift a sample can read hostile in scan
 // and suspicious (or benign) in prism — and vice versa. There is no shared
-// source of truth at build time (scan is Rust), so this reads scan's model.rs
+// source of truth at build time (scan is Rust), so this reads scan's source
 // directly and fails when the numbers diverge.
 //
 // It only runs when the scan repo is checked out beside prism (the normal dev
@@ -20,13 +20,16 @@ import (
 // than fails: prism can't verify a contract against a repo it can't see.
 func TestScanLevelConstantsInSync(t *testing.T) {
 	const scanModel = "../scan/src/model.rs"
-	src, err := os.ReadFile(scanModel)
-	if err != nil {
+	_, err := os.Stat(scanModel)
+	if os.IsNotExist(err) {
 		abs, absErr := filepath.Abs(scanModel)
 		if absErr != nil {
 			abs = scanModel
 		}
 		t.Skipf("scan repo not checked out beside prism (%s); skipping cross-repo sync check", abs)
+	}
+	if err != nil {
+		t.Fatalf("stat scan source %s: %v", scanModel, err)
 	}
 
 	// prism constant -> the scan constant it must equal.
@@ -34,17 +37,22 @@ func TestScanLevelConstantsInSync(t *testing.T) {
 		name      string
 		prism     int
 		scanConst string
+		file      string
 	}{
-		{"CriticalLevel", CriticalLevel, "DEFAULT_SEVERITY_LEVEL"},
-		{"SuspiciousCeiling", SuspiciousCeiling, "SUSPICIOUS_LEVEL_CEILING"},
+		{"CriticalLevel", CriticalLevel, "DEFAULT_SEVERITY_LEVEL", scanModel},
+		{"SuspiciousCeiling", SuspiciousCeiling, "SUSPICIOUS_LEVEL_CEILING", "../scan/src/model/verdict.rs"},
 	}
 	for _, c := range checks {
+		src, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatalf("read scan source %s: %v", c.file, err)
+		}
 		// Matches e.g. `pub const DEFAULT_SEVERITY_LEVEL: u16 = 25;`, ignoring
 		// visibility and underscores in the literal.
 		re := regexp.MustCompile(c.scanConst + `:\s*u16\s*=\s*([0-9_]+)`)
 		m := re.FindSubmatch(src)
 		if m == nil {
-			t.Fatalf("could not find scan constant %s in %s — was it renamed? update this test and keep the cutoffs in sync", c.scanConst, scanModel)
+			t.Fatalf("could not find scan constant %s in %s — was it renamed? update this test and keep the cutoffs in sync", c.scanConst, c.file)
 		}
 		lit := regexp.MustCompile(`_`).ReplaceAllString(string(m[1]), "")
 		want, err := strconv.Atoi(lit)

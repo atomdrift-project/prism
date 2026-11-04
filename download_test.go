@@ -51,12 +51,16 @@ func TestRetryAfterSeconds(t *testing.T) {
 
 func TestDownloadFastFailsWhenHopperAPIIsUnavailable(t *testing.T) {
 	oldStatus := backendStatus
-	backendStatus = newBackendAvailabilityMonitor("", "", &http.Client{Timeout: time.Second})
+	backendStatus = newBackendAvailabilityMonitor("", &http.Client{Timeout: time.Second})
 	t.Cleanup(func() { backendStatus = oldStatus })
 
 	const sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/file/"+sha+".dl", http.NoBody)
+	r = ensureCSRFCookie(httptest.NewRecorder(), r)
+	q := r.URL.Query()
+	q.Set("t", csrfToken(r, "download"))
+	r.URL.RawQuery = q.Encode()
 	serveFileDownload(w, r, sha, "127.0.0.1")
 
 	if w.Code != http.StatusServiceUnavailable {
@@ -64,6 +68,24 @@ func TestDownloadFastFailsWhenHopperAPIIsUnavailable(t *testing.T) {
 	}
 	if got := w.Header().Get("Retry-After"); got != "15" {
 		t.Fatalf("Retry-After = %q, want 15", got)
+	}
+}
+
+func TestDownloadInvalidTokenWhenHopperAPIIsUnavailable(t *testing.T) {
+	oldStatus := backendStatus
+	backendStatus = newBackendAvailabilityMonitor("", &http.Client{Timeout: time.Second})
+	t.Cleanup(func() { backendStatus = oldStatus })
+
+	const sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/file/"+sha+".dl?t=invalid", http.NoBody)
+	serveFileDownload(w, r, sha, "127.0.0.1")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want empty", got)
 	}
 }
 

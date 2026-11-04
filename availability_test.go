@@ -42,33 +42,19 @@ func TestBackendAvailabilityIsShared(t *testing.T) {
 	}))
 	defer hopper.Close()
 
-	var litmusCalls atomic.Int32
-	litmus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		litmusCalls.Add(1)
-		if r.URL.Path != "/_/health" {
-			t.Errorf("litmus probe path = %q, want /_/health", r.URL.Path)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer litmus.Close()
-
-	monitor := newBackendAvailabilityMonitor(hopper.URL, litmus.URL, &http.Client{Timeout: time.Second})
+	monitor := newBackendAvailabilityMonitor(hopper.URL, &http.Client{Timeout: time.Second})
 	monitor.refresh(context.Background())
-	if !monitor.hopper.available() || !monitor.litmus.available() {
-		t.Fatal("healthy probes were not published")
+	if !monitor.hopper.available() {
+		t.Fatal("healthy probe was not published")
 	}
 
 	// UI and handler gates are atomic reads. Any amount of request traffic
 	// between ticker refreshes must not generate another backend check.
 	for range 1000 {
 		_ = monitor.hopper.available()
-		_ = monitor.litmus.available()
 	}
 	if got := hopperCalls.Load(); got != 1 {
 		t.Errorf("hopper probes = %d, want 1", got)
-	}
-	if got := litmusCalls.Load(); got != 1 {
-		t.Errorf("litmus probes = %d, want 1", got)
 	}
 }
 
@@ -78,16 +64,16 @@ func TestBackendAvailabilityRejectsUnhealthyStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	monitor := newBackendAvailabilityMonitor(server.URL, server.URL, &http.Client{Timeout: time.Second})
+	monitor := newBackendAvailabilityMonitor(server.URL, &http.Client{Timeout: time.Second})
 	monitor.refresh(context.Background())
-	if monitor.hopper.available() || monitor.litmus.available() {
+	if monitor.hopper.available() {
 		t.Fatal("503 backend reported available")
 	}
 }
 
 func TestFeatureAvailabilityRequirements(t *testing.T) {
 	oldStatus := backendStatus
-	backendStatus = newBackendAvailabilityMonitor("", "", &http.Client{Timeout: time.Second})
+	backendStatus = newBackendAvailabilityMonitor("", &http.Client{Timeout: time.Second})
 	t.Cleanup(func() { backendStatus = oldStatus })
 
 	backendStatus.hopper.state.Store(int32(backendHealthy))
@@ -95,10 +81,9 @@ func TestFeatureAvailabilityRequirements(t *testing.T) {
 		t.Fatal("downloads should be available with a healthy hopper-api")
 	}
 	if uploadBackendsAvailable() {
-		t.Fatal("uploads should require litmus as well as hopper-api")
+		t.Fatal("uploads should require Beamline as well as hopper-api")
 	}
 
-	backendStatus.litmus.state.Store(int32(backendHealthy))
 	backendStatus.beamline.state.Store(int32(backendHealthy))
 	if !uploadBackendsAvailable() {
 		t.Fatal("uploads should be available when Beamline is healthy")

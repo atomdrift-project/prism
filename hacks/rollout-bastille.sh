@@ -196,8 +196,8 @@ fi
 
 # --- Hopper API token ---
 # hopper authenticates every route of its work API but the probes, so prism
-# needs the fleet bearer token to fetch sample bytes, upload submissions,
-# escalate, and publish results. It goes where every other client looks for it,
+# needs the fleet bearer token to fetch sample bytes, upload submissions, and
+# escalate. It goes where every other client looks for it,
 # ~prism/.tok/hopper — the same file hopper's own deploy installs on the master
 # — as a 0600 file rather than an rc.conf or environment entry, matching how
 # the database password is handled above.
@@ -262,7 +262,6 @@ rcvar="prism_enable"
 load_rc_config $name
 
 : ${prism_enable:="NO"}
-: ${prism_litmus_addr:="litmus:49999"}
 : ${prism_hopper_api_addr:="hopper-api:8081"}
 : ${prism_hopper_dsn:="postgres://hopper@hopper-db/hopper?sslmode=disable"}
 : ${prism_readonly:="0"}
@@ -274,7 +273,7 @@ prism_log="/var/log/${name}.log"
 command="/usr/sbin/daemon"
 # HOME is set so pgx can locate ~prism/.pgpass for the hopper database password.
 # OTEL_EXPORTER_OTLP_ENDPOINT points at the self-hosted fleet (host otel).
-prism_env="HOME=/home/prism PORT=8080 LITMUS_ADDR=${prism_litmus_addr} HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=${prism_hopper_dsn} PRISM_READONLY=${prism_readonly} PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=${prism_otel_endpoint} OTEL_DEPLOYMENT_ENVIRONMENT=prod"
+prism_env="HOME=/home/prism PORT=8080 HOPPER_API_ADDR=${prism_hopper_api_addr} HOPPER_DSN=${prism_hopper_dsn} PRISM_READONLY=${prism_readonly} PRISM_CSRF_KEY=${prism_csrf_key} OTEL_EXPORTER_OTLP_ENDPOINT=${prism_otel_endpoint} OTEL_DEPLOYMENT_ENVIRONMENT=prod"
 command_args="-c -f -P ${pidfile} -S -R 5 -o ${prism_log} -u prism /usr/bin/env ${prism_env} /usr/local/bin/prism --public --uploads"
 
 run_rc_command "$1"
@@ -398,8 +397,6 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
         # Pull the runtime config from sysrc so a parallel start matches
         # what rc.d/prism would do. Falls back to the same defaults the
         # rc.d script declares above.
-        PRISM_LITMUS_ADDR=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_litmus_addr 2>/dev/null' || true)
-        [ -z "$PRISM_LITMUS_ADDR" ] && PRISM_LITMUS_ADDR="litmus:49999"
         PRISM_HOPPER_API_ADDR=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_hopper_api_addr 2>/dev/null' || true)
         [ -z "$PRISM_HOPPER_API_ADDR" ] && PRISM_HOPPER_API_ADDR="hopper-api:8081"
         PRISM_HOPPER_DSN=$(doas bastille cmd "$RUN" sh -c 'sysrc -n prism_hopper_dsn 2>/dev/null' || true)
@@ -421,7 +418,6 @@ if [ "$NEEDS_PRISM_RESTART" = 1 ]; then
             -u prism /usr/bin/env \
                 HOME=/home/prism \
                 PORT=8080 \
-                LITMUS_ADDR="$PRISM_LITMUS_ADDR" \
                 HOPPER_API_ADDR="$PRISM_HOPPER_API_ADDR" \
                 HOPPER_DSN="$PRISM_HOPPER_DSN" \
                 PRISM_READONLY="$PRISM_READONLY_VAL" \

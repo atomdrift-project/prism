@@ -227,7 +227,6 @@ if ! as_root test -e "$ENV_FILE"; then
             'CACHE_DIR=/var/cache/prism' \
             "HOPPER_DSN=postgres://hopper@${HOPPER_DB_HOST}:5432/hopper?sslmode=${HOPPER_DB_SSLMODE}&application_name=prism&default_transaction_read_only=on" \
             'HOPPER_API_ADDR=hopper-api:8081' \
-            'LITMUS_ADDR=scan:49999' \
             'PRISM_UPLOADS=true' \
             "OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             'OTEL_DEPLOYMENT_ENVIRONMENT=prod'

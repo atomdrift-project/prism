@@ -71,9 +71,7 @@ Flags override matching environment variables.
 | `--db` | `HOPPER_DSN` / `FALLOUT_DB` | production-style hopper DSN | Hopper PostgreSQL connection |
 | `--hopper-api-addr` | `HOPPER_API_ADDR` | `hopper-api:8081` | Hopper file and queue API |
 | `--beamline-api-addr` | `BEAMLINE_API_ADDR` | `https://api.isotope13.ai` | Beamline upload/analysis API |
-| `--litmus` | `LITMUS_ADDR` | `scan:49999` | Atomdrift Scan server; empty disables it |
 | `--uploads` | `PRISM_UPLOADS` | off | Enable browser uploads |
-| `--no-escalate-scan` | `PRISM_NO_ESCALATE_SCAN` | off | Queue viewed samples without also scanning locally |
 | `--public` | — | off | Public branding and secure-cookie behavior |
 | `--no-cache` | — | off | Disable persistent cache storage |
 | `--rate-limit` | — | `10` | Requests per client window; `0` disables |
@@ -81,20 +79,14 @@ Flags override matching environment variables.
 | — | `PRISM_CSRF_KEY_FILE` | — | File containing the upload/action HMAC key |
 | — | `CACHE_DIR` | OS cache directory | Persistent cache location |
 
-`--litmus` and `LITMUS_ADDR` retain the scanner's former internal name for
-configuration compatibility; their value points to the current `atomscan
-serve` service.
-
 ## Viewed-sample escalation
 
 When a browser waits on an unanalyzed sample, Prism asks hopper to promote it
-ahead of the ordinary backlog. If a healthy Scan server is configured, Prism
-can also fetch the bytes, verify their SHA-256, scan them, and publish the
-result. `--no-escalate-scan` keeps promotion but disables that local scan path.
+ahead of the ordinary backlog.
 
-Escalation is deduplicated, rate-limited, size-limited, and triggered through
-the browser's wait channel rather than an ordinary detail-page request. This
-prevents crawlers from promoting the entire feed.
+Escalation is deduplicated, rate-limited, and triggered through the browser's
+wait channel rather than an ordinary detail-page request. This prevents
+crawlers from promoting the entire feed.
 
 ## Deployment
 
