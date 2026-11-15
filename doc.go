@@ -26,7 +26,7 @@
 //
 // Anti-patterns to refuse in code review:
 //
-//   - Calling hopperDB.Foo(ctx, …) directly from an HTTP handler. Wrap
+//   - Calling hopperStore.Load().Foo(ctx, …) directly from an HTTP handler. Wrap
 //     it in a per-SHA (or per-query-shape) cached helper instead.
 //   - Calling hopperClient.Do(req) outside contentCache.Fetch. Cache the
 //     bytes, even if you think this endpoint is "rare."

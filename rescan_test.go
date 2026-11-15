@@ -24,7 +24,7 @@ func rescanTest(t *testing.T, sha string, handler http.HandlerFunc) error {
 	return postRescanToHopper(context.Background(), sha)
 }
 
-// TestPostRescanToHopper asserts prism POSTs to hopper's /api/rescan/{sha}
+// TestPostRescanToHopper asserts prism POSTs to hopper's /v1/work/rescan/{sha}
 // endpoint and maps the response status the way the handler expects: 200 is
 // success, 409 becomes errSampleNotEligible, and anything else is a generic
 // error. The write goes over the API (not prism's read-only pool) so a replica
@@ -44,7 +44,7 @@ func TestPostRescanToHopper(t *testing.T) {
 		if err != nil {
 			t.Fatalf("postRescanToHopper: %v", err)
 		}
-		if want := "/api/rescan/" + sha; gotPath != want {
+		if want := "/v1/work/rescan/" + sha; gotPath != want {
 			t.Errorf("path = %q, want %q", gotPath, want)
 		}
 		if gotMethod != http.MethodPost {

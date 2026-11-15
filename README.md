@@ -11,11 +11,17 @@ locally, install [Atomdrift Scan](https://github.com/atomdrift-project/scan).
 ## Architecture
 
 ```text
-browser ──► prism ──► hopper PostgreSQL
-                 ├──► hopper API (sample bytes, results, and queue actions)
+browser ──► prism ──► hopper PostgreSQL (verdict schema, read-only)
+                 ├──► hopper API (sample bytes, rescans, and uploads)
                  ├──► Beamline API (browser uploads and analysis)
                  └──► Atomdrift Scan server (optional escalation)
 ```
+
+Prism reads hopper's verdict schema directly, through hopper's `store`
+package, so its pages never wait on hopper's API; its sessions are read-only to
+the server, and every write goes through the API. Where the API answers a
+question (a file's verdict, the sightings ledger), prism asks the same library
+function the API does, so a page and an API answer agree.
 
 Prism caches rendered data locally but treats hopper as the source of truth.
 Browser uploads are disabled by default. When enabled, Prism sends raw file
@@ -36,6 +42,13 @@ artifact and report are rendered through Hopper's normal result path.
 make build
 make test
 make lint
+```
+
+The database tests create hopper's verdict schema in a disposable PostgreSQL
+database and skip without one; hopper's throwaway cluster serves:
+
+```bash
+PRISM_TEST_PG_DSN="$(../hopper/scripts/test-pg.sh)" make test
 ```
 
 ## Run locally
@@ -69,7 +82,8 @@ Flags override matching environment variables.
 | `--listen` | `LISTEN_ADDR` | all interfaces | HTTP listen address |
 | `--port` | `PORT` | `8080` | HTTP port |
 | `--db` | `HOPPER_DSN` / `FALLOUT_DB` | production-style hopper DSN | Hopper PostgreSQL connection |
-| `--hopper-api-addr` | `HOPPER_API_ADDR` | `hopper-api:8081` | Hopper file and queue API |
+| `--schema` | `HOPPER_SCHEMA` | `verdict` | Schema holding hopper's verdict tables |
+| `--hopper-api-addr` | `HOPPER_API_ADDR` | `hopper-api:8081` | Hopper file, rescan, and upload API |
 | `--beamline-api-addr` | `BEAMLINE_API_ADDR` | `https://api.isotope13.ai` | Beamline upload/analysis API |
 | `--uploads` | `PRISM_UPLOADS` | off | Enable browser uploads |
 | `--public` | — | off | Public branding and secure-cookie behavior |

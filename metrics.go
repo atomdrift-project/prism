@@ -190,7 +190,7 @@ func registerReliabilityGauges(m metric.Meter) {
 		}
 
 		var connected int64
-		if hopperDB.Load() != nil {
+		if hopperStore.Load() != nil {
 			connected = 1
 		}
 		o.ObserveInt64(dbConnected, connected)

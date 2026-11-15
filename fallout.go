@@ -431,7 +431,7 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		SelectedEco:   eco,
 		Verified:      verifiedRaw,
 		Filtered:      eco != "" || verified != falloutAny,
-		HasHopper:     hopperDB.Load() != nil,
+		HasHopper:     hopperStore.Load() != nil,
 		CSRFToken:     csrfToken(r, "upload"),
 		UploadEnabled: uploadEnabled && uploadBackendsAvailable(),
 		CurrentWeek:   week.Current,
@@ -578,7 +578,7 @@ func validTZName(s string) bool {
 func falloutCurrentWeek(ctx context.Context, loc *time.Location) (cachedFeedSnapshot, falloutWeek, bool) {
 	now := time.Now().In(loc)
 	week := falloutWeekOf(now, now)
-	if hopperDB.Load() == nil || feedCache == nil {
+	if hopperStore.Load() == nil || feedCache == nil {
 		return cachedFeedSnapshot{}, week, false
 	}
 	args := week.snapshotArgs()

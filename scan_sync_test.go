@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// TestScanLevelConstantsInSync guards the cross-repo contract that prism's
-// verdict-band cutoffs match scan's. Both derive the same 0/1/2 class from an
-// envelope's fired `lvl`, so if the two drift a sample can read hostile in scan
-// and suspicious (or benign) in prism — and vice versa. There is no shared
-// source of truth at build time (scan is Rust), so this reads scan's source
-// directly and fails when the numbers diverge.
+// TestScanLevelConstantsInSync guards the shared hostile cutoff between prism
+// and scan. The suspicious ceiling is runtime-derived in scan, while prism has
+// an independently configurable display ceiling, so only the fixed hostile
+// cutoff is a cross-repo constant. There is no shared source of truth at build
+// time (scan is Rust), so this reads scan's source directly.
 //
 // It only runs when the scan repo is checked out beside prism (the normal dev
 // layout). In an isolated CI checkout with no sibling scan tree, it skips rather
@@ -40,7 +39,6 @@ func TestScanLevelConstantsInSync(t *testing.T) {
 		file      string
 	}{
 		{"CriticalLevel", CriticalLevel, "DEFAULT_SEVERITY_LEVEL", scanModel},
-		{"SuspiciousCeiling", SuspiciousCeiling, "SUSPICIOUS_LEVEL_CEILING", "../scan/src/model/verdict.rs"},
 	}
 	for _, c := range checks {
 		src, err := os.ReadFile(c.file)

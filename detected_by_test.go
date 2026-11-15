@@ -2,30 +2,20 @@ package main
 
 import (
 	"context"
-	"log/slog"
-	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/atomdrift-project/hopper"
+	"github.com/atomdrift-project/hopper/store"
 )
 
-// newTestHopper returns an empty migrated ledger wired in as the one detectedBy
-// reads, and silences the package logger so a lookup warning does not nil-panic.
-func newTestHopper(t *testing.T, ctx context.Context) *hopper.DB {
+// addSightings records sightings in the ledger detectedBy reads, by the
+// rules hopper's API records them by.
+func addSightings(t *testing.T, w *store.Store, rows []hopper.Sighting) {
 	t.Helper()
-	logger = slog.New(slog.DiscardHandler)
-	db, err := hopper.Open(ctx, filepath.Join(t.TempDir(), "h.db"), hopper.AppName("prism"))
-	if err != nil {
-		t.Fatalf("open hopper: %v", err)
+	if _, err := hopper.AddSightingsToStore(t.Context(), w, rows, "test"); err != nil {
+		t.Fatalf("add sightings: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatalf("migrate hopper: %v", err)
-	}
-	hopperDB.Store(db)
-	t.Cleanup(func() { hopperDB.Store(nil) })
-	return db
 }
 
 // A package-level claim naming other releases must not be shown against this
@@ -42,10 +32,10 @@ func newTestHopper(t *testing.T, ctx context.Context) *hopper.DB {
 // this caller's job, and was the step that was missing.
 func TestDetectedByNarrowsToTheReleaseCited(t *testing.T) {
 	ctx := context.Background()
-	db := newTestHopper(t, ctx)
+	w := newTestStore(t)
 
 	const purl = "pkg:npm/is"
-	if _, err := db.AddSightings(ctx, []hopper.Sighting{
+	addSightings(t, w, []hopper.Sighting{
 		{
 			Source:   "osv",
 			Subject:  purl,
@@ -54,9 +44,7 @@ func TestDetectedByNarrowsToTheReleaseCited(t *testing.T) {
 			URL:      "https://osv.dev/vulnerability/MAL-2025-6020",
 			Note:     "MAL-2025-6020: Malicious code in is (npm)",
 		},
-	}); err != nil {
-		t.Fatalf("add sightings: %v", err)
-	}
+	})
 
 	sha := "9f07e3bb52685587a6a94e721c5f44830a4fa5ccd1b064f796e13f33a18e00fe"
 	if named, more := detectedBy(ctx, sha, purl, "0.1.2"); len(named) != 0 || more != "" {
@@ -73,10 +61,10 @@ func TestDetectedByNarrowsToTheReleaseCited(t *testing.T) {
 // unscoped one would do it for every release.
 func TestDetectedBySkipsVulnerabilities(t *testing.T) {
 	ctx := context.Background()
-	db := newTestHopper(t, ctx)
+	w := newTestStore(t)
 
 	const purl = "pkg:npm/legit"
-	if _, err := db.AddSightings(ctx, []hopper.Sighting{
+	addSightings(t, w, []hopper.Sighting{
 		{
 			Source:   "osv",
 			Subject:  purl,
@@ -84,9 +72,7 @@ func TestDetectedBySkipsVulnerabilities(t *testing.T) {
 			Claim:    hopper.ClaimVulnerable,
 			Note:     "CVE-2024-0001",
 		},
-	}); err != nil {
-		t.Fatalf("add sightings: %v", err)
-	}
+	})
 	if named, more := detectedBy(ctx, "", purl, "1.0.0"); len(named) != 0 || more != "" {
 		t.Errorf("a CVE is not a malware citation, got named=%v more=%q", named, more)
 	}
@@ -96,15 +82,13 @@ func TestDetectedBySkipsVulnerabilities(t *testing.T) {
 // real citations, which is the opposite failure to the one above.
 func TestDetectedByKeepsUnnarrowableClaims(t *testing.T) {
 	ctx := context.Background()
-	db := newTestHopper(t, ctx)
+	w := newTestStore(t)
 
 	const purl = "pkg:npm/allbad"
 	for _, affected := range []string{"", hopper.AllVersions, ">= 0", "<2.0.0"} {
-		if _, err := db.AddSightings(ctx, []hopper.Sighting{
+		addSightings(t, w, []hopper.Sighting{
 			{Source: "osv", Subject: purl, Affected: affected, Claim: hopper.ClaimMalicious},
-		}); err != nil {
-			t.Fatalf("add sightings: %v", err)
-		}
+		})
 		named, _ := detectedBy(ctx, "", purl, "9.9.9")
 		if !slices.ContainsFunc(named, func(c Citation) bool { return c.Source == "osv" }) {
 			t.Errorf("affected %q speaks for the whole package; citation lost", affected)

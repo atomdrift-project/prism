@@ -114,7 +114,7 @@ func requestBaseURL(r *http.Request) string {
 }
 
 func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
-	if hopperDB.Load() == nil {
+	if hopperStore.Load() == nil {
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
 	}

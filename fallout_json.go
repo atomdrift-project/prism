@@ -91,7 +91,7 @@ func handleFalloutJSON(w http.ResponseWriter, r *http.Request) {
 		writeFalloutJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if hopperDB.Load() == nil {
+	if hopperStore.Load() == nil {
 		writeFalloutJSONError(w, http.StatusServiceUnavailable, "fallout unavailable")
 		return
 	}

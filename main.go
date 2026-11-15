@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -35,7 +36,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	_ "time/tzdata" // embeds the IANA database so viewerLocation works on hosts carrying no zoneinfo
@@ -48,6 +48,7 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/atomdrift-project/hopper"
 	"github.com/atomdrift-project/hopper/pkgparse"
+	"github.com/atomdrift-project/hopper/store"
 	"github.com/atomdrift-project/obs"
 	"github.com/codeGROOVE-dev/fido"
 	"github.com/codeGROOVE-dev/fido/pkg/store/localfs"
@@ -108,13 +109,8 @@ var (
 	parentArchiveCache *fido.TieredCache[string, cachedParents]
 	membersCache       *fido.TieredCache[string, cachedMembers]
 	logger             *slog.Logger
-	publicMode         bool // true when --public flag is set; changes branding and shows data-sharing notice
-	// hopperDB is the sample-registry handle. Stored as an atomic.Pointer
-	// because connectHopperWithRetry may replace it from a background
-	// goroutine after a startup-time hopper.Open failure; all readers must
-	// use hopperDB.Load() to get a stable snapshot.
-	hopperDB    atomic.Pointer[hopper.DB]
-	hopperDBDSN string // saved for background reconnect after startup failure; never contains user input
+	publicMode         bool   // true when --public flag is set; changes branding and shows data-sharing notice
+	hopperDBDSN        string // saved for background reconnect after startup failure; never contains user input
 )
 
 const (
@@ -541,12 +537,12 @@ func openNullCache[V any](label string) *fido.TieredCache[string, V] {
 // on-disk subdirectory name under cacheDir; label is used only for log
 // output. Fatal on error for the same reason as openNullCache.
 func openLocalFSCache[V any](id, cacheDir, label string) *fido.TieredCache[string, V] {
-	store, err := localfs.New[string, V](id, cacheDir)
+	backing, err := localfs.New[string, V](id, cacheDir)
 	if err != nil {
 		logger.Error("failed to initialize fido "+label+" store", "error", err)
 		os.Exit(1)
 	}
-	c, err := fido.NewTiered(store)
+	c, err := fido.NewTiered(backing)
 	if err != nil {
 		logger.Error("failed to initialize fido "+label, "error", err)
 		os.Exit(1)
@@ -662,11 +658,11 @@ func (p ParentArchive) containsChild() bool {
 	return p.Rel == "" || p.Rel == "unpacked"
 }
 
-// cachedReport wraps hopper.Report in a struct with a Found flag so the
+// cachedReport wraps store.FiledReport in a struct with a Found flag so the
 // "no report exists for this SHA" case is itself cacheable — without this,
 // every page render for a sample without a report would re-hit hopper.
 type cachedReport struct {
-	Report hopper.Report
+	Report store.FiledReport
 	Found  bool
 }
 
@@ -1905,6 +1901,7 @@ func main() {
 	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: isotope13 labs branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
+	cli.StringVar(&hopperSchema, "schema", cmp.Or(os.Getenv("HOPPER_SCHEMA"), defaultHopperSchema), "schema holding hopper's verdict tables (overrides HOPPER_SCHEMA env)")
 	cli.StringVar(&listenAddr, "listen", os.Getenv("LISTEN_ADDR"), "HTTP listen address (overrides LISTEN_ADDR env; empty means all interfaces)")
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
@@ -2072,17 +2069,18 @@ func main() {
 	// shouldn't have to restart prism to recover.
 	if dbDSN != "" {
 		hopperDBDSN = dbDSN
-		db, err := hopper.Open(context.Background(), dbDSN, "prism")
+		st, pool, err := openHopperStore(context.Background(), dbDSN, hopperSchema)
 		if err != nil {
 			logger.Error("failed to connect to hopper",
 				"error", err,
 				"hopper_db_host", hopperDSNHost(dbDSN),
+				"schema", hopperSchema,
 			)
 			go connectHopperWithRetry(ctx)
 		} else {
-			hopperDB.Store(db)
-			logger.Info("hopper connected", "hopper_db_host", hopperDSNHost(dbDSN))
-			if err := obs.PoolStats("prism", db.Pool()); err != nil {
+			hopperStore.Store(st)
+			logger.Info("hopper connected", "hopper_db_host", hopperDSNHost(dbDSN), "schema", hopperSchema)
+			if err := obs.PoolStats("prism", pool); err != nil {
 				logger.Warn("pool stats registration", "error", err)
 			}
 			go refreshFeedCacheLoop(ctx)
@@ -2340,7 +2338,7 @@ func loadConfig() {
 		hopperAPIAddr = defaultHopperAPIAddr
 	}
 	// 5-minute timeout covers the Beamline analysis request over a slow link.
-	// Reads from /api/file
+	// Reads from /v1/files
 	// and similar smaller fetches finish well inside this budget.
 	hopperClient = &http.Client{
 		Timeout:   5 * time.Minute,
@@ -2832,21 +2830,19 @@ func buildFeedSnapshot(ctx context.Context, a *feedQueryArgs) (cachedFeedSnapsho
 // loadFeedSnapshot) so one client disconnecting can't abort the shared rebuild.
 func feedDropdownOptions(ctx context.Context) (feedDropdowns, error) {
 	return feedDropdownCache.FetchTTL(ctx, "options", feedDropdownTTL, func(lctx context.Context) (feedDropdowns, error) {
-		db := hopperDB.Load()
-		if db == nil {
+		st := hopperStore.Load()
+		if st == nil {
 			return feedDropdowns{}, errors.New("hopper not connected")
 		}
 		qctx, cancel := context.WithTimeout(context.WithoutCancel(lctx), hopperQueryTimeout)
 		defer cancel()
-		ecosystems, err := db.FeedEcosystems(qctx, "", "", time.Now().Add(-feedEcosystemWindow))
+		// The domain filter is the feed a file's location came from: hopper's
+		// verdict schema keeps no download domain apart from it.
+		ecosystems, feeds, err := st.Facets(qctx, time.Now().Add(-feedEcosystemWindow))
 		if err != nil {
 			return feedDropdowns{}, err
 		}
-		domains, err := db.FeedDomains(qctx, "", "")
-		if err != nil {
-			return feedDropdowns{}, err
-		}
-		return feedDropdowns{Ecosystems: ecosystems, Domains: domains}, nil
+		return feedDropdowns{Ecosystems: ecosystems, Domains: feeds}, nil
 	})
 }
 
@@ -2863,8 +2859,8 @@ type feedFetch struct {
 }
 
 func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch, error) {
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	if st == nil {
 		return feedFetch{}, errors.New("hopper not connected")
 	}
 	// Gate the feed behind the shared hopper-db breaker so a degraded
@@ -2895,55 +2891,41 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		return feedFetch{}, err
 	}
 
-	// Source="" spans every Source value (legacy "harvest" rows from before
-	// the rename, new "forager" rows, manual "upload"s) so the result set
-	// works across the transition.
-	q := hopper.FeedQuery{
-		OrderBy:     "created_at",
-		Formula:     args.formula,
+	q := store.FeedQuery{
 		Search:      args.search,
-		PURLBase:    args.purlBase,
-		PURLVersion: args.purlVersion,
+		Name:        store.NameOf(args.purlBase),
+		Version:     args.purlVersion,
 		ClaimName:   args.claimName,
 		ClaimSigner: args.claimSigner,
+		Ecosystem:   args.ecosystem,
+		Feed:        args.domain,
 		// A claim filter searches the whole containment tree: the exe that
 		// carries a signer's claim lives inside its installers, never at the
 		// top level. Every other view keeps the top-level restriction.
-		TopLevelOnly:  args.claimName == "" && args.claimSigner == "",
-		Limit:         feedLimit,
-		CriticalLevel: CriticalLevel,
+		TopLevel: args.claimName == "" && args.claimSigner == "",
+		// Cited is hopper's samples.cited: at least one external threat feed,
+		// scanner, blog, or advisory names this file's sha256 or release (the
+		// sightings ledger).
+		Cited: args.feedsOnly,
+		Limit: feedLimit,
+		Since: args.since,
+		Until: args.until,
 	}
-	if args.ecosystem != "" {
-		q.Ecosystems = []string{args.ecosystem}
-	}
-	if args.domain != "" {
-		q.Domains = []string{args.domain}
+	if args.purlBase == "" {
+		q.Name = ""
 	}
 	if classes, ok := criticalityClasses(args.criticality); ok {
-		q.LitmusClasses = classes
-	} else {
-		q.RequireLitmus = true
+		q.Classes = classNames(classes)
 	}
-	if args.feedsOnly {
-		// Corroborated is hopper's denormalized flag: at least one external
-		// threat feed, scanner, blog, or advisory cited this sample's sha256 or
-		// purl_base (the sightings ledger). It supersedes the old label='bad'
-		// proxy — a strictly richer signal (ClamAV, Socket, Aikido, blogs, not
-		// just forager's own feeds) and still a single-column predicate that
-		// composes with hopper's tuned feed indexes.
-		q.Corroborated = true
-	}
-
-	q.Since, q.Until = args.since, args.until
-	purls, err := resolvePackageSearch(ctx, db, packageSearchPURLs(q.Search, dropdowns.Ecosystems, dropdowns.Domains))
+	purls, err := resolvePackageSearch(ctx, st, packageSearchPURLs(q.Search, dropdowns.Ecosystems, dropdowns.Domains))
 	if err != nil {
 		fail()
 		return feedFetch{}, err
 	}
 	if len(purls) > 0 {
-		q.Search = ""
+		q.Search, q.Names = "", purls
 	}
-	samples, truncated, err := feedSamplesInWindow(ctx, db, &q, purls)
+	rows, truncated, err := catalogFeedInWindow(ctx, st, &q)
 	if err != nil {
 		fail()
 		return feedFetch{}, err
@@ -2952,35 +2934,17 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 	recordDep(ctx, "hopper-db", "feed", "ok", feedStart)
 
 	out := feedFetch{
-		rows:       make([]feedRow, 0, len(samples)),
+		rows:       make([]feedRow, 0, len(rows)),
 		ecosystems: dropdowns.Ecosystems,
 		domains:    dropdowns.Domains,
 		truncated:  truncated,
 	}
 	now := time.Now()
-	for _, sample := range samples {
-		// Build the row straight from the sample hopper already returned.
-		// Every field the feed shows is derivable from it, so there is no need
-		// to consult (and churn) the shared per-SHA result cache: doing so
-		// added a disk round-trip per row and evicted genuinely-hot detail-page
-		// entries from the shared in-memory tier under crawler load.
-		var verdict litmusMlResponse
-		classification := ""
-		if len(sample.LitmusResult) > 0 && json.Unmarshal(sample.LitmusResult, &verdict) == nil {
-			classification = classificationName(verdict.verdictClass())
-		}
-		if classification == "" {
-			continue
-		}
-		// Registry sidecars are the `*.registry.json` provenance snapshots
-		// (cleave types them "registry") forager writes beside each package —
-		// metadata *about* an artifact, not an artifact. hopper's feed query
-		// excludes them (file_type <> 'registry'), so this is a fallback that
-		// keeps the index clean when served by an older hopper predating that
-		// filter, mirroring the criticality recheck below.
-		if sample.FileType == "registry" {
-			continue
-		}
+	for i := range rows {
+		// Build the row straight from what the store returned. Every field the
+		// feed shows is derivable from it, so there is no need to consult (and
+		// churn) the shared per-SHA result cache.
+		row := feedRowFromStore(&rows[i], now)
 		// Belt-and-suspenders check that the row's class falls into the
 		// requested set even after hopper's SQL filter. The criticality
 		// argument may be a named band ("hostile") or a comparison
@@ -2991,96 +2955,19 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 			if !ok {
 				continue
 			}
-			rowClass, ok := classificationClass(classification)
+			rowClass, ok := classificationClass(row.Classification)
 			if !ok || !slices.Contains(classes, rowClass) {
 				continue
 			}
 		}
-		if args.formula != "" && sample.Formula != args.formula {
+		// The molecule is in each file's report, which a feed never reads, so
+		// a formula filter has nothing to match.
+		if args.formula != "" && row.Formula != args.formula {
 			continue
 		}
-
-		addedAt := sample.CreatedAt
-		suspiciousT, hostileT, mlConf := sampleMLVerdict(sample)
-		why, llmGrade, conf := llmWhy(sample.LLMResult)
-		// Keep interpreted and uninterpreted rows consistent: a row without
-		// an LLM rationale still shows a verdict-confidence chip, sourced
-		// from the ml pass instead of the blend.
-		if why == "" {
-			conf = mlConf
-		}
-		out.rows = append(out.rows, feedRow{
-			SHA256:         sample.SHA256,
-			SHA256Short:    shortSHA(sample.SHA256),
-			Filename:       firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
-			Classification: classification,
-			Probability:    sample.LitmusScore,
-			SuspiciousT:    suspiciousT,
-			HostileT:       hostileT,
-			Formula:        sample.Formula,
-			FileType:       sample.FileType,
-			Source:         sample.Source,
-			Feed:           sample.Feed,
-			Ecosystem:      sample.Ecosystem,
-			EcosystemURL:   ecosystemURL(sample.Ecosystem),
-			Package:        sample.Package,
-			Version:        sample.Version,
-			PURLBase:       sample.PURLBase,
-			RegistryTitle:  sample.RegistryTitle,
-			Desc:           truncDesc(sample.RegistryDescription),
-			Users:          formatCount(sample.RegistryDownloads),
-			Downloads:      sample.RegistryDownloads,
-			Why:            why,
-			Conf:           conf,
-			TopTraits:      parseTopTraits(sample.TopTraits),
-			LLMGrade:       llmGrade,
-			Corroborated:   sample.Corroborated,
-			AnalyzedAt:     addedAt,
-			AnalyzedDate:   feedDate(addedAt, now),
-			TimeAgo:        timeAgo(now.Sub(addedAt)),
-		})
+		out.rows = append(out.rows, row)
 	}
-
 	return out, nil
-}
-
-// feedSamplesInWindow reads a feed query, paging when it carries a created_at
-// window. An unwindowed query is one page: the row cap is the whole point of
-// the index feed, which shows the newest rows and pages in memory. A windowed
-// one is a period the caller means to see all of, so it walks the window down
-// — each page asking for what is left below the oldest row it has seen —
-// until the window empties, the page cap is reached, or a page adds nothing
-// new. Ties on the boundary instant are why the next bound is inclusive of the
-// last row (created_at has microsecond resolution) and why rows are deduped by
-// sha256: re-reading one row beats losing the ones beside it.
-func feedSamplesInWindow(ctx context.Context, db *hopper.DB, q *hopper.FeedQuery, purls []string) ([]*hopper.Sample, bool, error) {
-	if q.Since.IsZero() && q.Until.IsZero() {
-		samples, err := feedSummarySamples(ctx, db, q, purls)
-		return samples, false, err
-	}
-	q.Limit = feedWindowPageSize
-	var out []*hopper.Sample
-	seen := make(map[string]bool, feedWindowPageSize)
-	for range feedWindowPages {
-		page, err := feedSummarySamples(ctx, db, q, purls)
-		if err != nil {
-			return nil, false, err
-		}
-		added := 0
-		for _, sample := range page {
-			if seen[sample.SHA256] {
-				continue
-			}
-			seen[sample.SHA256] = true
-			out = append(out, sample)
-			added++
-		}
-		if len(page) < q.Limit || added == 0 {
-			return out, false, nil
-		}
-		q.Until = page[len(page)-1].CreatedAt.Add(time.Microsecond)
-	}
-	return out, true, nil
 }
 
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
@@ -3808,42 +3695,6 @@ func normalizeCriticality(criticality string) string {
 	return ""
 }
 
-// sampleMLVerdict extracts the feed's render inputs from a sample's ml
-// envelope: the suspicious/hostile band edges (standard defaults when the
-// envelope is absent or predates per-envelope thresholds) and the ml verdict
-// confidence percentage — the same "NN% confident" figure the detail page's
-// litmus badge shows; zero for benign verdicts and unparseable envelopes.
-func sampleMLVerdict(sample *hopper.Sample) (suspiciousT, hostileT float64, conf int) {
-	suspiciousT, hostileT = 0.65, 0.887
-	if sample == nil || len(sample.LitmusResult) == 0 {
-		return suspiciousT, hostileT, 0
-	}
-	var mlResp litmusMlResponse
-	if json.Unmarshal(sample.LitmusResult, &mlResp) != nil {
-		return suspiciousT, hostileT, 0
-	}
-	if s, h := mlResp.suspiciousT(), mlResp.hostileT(); s > 0 && h > 0 {
-		suspiciousT, hostileT = s, h
-	}
-	return suspiciousT, hostileT, mlResp.Confidence
-}
-
-// llmWhy extracts the one-sentence verdict rationale and the blended
-// confidence (as a 0–100 percentage) from a sample's llm_result column — the
-// bare `llm` envelope object. Both zero when no interpretation pass ran, when
-// the pass failed (carries only `error`), or when the JSON doesn't parse; the
-// feed row then renders without a rationale line, exactly as before.
-func llmWhy(raw []byte) (why, grade string, conf int) {
-	if len(raw) == 0 {
-		return "", "", 0
-	}
-	var llm llmInterpretation
-	if err := json.Unmarshal(raw, &llm); err != nil || llm.Interpretation == "" {
-		return "", "", 0
-	}
-	return llm.Interpretation, llm.Grade, int(llm.Conf*100 + 0.5)
-}
-
 // feedTrait is one of a row's headline traits, ready for the chip the feed
 // renders: the display text (last directory + leaf of the cleave trait path,
 // "exfil.dns-tunnel" — or, for a dependency verdict, the phrase naming what
@@ -3857,7 +3708,16 @@ type feedTrait struct {
 	Href string
 }
 
-// parseTopTraits decodes hopper's top_traits column (JSON []hopper.TopTrait)
+// headlineTrait is one of a file's strongest traits as hopper serves them: atomscan's
+// verdict summary "top" (store.Finding), with the dependency identity scan pins
+// on a dependency verdict's trait when it carries one.
+type headlineTrait struct {
+	ID   string          `json:"id"`
+	Dep  json.RawMessage `json:"dep,omitempty"`
+	Crit int             `json:"crit"`
+}
+
+// parseTopTraits decodes a file's strongest traits (JSON []headlineTrait)
 // into display-ready chips, deduped by chip ID — named traits from the same
 // rule file share a truncated label, and one chip per label is enough, while
 // dependency chips naming different packages all survive. The column is
@@ -3867,7 +3727,7 @@ func parseTopTraits(raw string) []feedTrait {
 	if raw == "" {
 		return nil
 	}
-	var top []hopper.TopTrait
+	var top []headlineTrait
 	if err := json.Unmarshal([]byte(raw), &top); err != nil {
 		return nil
 	}
@@ -4010,62 +3870,6 @@ func traitChipID(id string) string {
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
 }
 
-func storedResultFromHopperSample(sample *hopper.Sample) storedResult {
-	// hopper owns the column↔envelope mapping ({ml,llm,raw}); use it so the
-	// shape stays in lockstep with the splitter/joiner.
-	rawLitmus := hopper.Envelope(sample)
-
-	classification := ""
-	if len(sample.LitmusResult) > 0 {
-		var mlResp litmusMlResponse
-		if json.Unmarshal(sample.LitmusResult, &mlResp) == nil {
-			classification = classificationName(mlResp.verdictClass())
-		}
-	}
-
-	cachedAt := sampleTime(sample)
-	if cachedAt.IsZero() {
-		cachedAt = time.Now().UTC()
-	}
-	var analyzedAt time.Time
-	if sample.AnalyzedAt != nil {
-		analyzedAt = *sample.AnalyzedAt
-	}
-	var firstAnalyzedAt time.Time
-	if sample.FirstAnalyzedAt != nil {
-		firstAnalyzedAt = *sample.FirstAnalyzedAt
-	}
-
-	return storedResult{
-		Filename:          firstNonEmpty(sample.Filename, filepath.Base(sample.Path)),
-		RawLitmus:         string(rawLitmus),
-		Classification:    classification,
-		Formula:           sample.Formula,
-		FileType:          sample.FileType,
-		CachedAt:          cachedAt,
-		CreatedAt:         sample.CreatedAt,
-		AnalyzedAt:        analyzedAt,
-		SourceURL:         sample.URL,
-		SourceDomain:      sample.Domain,
-		Ecosystem:         sample.Ecosystem,
-		SizeBytes:         sample.SizeBytes,
-		Source:            sample.Source,
-		Feed:              sample.Feed,
-		Package:           sample.Package,
-		Version:           sample.Version,
-		RegistryTitle:     sample.RegistryTitle,
-		RegistryDesc:      sample.RegistryDescription,
-		RegistryDownloads: sample.RegistryDownloads,
-		PURLBase:          sample.PURLBase,
-		Label:             sample.Label,
-		LabelSource:       sample.LabelSource,
-		TraitsVersion:     sample.TraitsVersion,
-		CanonicalSHA256:   sample.CanonicalSHA256,
-		UpdatedAt:         sample.UpdatedAt,
-		FirstAnalyzedAt:   firstAnalyzedAt,
-	}
-}
-
 // sourceDisplay returns the href and label pair for the result page's
 // "Source" meta row. If sourceURL parses cleanly, label is its host
 // (compact, recognizable — "registry.npmjs.org" beats a 200-char URL)
@@ -4205,15 +4009,15 @@ func citationDisplayName(source string) string {
 // Claim is filtered here too: a CVE is a defect in legitimate software, and
 // listing one under "also flagged by" states the opposite of what it says.
 func detectedBy(ctx context.Context, sha, purlBase, version string) (named []Citation, more string) {
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	if st == nil {
 		return nil, ""
 	}
 	subjects := []string{sha}
 	if purlBase != "" {
 		subjects = append(subjects, purlBase)
 	}
-	m, err := db.SightingsFor(ctx, subjects)
+	m, err := hopper.SightingsFromStore(ctx, st, subjects)
 	if err != nil {
 		logger.Warn("sightings lookup failed", "sha256", sha, "error", err)
 		return nil, ""
@@ -4351,20 +4155,6 @@ func compactProvenanceRows(rows []ProvenanceRow) []ProvenanceRow {
 		}
 	}
 	return out
-}
-
-func sampleTime(sample *hopper.Sample) time.Time {
-	newest := sample.CreatedAt
-	if sample.Mtime != nil && sample.Mtime.After(newest) {
-		newest = *sample.Mtime
-	}
-	if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(newest) {
-		newest = *sample.AnalyzedAt
-	}
-	if sample.UpdatedAt.After(newest) {
-		newest = sample.UpdatedAt
-	}
-	return newest
 }
 
 func shortSHA(sha string) string {
@@ -4825,16 +4615,15 @@ func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
 	renderFeed(w, r, "", canonical)
 }
 
-// soleSampleByPURL returns the sha256 of the one sample matching the
-// canonical purl base (and version, when set), or "" when the coordinate
-// matches zero or several samples — ambiguity the purl-filtered feed
-// resolves better than a guess. The query is an indexed exact match
-// (samples.purl_base), gated by the shared hopper-db breaker like every
-// other per-request lookup. No litmus requirement: a still-unanalyzed
-// sample should resolve to its record page, which shows analysis progress.
+// soleSampleByPURL returns the sha256 of the one judged top-level file
+// filed under the canonical purl base (and version, when set), or "" when the
+// coordinate matches zero or several — ambiguity the purl-filtered feed
+// resolves better than a guess. The query is an indexed exact match on the
+// name, gated by the shared hopper-db breaker like every other per-request
+// lookup.
 func soleSampleByPURL(ctx context.Context, base, version string) string {
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	if st == nil {
 		return ""
 	}
 	if err := dbBreaker.allow(); err != nil {
@@ -4844,14 +4633,7 @@ func soleSampleByPURL(ctx context.Context, base, version string) string {
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
 	start := time.Now()
-	samples, err := feedSummarySamples(ctx, db, &hopper.FeedQuery{
-		PURLBase:      base,
-		PURLVersion:   version,
-		OrderBy:       "created_at",
-		TopLevelOnly:  true,
-		Limit:         2,
-		CriticalLevel: CriticalLevel,
-	}, nil)
+	samples, err := st.Feed(ctx, &store.FeedQuery{Name: store.NameOf(base), Version: version, TopLevel: true, Limit: 2})
 	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "purl", "error", start)
@@ -4861,7 +4643,7 @@ func soleSampleByPURL(ctx context.Context, base, version string) string {
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "purl", "ok", start)
 	if len(samples) == 1 {
-		return samples[0].SHA256
+		return hex.EncodeToString(samples[0].SHA256)
 	}
 	return ""
 }
@@ -5016,7 +4798,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
 		Title:           "Index",
-		HasHopper:       hopperDB.Load() != nil,
+		HasHopper:       hopperStore.Load() != nil,
 	}
 	data.SearchQuery = composeSearchQuery(
 		critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
@@ -5042,7 +4824,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	}
 
 	var diags []queryDiag
-	if hopperDB.Load() != nil {
+	if hopperStore.Load() != nil {
 		snapshot, diag, err := loadFeedSnapshot(
 			r.Context(),
 			&feedQueryArgs{
@@ -5246,7 +5028,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 			"error", err,
 			"hopper_api_addr", hopperAPIAddr,
 			"hopper_db_host", hopperDSNHost(hopperDBDSN),
-			"hopper_db_connected", hopperDB.Load() != nil,
+			"hopper_db_connected", hopperStore.Load() != nil,
 		)
 		if strings.Contains(err.Error(), "not found") {
 			renderError(w, r, http.StatusNotFound, errorData{
@@ -5302,7 +5084,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 		}
 	}
 	var reportDur, parentsDur time.Duration
-	if hopperDB.Load() != nil {
+	if hopperStore.Load() != nil {
 		reportStart := time.Now()
 		if cached, ok := latestReport(ctx, sha, reqLogger); ok {
 			data.ReportContent = cached.Content
@@ -5517,7 +5299,7 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 		// way, but distinguish a genuine 404 from a transient hopper fault so
 		// the client (and dashboards) can tell "no such sample" from "retry".
 		logger.Debug("members enrich failed", "sha256", sha, "error", err)
-		if errors.Is(err, hopper.ErrNotFound) {
+		if errors.Is(err, store.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -5567,12 +5349,12 @@ func renderMembersResponse(ctx context.Context, sha string) (cachedMembers, erro
 func renderMembersFromResult(ctx context.Context, sha string, parent *storedResult) (cachedMembers, error) {
 	start := time.Now()
 	res := *parent // local copy: RawLitmus is replaced with the enriched envelope
-	if sample, ok := parentSampleFromEnvelope(res.RawLitmus); ok && hopperWasCompacted(sample.CleaveResult) {
-		enriched, err := enrichMembers(ctx, sha, sample)
+	if membersDeferred(res.RawLitmus) {
+		enriched, err := enrichMembers(ctx, sha, res.RawLitmus)
 		if err != nil {
 			logger.Debug("member enrichment failed; serving parent-only", "sha", sha, "error", err)
-		} else if enriched != nil {
-			res.RawLitmus = string(enriched)
+		} else if enriched != "" {
+			res.RawLitmus = enriched
 		}
 	}
 	return renderMembers(ctx, sha, &res, start, time.Since(start).Milliseconds())
@@ -5632,15 +5414,16 @@ const maxParentArchives = 10
 // renders for the same SHA share one hopper round-trip. The not-found
 // case is itself cached (via cachedReport.Found=false) so SHAs without
 // reports don't fan out one query per request.
-func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Report, bool) {
-	db := hopperDB.Load()
-	if reportCache == nil || db == nil {
-		return hopper.Report{}, false
+func latestReport(ctx context.Context, sha string, log *slog.Logger) (store.FiledReport, bool) {
+	st := hopperStore.Load()
+	digest, derr := hex.DecodeString(sha)
+	if reportCache == nil || st == nil || derr != nil {
+		return store.FiledReport{}, false
 	}
 	cached, err := reportCache.FetchTTL(ctx, sha, auxCacheTTL, func(lctx context.Context) (cachedReport, error) {
-		rep, ferr := db.LatestReport(lctx, sha, "re")
+		rep, ferr := st.LatestReport(lctx, digest, "re")
 		if ferr != nil {
-			if errors.Is(ferr, hopper.ErrNotFound) {
+			if errors.Is(ferr, store.ErrNotFound) {
 				return cachedReport{Found: false}, nil
 			}
 			return cachedReport{}, ferr
@@ -5649,10 +5432,10 @@ func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Rep
 	})
 	if err != nil {
 		log.Debug("failed to load reverse-engineering report", "error", err)
-		return hopper.Report{}, false
+		return store.FiledReport{}, false
 	}
 	if !cached.Found {
-		return hopper.Report{}, false
+		return store.FiledReport{}, false
 	}
 	return cached.Report, true
 }
@@ -5660,15 +5443,15 @@ func latestReport(ctx context.Context, sha string, log *slog.Logger) (hopper.Rep
 // lookupParentArchives finds archives that contain childSHA, sorted by
 // most recent analysis. Returns nil on error (best-effort metadata).
 //
-// Implementation: walk sample_locations rows for childSHA, dedup by parent
-// SHA, then resolve each parent's display fields. The whole computation
+// Implementation: the archives whose member lists name childSHA
+// (store.Parents), with each one's display fields. The whole computation
 // is wrapped in parentArchiveCache.FetchTTL so concurrent page renders
 // for the same child share one full hopper sweep (singleflighted), and
 // a request-bound timeout caps the worst case so a slow hopper-db
 // doesn't block page render: when the deadline fires we return whatever
 // we've collected so far.
 func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
-	if parentArchiveCache == nil || hopperDB.Load() == nil {
+	if parentArchiveCache == nil || hopperStore.Load() == nil {
 		return nil
 	}
 	cached, err := parentArchiveCache.FetchTTL(ctx, childSHA, auxCacheTTL, func(lctx context.Context) (cachedParents, error) {
@@ -5688,46 +5471,24 @@ func lookupParentArchives(ctx context.Context, childSHA string, log *slog.Logger
 func lookupParentArchivesFromHopper(ctx context.Context, childSHA string, log *slog.Logger) []ParentArchive {
 	ctx, cancel := context.WithTimeout(ctx, parentLookupTimeout)
 	defer cancel()
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	digest, err := hex.DecodeString(childSHA)
+	if st == nil || err != nil {
 		return nil
 	}
-	refs, err := db.ParentArchivesForChild(ctx, childSHA, maxParentArchives)
+	parents, err := st.Parents(ctx, digest, maxParentArchives)
 	if err != nil {
 		log.Debug("parent archive lookup failed", "error", err)
 		return nil
 	}
-	out := make([]ParentArchive, 0, len(refs))
-	for i := range refs {
-		ref := &refs[i]
-		entry := ParentArchive{
-			SHA256:      ref.SHA256,
-			SHA256Short: shortSHA(ref.SHA256),
-			Filename:    firstNonEmpty(ref.Filename, filepath.Base(ref.SamplePath)),
-			ChildSHA:    childSHA,
-			Path:        ref.Path,
-			Rel:         ref.Rel,
-			Feed:        ref.Feed,
-			Ecosystem:   ref.Ecosystem,
-			Version:     ref.Version,
-			Package:     ref.Package,
-		}
-		if len(ref.LitmusResult) > 0 {
-			var ml litmusMlResponse
-			if json.Unmarshal(ref.LitmusResult, &ml) == nil {
-				entry.Classification = classificationName(ml.verdictClass())
-			}
-		}
-		if ref.AnalyzedAt != nil {
-			entry.AnalyzedAt = ref.AnalyzedAt.Format("2 Jan 2006 15:04 UTC")
-			entry.AnalyzedAgo = timeAgo(time.Since(*ref.AnalyzedAt))
-		}
-		out = append(out, entry)
+	out := make([]ParentArchive, 0, len(parents))
+	for i := range parents {
+		out = append(out, parentArchiveFromStore(&parents[i], childSHA))
 	}
 	return out
 }
 
-// parentLookupTimeout bounds the single ParentArchivesForChild lookup so a slow
+// parentLookupTimeout bounds the single store.Parents lookup so a slow
 // hopper-db degrades the backlinks, not the page.
 const parentLookupTimeout = 2 * time.Second
 
@@ -5782,22 +5543,6 @@ func warmMembers(ctx context.Context, sha string, res *storedResult) {
 	}()
 }
 
-// parentSampleFromEnvelope rebuilds the three analysis columns Reassemble reads
-// from an envelope prism already has in memory. The top-level unmarshal keeps
-// each section as a raw slice, so this is one scan rather than a full parse.
-func parentSampleFromEnvelope(envelope string) (*hopper.Sample, bool) {
-	var top map[string]json.RawMessage
-	if json.Unmarshal([]byte(envelope), &top) != nil {
-		return nil, false
-	}
-	sample := &hopper.Sample{
-		LitmusResult: top["ml"],
-		LLMResult:    top["llm"],
-		CleaveResult: top["raw"],
-	}
-	return sample, len(sample.CleaveResult) > 0
-}
-
 // hopperCacheTTL is how long a cached result is served without consulting
 // hopper. Older entries are still served immediately; the refresh happens
 // in a background goroutine so the request path never waits on the database.
@@ -5828,7 +5573,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 		reqLogger.Debug("cache miss, loading from hopper",
 			"hopper_db_host", dbHost,
 		)
-		if hopperDB.Load() == nil {
+		if hopperStore.Load() == nil {
 			return storedResult{}, fmt.Errorf("hopper db not connected (host=%s); background reconnect in progress", dbHost)
 		}
 		return fetchFromHopper(lctx, sha)
@@ -5861,7 +5606,7 @@ func lookupResult(ctx context.Context, sha string, reqLogger *slog.Logger) (bool
 	// load lazily via /file/{sha}/members), so there's no compaction re-enrich
 	// to do here — only TTL freshness. The refreshInFlight guard keeps a sha to
 	// one concurrent background refresh.
-	if cacheHit && time.Since(res.CachedAt) > hopperCacheTTL && hopperDB.Load() != nil {
+	if cacheHit && time.Since(res.CachedAt) > hopperCacheTTL && hopperStore.Load() != nil {
 		if _, loaded := refreshInFlight.LoadOrStore(sha, struct{}{}); !loaded {
 			go refreshFromHopper(context.WithoutCancel(ctx), sha, reqLogger)
 		}
@@ -5880,61 +5625,62 @@ type pendingAnalysisError struct {
 
 func (e *pendingAnalysisError) Error() string { return "analysis pending for " + e.SHA }
 
-// loadParentSample reads a sample's parent row from hopper under the shared
-// circuit breaker and query timeout, mapping hopper's not-found and not-yet-
-// analyzed states to the errors the HTTP handlers expect (a "not found" message
-// for a 404, *pendingAnalysisError while a worker is still running). It is the
-// common preamble for the cached parent-only path (fetchFromHopper) and the
-// member-complete path (enrichedResult); callers layer their own span, logging,
-// and member reassembly on top.
-func loadParentSample(ctx context.Context, sha string) (*hopper.Sample, error) {
-	db := hopperDB.Load()
-	if db == nil {
-		return nil, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
+// loadParentSample reads what the detail page renders for a sample from
+// hopper's store (catalogResult) under the shared circuit breaker and query
+// timeout, mapping not-found and not-yet-analyzed to the errors the HTTP
+// handlers expect (a "not found" message for a 404, *pendingAnalysisError
+// while a worker is still running). It is the common preamble for the cached
+// parent-only path (fetchFromHopper) and the member-complete path
+// (enrichedResult); callers layer their own span, logging, and member
+// splicing on top.
+func loadParentSample(ctx context.Context, sha string) (storedResult, error) {
+	st := hopperStore.Load()
+	if st == nil {
+		return storedResult{}, fmt.Errorf("hopper db not connected (host=%s)", hopperDSNHost(hopperDBDSN))
 	}
 	if err := dbBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-db", "lookup", "rejected", time.Time{})
-		return nil, fmt.Errorf("hopper-db lookup: %w", err)
+		return storedResult{}, fmt.Errorf("hopper-db lookup: %w", err)
 	}
 	// Bound the read so a slow hopper-db can't pin the caller; a timeout trips
 	// the breaker.
 	ctx, cancel := context.WithTimeout(ctx, hopperQueryTimeout)
 	defer cancel()
 	start := time.Now()
-	sample, err := db.SampleBySHA256(ctx, sha)
-	if err != nil {
-		if errors.Is(err, hopper.ErrNotFound) {
-			// The DB answered; "not found" is a healthy response, not a fault.
-			dbBreaker.success()
-			recordDep(ctx, "hopper-db", "lookup", "ok", start)
-			return nil, fmt.Errorf("sample not found in hopper: %w", err)
-		}
+	res, err := catalogResult(ctx, st, sha)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// The DB answered; "not found" is a healthy response, not a fault.
+		dbBreaker.success()
+		recordDep(ctx, "hopper-db", "lookup", "ok", start)
+		return storedResult{}, fmt.Errorf("sample not found in hopper: %w", err)
+	case errors.Is(err, errNotAnalyzed):
+		dbBreaker.success()
+		recordDep(ctx, "hopper-db", "lookup", "ok", start)
+		return storedResult{}, &pendingAnalysisError{SHA: sha, Filename: res.Filename}
+	case err != nil:
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "lookup", "error", start)
-		return nil, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
+		return storedResult{}, fmt.Errorf("hopper lookup (host=%s): %w", hopperDSNHost(hopperDBDSN), err)
+	default:
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "lookup", "ok", start)
-	if len(sample.CleaveResult) == 0 {
-		return nil, &pendingAnalysisError{SHA: sha, Filename: firstNonEmpty(sample.Filename, filepath.Base(sample.Path))}
-	}
-	return sample, nil
+	return res, nil
 }
 
-// fetchFromHopper maps a sample to the parent-only storedResult the detail page
-// renders on first paint. Archive member bodies are hydrated lazily (GET
+// fetchFromHopper reads the parent-only storedResult the detail page renders
+// on first paint. Archive member reports are spliced in lazily (GET
 // /file/{sha}/members), so this hot path — reached by every visitor, crawlers
-// included, via lookupResult's cache — is a single SampleBySHA256 that never
-// touches the member queries.
+// included, via lookupResult's cache — reads the members as stubs only.
 func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	start := time.Now()
 	sctx, span := obs.Span(ctx, "prism.detail.sample_lookup")
-	sample, err := loadParentSample(sctx, sha)
+	res, err := loadParentSample(sctx, sha)
 	span.End()
 	if err != nil {
 		return storedResult{}, err
 	}
-	res := storedResultFromHopperSample(sample)
 	dur := time.Since(start)
 	level := slog.LevelDebug
 	if dur >= slowDetailThreshold {
@@ -5942,32 +5688,35 @@ func fetchFromHopper(ctx context.Context, sha string) (storedResult, error) {
 	}
 	logger.Log(ctx, level, "hopper detail fetch",
 		"sha256", sha,
-		"compacted", hopperWasCompacted(sample.CleaveResult),
-		"cleave_bytes", len(sample.CleaveResult),
+		"deferred_members", membersDeferred(res.RawLitmus),
+		"envelope_bytes", len(res.RawLitmus),
 		"sample_ms", dur.Milliseconds(),
 	)
 	return res, nil
 }
 
-// enrichMembers hydrates the archive members prism will display — the top
-// maxFilesShown by per-file criticality (from the compacted envelope's risk-
-// sorted stubs) plus any composite-linked members — and splices them back into
-// the parent envelope via hopper.Reassemble. Returns the enriched envelope JSON
-// (nil when nothing needed splicing). One deterministic SamplesBySHAs primary-
-// key fetch, called off the render hot path so only real JS-running clients pay
-// for it.
-func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]byte, error) {
-	db := hopperDB.Load()
-	if db == nil {
-		return nil, errors.New("hopper not connected")
+// enrichMembers splices the reports of the archive members prism will
+// display into the parent envelope — the top maxFilesShown by risk (from the
+// stubs) plus any composite-linked members — and returns the enriched
+// envelope ("" when nothing needed splicing). One primary-key read of the
+// wanted members' reports, called off the render hot path so only real
+// JS-running clients pay for it.
+func enrichMembers(ctx context.Context, sha, envelope string) (string, error) {
+	st := hopperStore.Load()
+	if st == nil {
+		return "", errors.New("hopper not connected")
 	}
-	pickStart := time.Now()
+	var top struct {
+		Raw json.RawMessage `json:"raw"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &top); err != nil {
+		return "", err
+	}
 	// Risk-ranked members first, then the members a cross-file composite drew
 	// from so its trail links resolve. Both lists are deduped and the total is
 	// capped: the page renders at most maxFilesShown files and
 	// maxEvidenceBlocks regions, so anything past maxMemberFetch is fetched,
-	// parsed and thrown away. One archive asked for 143 members — 3 MB of child
-	// rows inflating a 9 MB envelope — to render three files.
+	// parsed and thrown away.
 	wanted := make([]string, 0, maxMemberFetch)
 	seen := make(map[string]bool, maxMemberFetch)
 	add := func(shas []string) {
@@ -5982,21 +5731,14 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 			wanted = append(wanted, s)
 		}
 	}
-	// Risk first, and only the top maxFilesShown of it, because that is all the
-	// content view will ever render. compositeLinkedSHAs is unranked — it names
-	// every member a cross-file composite touched, which is how one archive
-	// asked for 143 — so it only fills what is left, and a member it wanted but
-	// did not get simply loses its trail link (traitSources already drops links
-	// to files that did not render).
-	risky := envelopeChildSHAs(sample.CleaveResult, sha)
+	risky := envelopeChildSHAs(top.Raw, sha)
 	if len(risky) > maxFilesShown {
 		risky = risky[:maxFilesShown]
 	}
 	add(risky)
-	add(compositeLinkedSHAs(sample.CleaveResult, sha))
-	pickMS := time.Since(pickStart).Milliseconds()
+	add(compositeLinkedSHAs(top.Raw, sha))
 	if len(wanted) == 0 {
-		return nil, nil
+		return "", nil
 	}
 	// Gate on the same breaker as the parent lookup and bound the read tightly:
 	// the page is already usable parent-only, so a slow/contended hopper-db must
@@ -6005,44 +5747,25 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 	// distress sheds this load entirely.
 	if err := dbBreaker.allow(); err != nil {
 		recordDep(ctx, "hopper-db", "members", "rejected", time.Time{})
-		return nil, fmt.Errorf("hopper-db members: %w", err)
+		return "", fmt.Errorf("hopper-db members: %w", err)
 	}
 	mctx, cancel := context.WithTimeout(ctx, memberEnrichTimeout)
 	defer cancel()
 	membersStart := time.Now()
 	sctx, memSpan := obs.Span(mctx, "prism.detail.members")
-	children, err := db.SamplesBySHAs(sctx, wanted)
+	enriched, err := spliceMembers(sctx, st, envelope, wanted)
 	memSpan.End()
 	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "members", "error", membersStart)
-		return nil, err
+		return "", err
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "members", "ok", membersStart)
-	if len(children) == 0 {
-		return nil, nil
-	}
-	fetchMS := time.Since(membersStart).Milliseconds()
-	reStart := time.Now()
-	_, reSpan := obs.Span(ctx, "prism.detail.reassemble")
-	enriched, err := hopper.Reassemble(sample, children)
-	reSpan.End()
-	if err != nil {
-		return nil, err
-	}
-	childBytes := 0
-	for _, c := range children {
-		childBytes += len(c.CleaveResult)
-	}
 	logger.Debug("member enrich timing",
 		"sha256", sha,
 		"wanted", len(wanted),
-		"got", len(children),
-		"pick_ms", pickMS,
-		"fetch_ms", fetchMS,
-		"reassemble_ms", time.Since(reStart).Milliseconds(),
-		"child_bytes", childBytes,
+		"fetch_ms", time.Since(membersStart).Milliseconds(),
 		"enriched_bytes", len(enriched),
 	)
 	return enriched, nil
@@ -6050,20 +5773,17 @@ func enrichMembers(ctx context.Context, sha string, sample *hopper.Sample) ([]by
 
 // enrichedResult loads a sample and returns its storedResult with the archive
 // members spliced in — the member-complete view the lazy /members endpoint and
-// the JSON export need (the cached fetchFromHopper result is parent-only). It
-// re-reads the parent row because Reassemble needs the raw *hopper.Sample; that
-// lookup is cheap and only JS-running clients / API callers reach it.
+// the JSON export need (the cached fetchFromHopper result is parent-only).
 func enrichedResult(ctx context.Context, sha string) (storedResult, error) {
-	sample, err := loadParentSample(ctx, sha)
+	res, err := loadParentSample(ctx, sha)
 	if err != nil {
 		return storedResult{}, err
 	}
-	res := storedResultFromHopperSample(sample)
-	if hopperWasCompacted(sample.CleaveResult) {
-		if enriched, eerr := enrichMembers(ctx, sha, sample); eerr != nil {
+	if membersDeferred(res.RawLitmus) {
+		if enriched, eerr := enrichMembers(ctx, sha, res.RawLitmus); eerr != nil {
 			logger.Debug("member enrichment failed; serving parent-only", "sha", sha, "error", eerr)
-		} else if len(enriched) > 0 {
-			res.RawLitmus = string(enriched)
+		} else if enriched != "" {
+			res.RawLitmus = enriched
 		}
 	}
 	return res, nil
@@ -6333,7 +6053,7 @@ func retryAfterSeconds(d time.Duration) int {
 	return 1
 }
 
-// fetchHopperFile performs GET /api/file/{sha} with a patient, Retry-After
+// fetchHopperFile performs GET /v1/files/{sha} with a patient, Retry-After
 // aware retry loop. On success it returns the live response and a cancel func
 // the caller MUST defer — it keeps the streaming context alive, so cancelling
 // early would truncate the body. On failure it writes the appropriate status to
@@ -6611,7 +6331,7 @@ func connectHopperWithRetry(ctx context.Context) {
 	retryErr := retry.Do(
 		func() error {
 			attempt++
-			db, err := hopper.Open(ctx, hopperDBDSN, "prism")
+			st, pool, err := openHopperStore(ctx, hopperDBDSN, hopperSchema)
 			if err != nil {
 				logger.Warn("hopper reconnect attempt failed",
 					"hopper_db_host", host,
@@ -6620,12 +6340,15 @@ func connectHopperWithRetry(ctx context.Context) {
 				)
 				return err
 			}
-			if !hopperDB.CompareAndSwap(nil, db) {
+			if !hopperStore.CompareAndSwap(nil, st) {
 				// Another goroutine beat us to it (shouldn't happen — only
 				// startup and this loop write — but be defensive so we don't
 				// leak the second pool).
-				db.Close()
+				pool.Close()
 				return nil
+			}
+			if err := obs.PoolStats("prism", pool); err != nil {
+				logger.Warn("pool stats registration", "error", err)
 			}
 			logger.Info("hopper reconnected",
 				"hopper_db_host", host,
@@ -6656,9 +6379,9 @@ func hopperFileURL(sha string) string {
 	}
 	u, err := url.Parse(base)
 	if err != nil {
-		return "http://" + defaultHopperAPIAddr + "/api/file/" + sha
+		return "http://" + defaultHopperAPIAddr + "/v1/files/" + sha
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/file/" + sha
+	u.Path = strings.TrimRight(u.Path, "/") + "/v1/files/" + sha
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
@@ -6933,8 +6656,8 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
 		return
 	}
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	if st == nil {
 		http.Error(w, "hopper not connected", http.StatusServiceUnavailable)
 		return
 	}
@@ -7000,11 +6723,11 @@ func handleFileWait(w http.ResponseWriter, r *http.Request) {
 		// Fresh-analysis mode: pull the full row so we can compare the
 		// timestamp. This is a heavier query than SampleAnalyzed but
 		// only fires once per poll, well within hopper's budget.
-		sample, err := db.SampleBySHA256(ctx, sha)
-		if err != nil || sample == nil {
+		at, err := analyzedAt(ctx, st, sha)
+		if err != nil {
 			return "missing", `{"reason":"not found"}`
 		}
-		if sample.AnalyzedAt != nil && sample.AnalyzedAt.After(after) {
+		if at.After(after) {
 			return "ready", readyPayload(sha)
 		}
 		return "pending", ""
@@ -7095,8 +6818,8 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid sha256", http.StatusBadRequest)
 		return
 	}
-	db := hopperDB.Load()
-	if db == nil {
+	st := hopperStore.Load()
+	if st == nil {
 		http.Error(w, `{"error":"hopper not connected"}`, http.StatusServiceUnavailable)
 		return
 	}
@@ -7111,16 +6834,17 @@ func handleFileStatus(w http.ResponseWriter, r *http.Request) {
 	failed := false
 	var analyzedAtMillis int64
 	if !after.IsZero() {
-		sample, err := db.SampleBySHA256(ctx, sha)
-		if err != nil {
+		at, err := analyzedAt(ctx, st, sha)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+		case err != nil:
 			http.Error(w, `{"error":"lookup failed"}`, http.StatusInternalServerError)
 			return
-		}
-		if sample != nil {
+		default:
 			exists = true
-			if sample.AnalyzedAt != nil {
-				analyzedAtMillis = sample.AnalyzedAt.UnixMilli()
-				ready = sample.AnalyzedAt.After(after)
+			if !at.IsZero() {
+				analyzedAtMillis = at.UnixMilli()
+				ready = at.After(after)
 			}
 		}
 	} else {
@@ -7819,7 +7543,7 @@ func openBeamlineStream(ctx context.Context, target string, size int64, filename
 }
 
 // storedResultFromLitmus builds a cacheable result from an analysis
-// envelope. Mirrors storedResultFromHopperSample but sources everything from
+// envelope. Mirrors storedResultFromSample but sources everything from
 // the envelope plus the known upload metadata (uploads carry no provenance).
 func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) storedResult {
 	envelope := map[string]json.RawMessage{}
@@ -7855,7 +7579,7 @@ func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) st
 	}
 }
 
-// hopperRescanURL builds the absolute URL of hopper's POST /api/rescan/{sha256}
+// hopperRescanURL builds the absolute URL of hopper's POST /v1/work/rescan/{sha256}
 // endpoint from the admin-configured hopper-api host. Mirrors hopperFileURL.
 func hopperRescanURL(sha string) string {
 	base := strings.TrimSpace(hopperAPIAddr)
@@ -7867,15 +7591,15 @@ func hopperRescanURL(sha string) string {
 	}
 	u, err := url.Parse(base)
 	if err != nil {
-		return "http://" + defaultHopperAPIAddr + "/api/rescan/" + sha
+		return "http://" + defaultHopperAPIAddr + "/v1/work/rescan/" + sha
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/rescan/" + sha
+	u.Path = strings.TrimRight(u.Path, "/") + "/v1/work/rescan/" + sha
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
 }
 
-// postRescanToHopper POSTs to hopper's /api/rescan/{sha256} so the sample is
+// postRescanToHopper POSTs to hopper's /v1/work/rescan/{sha256} so the sample is
 // re-queued on the master. The same per-dependency breaker that guards other
 // hopper-api calls applies. hopper's 409 (sample not eligible, or within its
 // re-queue cooldown) maps to errSampleNotEligible so the caller can tell a
@@ -7915,7 +7639,7 @@ func postRescanToHopper(ctx context.Context, sha string) error {
 		return errSampleNotEligible
 	default:
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024)) //nolint:errcheck // diagnostics only
-		return fmt.Errorf("hopper /api/rescan status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return fmt.Errorf("hopper /v1/work/rescan status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 }
 

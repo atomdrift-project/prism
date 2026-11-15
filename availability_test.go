@@ -35,8 +35,8 @@ func TestBackendAvailabilityIsShared(t *testing.T) {
 	var hopperCalls atomic.Int32
 	hopper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hopperCalls.Add(1)
-		if r.URL.Path != "/healthz" {
-			t.Errorf("hopper probe path = %q, want /healthz", r.URL.Path)
+		if r.URL.Path != "/_/health" {
+			t.Errorf("hopper probe path = %q, want /_/health", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))

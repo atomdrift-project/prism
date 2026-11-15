@@ -67,7 +67,7 @@ func TestEscalatePromotes(t *testing.T) {
 
 	escalate(context.Background(), testSHA, logger)
 
-	if want := "/api/rescan/" + testSHA; path != want {
+	if want := "/v1/work/rescan/" + testSHA; path != want {
 		t.Errorf("path = %q, want %q", path, want)
 	}
 	if method != http.MethodPost {

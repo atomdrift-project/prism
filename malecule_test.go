@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/atomdrift-project/hopper"
 )
 
 func TestMain(m *testing.M) {
@@ -71,30 +69,13 @@ func TestHopperFileURL(t *testing.T) {
 
 	sha := strings.Repeat("a", 64)
 	hopperAPIAddr = "hopper-api:8081"
-	if got, want := hopperFileURL(sha), "http://hopper-api:8081/api/file/"+sha; got != want {
+	if got, want := hopperFileURL(sha), "http://hopper-api:8081/v1/files/"+sha; got != want {
 		t.Fatalf("hopperFileURL without scheme = %q, want %q", got, want)
 	}
 
 	hopperAPIAddr = "https://hopper.example/internal/"
-	if got, want := hopperFileURL(sha), "https://hopper.example/internal/api/file/"+sha; got != want {
+	if got, want := hopperFileURL(sha), "https://hopper.example/internal/v1/files/"+sha; got != want {
 		t.Fatalf("hopperFileURL with path = %q, want %q", got, want)
-	}
-}
-
-func TestSampleTimeUsesNewestTimestamp(t *testing.T) {
-	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	mtime := created.Add(1 * time.Hour)
-	analyzed := created.Add(2 * time.Hour)
-	updated := created.Add(3 * time.Hour)
-
-	got := sampleTime(&hopper.Sample{
-		CreatedAt:  created,
-		Mtime:      &mtime,
-		AnalyzedAt: &analyzed,
-		UpdatedAt:  updated,
-	})
-	if !got.Equal(updated) {
-		t.Fatalf("sampleTime = %s, want newest timestamp %s", got, updated)
 	}
 }
 

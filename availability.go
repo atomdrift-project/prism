@@ -52,7 +52,7 @@ func newBackendAvailabilityMonitor(hopperAddr string, client *http.Client) *back
 		client: client,
 		hopper: &backendProbe{
 			name: "hopper-api",
-			url:  backendHealthURL(hopperAddr, "/healthz"),
+			url:  backendHealthURL(hopperAddr, "/_/health"),
 		},
 		beamline: &backendProbe{
 			name: "beamline-api",

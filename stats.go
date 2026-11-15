@@ -109,53 +109,44 @@ func statsPollLoop(ctx context.Context) {
 	}
 }
 
-// statsCount runs a stats query through the exposed pool, gated behind the
-// shared hopper-db breaker so a degraded hopper sheds the read fast, exactly
-// like the feed and per-sample lookups. Both stats queries return the same
-// (count, high-water id) shape.
-func statsCount(ctx context.Context, operation, sql string, args ...any) (count, maxID int64, err error) {
-	db := hopperDB.Load()
-	if db == nil {
+// statsCount counts the samples above an id watermark through the store,
+// gated behind the shared hopper-db breaker so a degraded hopper sheds the
+// read fast, exactly like the feed and per-sample lookups.
+func statsCount(ctx context.Context, operation string, after int64) (count, maxID int64, err error) {
+	st := hopperStore.Load()
+	if st == nil {
 		return 0, 0, errors.New("hopper not connected")
-	}
-	pool := db.Pool()
-	if pool == nil {
-		return 0, 0, errors.New("hopper pool unavailable")
 	}
 	if berr := dbBreaker.allow(); berr != nil {
 		recordDep(ctx, "hopper-db", "stats", "rejected", time.Time{})
 		return 0, 0, fmt.Errorf("hopper-db stats: %w", berr)
 	}
 	start := time.Now()
-	// Named result, so shadowing it here would be a trap: scan errors are
-	// reported through qerr and returned explicitly.
-	if qerr := pool.QueryRow(ctx, sql, args...).Scan(&count, &maxID); qerr != nil {
+	count, maxID, err = st.Count(ctx, after)
+	if err != nil {
 		dbBreaker.failure()
 		recordDep(ctx, "hopper-db", "stats", "error", start)
-		return 0, 0, fmt.Errorf("%s stats query: %w", operation, qerr)
+		return 0, 0, fmt.Errorf("%s stats query: %w", operation, err)
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "stats", "ok", start)
 	return count, maxID, nil
 }
 
-// queryExactTotal reads the exact number of rows, plus the id watermark that
-// the incremental polls count forward from. COUNT(*) is deliberately used
-// instead of planner statistics: reltuples ran ~6% high on this replica
+// queryExactTotal reads the exact number of samples, plus the id watermark
+// that the incremental polls count forward from. COUNT(*) is deliberately used
+// instead of planner statistics: reltuples ran ~6% high on the replica
 // (129.3 M against a true 122.1 M), and ANALYZE and VACUUM move it.
 func queryExactTotal(ctx context.Context) (total, maxID int64, err error) {
-	return statsCount(ctx, "exact",
-		`SELECT count(*), coalesce(max(id), 0) FROM samples`)
+	return statsCount(ctx, "exact", 0)
 }
 
-// queryDeltaSince counts the rows inserted above a previous high-water id and
-// returns the new watermark. This is an index range scan on samples_pkey over
-// only the new rows, so its cost tracks the ingest rate (~1.9 k rows/min) and
-// not the 122 M-row table. It cannot observe deletes below the watermark;
-// statsBaselineInterval is what reconciles those.
+// queryDeltaSince counts the samples added above a previous high-water id and
+// returns the new watermark: an index range over only the new rows, so its
+// cost tracks the ingest rate and not the table. It cannot observe deletes
+// below the watermark; statsBaselineInterval is what reconciles those.
 func queryDeltaSince(ctx context.Context, since int64) (added, maxID int64, err error) {
-	return statsCount(ctx, "delta",
-		`SELECT count(*), coalesce(max(id), $1::bigint) FROM samples WHERE id > $1::bigint`, since)
+	return statsCount(ctx, "delta", since)
 }
 
 // cachedIndexStats returns the latest published snapshot, if the poller has
