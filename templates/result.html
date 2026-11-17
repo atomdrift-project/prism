@@ -55,9 +55,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {{template "favicon"}}
     <meta name="build" content="{{.BuildCommit}}" />
-    <title>{{.Headline}} - {{if isPublic}}isotope13 labs{{else}}litmus{{end}}</title>
+    <title>{{.Headline}} - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <meta property="og:type" content="article" />
-    <meta property="og:site_name" content="{{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
+    <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{.Headline}} — {{.Verdict}}" />
     {{if .MetaDesc}}<meta property="og:description" content="{{.MetaDesc}}" />
     <meta name="description" content="{{.MetaDesc}}" />{{end}}
@@ -68,17 +68,18 @@
     </style>
     <style nonce="{{.StyleNonce}}">
         :root {
-            --ink: #0D0008;
-            --ink-mid: #4A2040;
-            --ink-light: #8A6080;
+            --ink: #0a0a0a;
+            --ink-mid: #404040;
+            --ink-light: #6b7280;
             --paper: #ffffff;
-            --mist: #fdf5fc;
-            --rule: #efe3ec;
-            --rule-soft: #f6ecf3;
-            --fu: #FF00CC;
-            --fu-deep: #CC0077;
-            --fu-dim: #FFEDFB;
-            --fu-border: #FFC7F4;
+            --mist: #f5f5f5;
+            --rule: #e8e8e8;
+            --rule-soft: #f0f0f0;
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: #f8ffdb;
+            --toxic-border: #d9ea9a;
             --hostile: #e11d48;
             --suspicious: #d97706;
             --notable: #2563eb;
@@ -100,17 +101,17 @@
             -webkit-font-smoothing: antialiased;
         }
         a { color: inherit; text-decoration: none; }
-        :focus-visible { outline: 3px solid var(--fu); outline-offset: 3px; border-radius: 4px; }
+        :focus-visible { outline: 3px solid var(--toxic-dark); outline-offset: 3px; border-radius: 4px; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         {{template "chromestyle" .}}
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--fu-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(74, 107, 15, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
         .top-upload-status:empty { display: none; }
         .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 700; }
-        .top-upload-status a { color: var(--fu-deep); font-weight: 600; }
+        .top-upload-status a { color: var(--toxic-dark); font-weight: 600; }
         .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
-        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--fu-deep); animation: result-upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-dark); animation: result-upload-dot 0.86s infinite ease-in-out; }
         .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
         .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
         .analyzing-file { color: var(--ink-light); font-weight: 700; }
@@ -124,13 +125,13 @@
         .compound-formula { display: flex; flex-direction: column; gap: 3px; }
         .compound-formula .k { font-family: var(--display); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-light); }
         .formula { font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--ink); word-break: break-all; }
-        .compound a { font-size: 12.5px; font-weight: 600; color: var(--fu-deep); }
+        .compound a { font-size: 12.5px; font-weight: 600; color: var(--toxic-dark); }
         .prov { display: flex; flex-direction: column; gap: 8px; }
         .prov div { display: flex; flex-direction: column; gap: 1px; }
         .prov .k { font-size: 11px; color: var(--ink-light); }
         .prov .v { font-size: 12.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .prov .v.mono { font-family: var(--mono); font-size: 11.5px; }
-        .prov a.v { color: var(--fu-deep); }
+        .prov a.v { color: var(--toxic-dark); }
         .registry-desc { margin: 0; font-size: 14px; color: var(--ink-light); font-style: italic; max-width: 60ch; }
         .deps { display: flex; flex-direction: column; gap: 4px; }
         .dep-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--rule); color: var(--ink-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -138,9 +139,9 @@
         .dep-chip.hostile::before { background: var(--hostile); }
         .dep-chip.suspicious::before { background: var(--suspicious); }
         .dep-chip em { font-style: normal; color: var(--ink-light); }
-        a.dep-chip:hover { color: var(--fu-deep); border-color: var(--fu-border); }
+        a.dep-chip:hover { color: var(--toxic-dark); border-color: var(--toxic-border); }
         .parents { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
-        .parents a { color: var(--fu-deep); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .parents a { color: var(--toxic-dark); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
         .head { display: flex; flex-direction: column; gap: 12px; }
         .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -156,13 +157,13 @@
             display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 4px;
             font-family: "Inter", system-ui, sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
         }
-        .download-btn { background: var(--fu); color: #fff; border: 1px solid var(--fu); }
-        .download-btn:hover { background: var(--fu-deep); border-color: var(--fu-deep); }
+        .download-btn { background: var(--toxic); color: var(--ink); border: 1px solid var(--toxic-muted); }
+        .download-btn:hover { background: var(--ink); border-color: var(--ink); color: var(--toxic); }
         .download-btn.is-disabled { background: var(--mist); color: var(--ink-light); border-color: var(--rule); cursor: not-allowed; }
         /* Brief confirmation that the filename went to the clipboard alongside the download. */
-        .download-btn.is-done { background: #16a34a; border-color: #16a34a; }
-        .refresh-btn { background: var(--paper); color: var(--fu-deep); border: 1px solid var(--fu-border); }
-        .refresh-btn:hover { background: var(--fu-dim); }
+        .download-btn.is-done { background: #16a34a; border-color: #16a34a; color: #fff; }
+        .refresh-btn { background: var(--paper); color: var(--toxic-dark); border: 1px solid var(--toxic-border); }
+        .refresh-btn:hover { background: var(--toxic-dim); }
         .refresh-btn:disabled { color: var(--ink-light); cursor: default; }
         .refresh-btn.is-done { color: #16a34a; border-color: #16a34a; }
         .refresh-btn.is-error { color: var(--hostile); border-color: var(--hostile); }
@@ -178,19 +179,19 @@
         .id-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
         .id-line .k { font-size: 11px; color: var(--ink-light); width: 60px; flex: none; }
         .id-line .v { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
-        .id-line a.v { color: var(--fu-deep); }
+        .id-line a.v { color: var(--toxic-dark); }
         .cites { font-size: 12.5px; color: var(--ink-mid); }
-        .cites a { color: var(--fu-deep); font-weight: 600; }
-        h2 { margin: 8px 0 0; padding-bottom: 8px; border-bottom: 2px solid var(--fu); font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--ink); }
+        .cites a { color: var(--toxic-dark); font-weight: 600; }
+        h2 { margin: 8px 0 0; padding-bottom: 8px; border-bottom: 2px solid var(--toxic-muted); font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--ink); }
         .evidence { display: flex; flex-direction: column; gap: 20px; }
         .region { position: relative; display: flex; flex-direction: column; gap: 8px; padding-left: 18px; }
         .region::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--rule); transition: background 0.15s; }
-        .region:hover::before { background: var(--fu); }
+        .region:hover::before { background: var(--toxic-muted); }
         .id-line.formula { display: none; }
         .region-head { display: flex; align-items: baseline; gap: 10px; }
         .region-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--ink); }
         .region-loc { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-light); white-space: nowrap; }
-        .region-loc a:hover { color: var(--fu-deep); }
+        .region-loc a:hover { color: var(--toxic-dark); }
         .code { border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; padding: 6px 0; background: var(--paper); font-family: var(--mono); font-size: 12.5px; }
         /* Editor metrics: 18px rows on 12.5px type is ~1.44, about what a code
            editor sets. The old 22px plus 2px of padding made every row 26px,
@@ -222,18 +223,18 @@
         .skel-head { height: 15px; width: 44%; border-radius: 3px; background: var(--rule-soft); }
         .skel-code { height: 116px; border-radius: 6px; border: 1px solid var(--rule); background: var(--mist); }
         @media (prefers-reduced-motion: reduce) { .evidence-pending { animation: none; opacity: 1; } }
-        .note a { color: var(--fu-deep); font-weight: 600; }
+        .note a { color: var(--toxic-dark); font-weight: 600; }
         .pending-shell { display: flex; flex-direction: column; gap: 20px; }
-        .pending-kicker { display: flex; align-items: center; gap: 9px; color: var(--fu-deep); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
-        .pending-kicker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--fu); box-shadow: 0 0 0 5px var(--fu-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
+        .pending-kicker { display: flex; align-items: center; gap: 9px; color: var(--toxic-dark); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+        .pending-kicker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--toxic-muted); box-shadow: 0 0 0 5px var(--toxic-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
         .pending-kicker.done::before { background: #16a34a; box-shadow: 0 0 0 5px #eaf8ed; animation: none; }
         @keyframes pending-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
         .pending-title-row { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
         .pending-title-row h1 { max-width: 16ch; }
-        .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--fu-border); border-radius: 999px; color: var(--fu-deep); background: var(--fu-dim); font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+        .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; color: var(--toxic-dark); background: var(--toxic-dim); font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
         .pending-state.ready { color: #167534; border-color: #b9e8c2; background: #effbf1; }
         .pending-copy { margin: 0; max-width: 62ch; color: var(--ink-mid); font-size: 16px; }
-        .pending-copy em { color: var(--fu-deep); font-style: normal; }
+        .pending-copy em { color: var(--toxic-dark); font-style: normal; }
         .pending-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; padding: 15px 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--mist); }
         .pending-meta .id-line { gap: 14px; }
         .pending-meta .k { width: 78px; }
@@ -245,12 +246,12 @@
         .pending-step .dot { z-index: 1; width: 17px; height: 17px; border: 4px solid var(--paper); border-radius: 50%; background: var(--rule); box-shadow: 0 0 0 1px var(--rule); }
         .pending-step.complete { color: var(--ink-mid); }
         .pending-step.complete .dot { background: #16a34a; box-shadow: 0 0 0 1px #16a34a; }
-        .pending-step.active { color: var(--fu-deep); font-weight: 700; }
-        .pending-step.active .dot { background: var(--fu); box-shadow: 0 0 0 4px var(--fu-dim), 0 0 0 5px var(--fu); }
-        .pending-step.active::after { background: linear-gradient(90deg, var(--fu) 0 35%, var(--rule) 35%); }
-        .pending-stream { display: flex; flex-direction: column; gap: 15px; min-height: 230px; padding: 18px; border: 1px solid var(--rule); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 28px rgba(204, 0, 119, 0.06); }
+        .pending-step.active { color: var(--toxic-dark); font-weight: 700; }
+        .pending-step.active .dot { background: var(--toxic-muted); box-shadow: 0 0 0 4px var(--toxic-dim), 0 0 0 5px var(--toxic-muted); }
+        .pending-step.active::after { background: linear-gradient(90deg, var(--toxic-muted) 0 35%, var(--rule) 35%); }
+        .pending-stream { display: flex; flex-direction: column; gap: 15px; min-height: 230px; padding: 18px; border: 1px solid var(--rule); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 28px rgba(74, 107, 15, 0.06); }
         .pending-stream-head { display: flex; justify-content: space-between; gap: 16px; color: var(--ink-light); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-        .pending-elapsed { font-family: var(--mono); color: var(--fu-deep); }
+        .pending-elapsed { font-family: var(--mono); color: var(--toxic-dark); }
         .pending-current { display: grid; gap: 5px; padding: 16px; border-radius: 7px; background: var(--mist); }
         .pending-current strong { font-family: var(--display); font-size: 20px; line-height: 1.15; }
         .pending-current p { margin: 0; color: var(--ink-mid); }
@@ -264,11 +265,11 @@
         .pending-level.benign { color: #167534; border-color: #b9e8c2; background: #effbf1; }
         .pending-traits { color: var(--ink-mid); font-size: 13px; }
         .pending-events-wrap { border-top: 1px solid var(--rule); padding-top: 12px; }
-        .pending-events-wrap summary { cursor: pointer; color: var(--fu-deep); font-size: 12px; font-weight: 600; }
+        .pending-events-wrap summary { cursor: pointer; color: var(--toxic-dark); font-size: 12px; font-weight: 600; }
         .pending-events { display: flex; flex-direction: column; gap: 0; max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 11px; }
         .pending-events li { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 4px 10px; padding: 7px 0; border-bottom: 1px solid var(--rule-soft); }
         .pending-events li:last-child { border-bottom: 0; }
-        .pending-events .phase { color: var(--fu-deep); }
+        .pending-events .phase { color: var(--toxic-dark); }
         .pending-events .message { color: var(--ink-mid); overflow-wrap: anywhere; }
         .pending-events .raw { grid-column: 1 / -1; color: var(--ink-light); white-space: pre-wrap; overflow-wrap: anywhere; }
         .pending-route { display: grid; gap: 7px; padding-top: 2px; font-size: 12px; }
@@ -310,7 +311,7 @@
     {{if .Pending}}
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
-        <a href="https://isotope13.io/" class="logo">{{template "wordmark" .}}</a>
+        <a href="/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav"><a href="/stream">Back to index</a>{{template "upload-control" .}}</div>
     </nav>
     <div class="shell" data-upload-sha="{{.SHA256}}" data-upload-started="{{.PendingStarted}}" data-upload-progress="{{.PendingUpload}}">
@@ -355,7 +356,7 @@
     {{else}}
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
-        <a href="https://isotope13.io/" class="logo">{{template "wordmark" .}}</a>
+        <a href="/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/">Fallout</a>
             <a href="/stream">Index</a>
@@ -391,7 +392,7 @@
                 {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{with .MembersHTML}}{{.}}{{end}}
-                {{if and (not .FileViews) (not .DeferredMembers)}}<p class="note">No evidence locations were recorded for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--fu-deep); font-weight: 600;">Raw result</a></p>{{end}}
+                {{if and (not .FileViews) (not .DeferredMembers)}}<p class="note">No evidence locations were recorded for this file. <a href="/file/{{.SHA256}}.json" style="color: var(--toxic-dark); font-weight: 600;">Raw result</a></p>{{end}}
             </div>
         </main>
         <aside class="rail">

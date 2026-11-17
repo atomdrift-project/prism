@@ -14,10 +14,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <title>{{if isPublic}}isotope13 labs{{else}}litmus{{end}} - Index</title>
+    <title>{{if isPublic}}OpenHash{{else}}litmus{{end}} - Index</title>
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="{{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
-    <meta property="og:title" content="{{.Title}} — {{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
+    <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:title" content="{{.Title}} — {{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:description" content="Every file the lab has analyzed, with its evidence. Ask for a hash, a package, a formula, or just a name." />
     <meta name="description" content="Every file the lab has analyzed, with its evidence. Ask for a hash, a package, a formula, or just a name." />
     <meta name="twitter:card" content="summary" />
@@ -25,35 +25,32 @@
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
         :root {
-            --carbon: #0D0008;
-            --graphite: #4A2040;
-            --iron: #4A2040;
-            --slate: #8A6080;
-            --muted: #8A6080;
-            --mist: #fdf5fc;
+            --carbon: #0a0a0a;
+            --graphite: #404040;
+            --iron: #52525b;
+            --slate: #6b7280;
+            --muted: #6b7280;
+            --mist: #f5f5f5;
             --white: #ffffff;
             --cream: #ffffff;
-            --border: #efe3ec;
+            --border: #e8e8e8;
             --isotope: #2563eb;
-            --toxic: #FF00CC;
-            --toxic-muted: #CC0077;
-            --toxic-dark: #CC0077;
-            --toxic-dim: #FFEDFB;
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: #f8ffdb;
             --hostile: #e11d48;
             --suspicious: #d97706;
-            --benign: #CC0077;
+            --benign: #9abe25;
             --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
             /* Aliases for the shared header and footer (chromestyle). Same
                values as this page's own names, under the site-wide vocabulary. */
-            --ink: #0D0008;
-            --ink-mid: #4A2040;
-            --ink-light: #8A6080;
+            --ink: #0a0a0a;
+            --ink-mid: #404040;
+            --ink-light: #6b7280;
             --paper: #ffffff;
-            --rule: #efe3ec;
-            --fu: #FF00CC;
-            --fu-deep: #CC0077;
-            --fu-dim: #FFEDFB;
-            --fu-border: #FFC7F4;
+            --rule: #e8e8e8;
+            --toxic-border: #d9ea9a;
             --display: "Oxanium", sans-serif;
         }
         * { box-sizing: border-box; }
@@ -78,9 +75,9 @@
             font-family: var(--mono);
             font-size: 10px;
             font-weight: 600;
-            color: var(--fu-deep);
-            background: var(--fu-dim);
-            border: 1px solid var(--fu-border);
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid var(--toxic-border);
             border-radius: 999px;
             padding: 0 6px;
             line-height: 1.5;
@@ -104,10 +101,10 @@
             top: calc(100% + 12px);
             max-width: min(360px, 70vw);
             padding: 5px 10px;
-            border: 1px solid var(--fu-border);
+            border: 1px solid var(--toxic-border);
             border-radius: 999px;
             background: var(--paper);
-            box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12);
+            box-shadow: 0 4px 14px rgba(74, 107, 15, 0.12);
             color: var(--muted);
             font-size: 12px;
             line-height: 1.35;
@@ -472,7 +469,7 @@
             font-size: 10.5px;
             color: var(--toxic-dark);
             background: var(--toxic-dim);
-            border: 1px solid #FFC7F4;
+            border: 1px solid #d9ea9a;
             border-radius: 3px;
             padding: 0 6px;
             white-space: nowrap;
@@ -670,7 +667,7 @@
 <body>
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
-        <a href="https://isotope13.io/" class="logo">{{template "wordmark" .}}</a>
+        <a href="/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
             <a href="/stream" class="active">Index</a>

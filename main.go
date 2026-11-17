@@ -1898,7 +1898,7 @@ func main() {
 	var port string
 	cli := flag.NewFlagSet("prism", flag.ExitOnError)
 	cli.BoolVar(&noCache, "no-cache", false, "disable persistent caching (in-memory only)")
-	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: isotope13 labs branding and Secure cookies")
+	cli.BoolVar(&publicMode, "public", false, "public-deployment mode: OpenHash branding and Secure cookies")
 	cli.BoolVar(&uploadEnabled, "uploads", uploadEnabled, "enable browser uploads via POST /upload (also reads PRISM_UPLOADS env, set to 1/true to enable)")
 	cli.StringVar(&dbDSN, "db", "", "hopper postgres DSN (overrides HOPPER_DSN / FALLOUT_DB env)")
 	cli.StringVar(&hopperSchema, "schema", cmp.Or(os.Getenv("HOPPER_SCHEMA"), defaultHopperSchema), "schema holding hopper's verdict tables (overrides HOPPER_SCHEMA env)")
@@ -6053,6 +6053,17 @@ func retryAfterSeconds(d time.Duration) int {
 	return 1
 }
 
+// hopperUserAgent names prism to hopper, which refuses a client that does not
+// name itself.
+const hopperUserAgent = "prism (atomdrift)"
+
+// authorizeHopper readies a request for hopper's API: prism's name and the
+// fleet credential ([hopper.Authorize]).
+func authorizeHopper(req *http.Request) {
+	req.Header.Set("User-Agent", hopperUserAgent)
+	hopper.Authorize(req)
+}
+
 // fetchHopperFile performs GET /v1/files/{sha} with a patient, Retry-After
 // aware retry loop. On success it returns the live response and a cancel func
 // the caller MUST defer — it keeps the streaming context alive, so cancelling
@@ -6074,7 +6085,7 @@ func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart
 			http.Error(w, "failed to prepare download", http.StatusInternalServerError)
 			return nil, nil
 		}
-		hopper.Authorize(req)
+		authorizeHopper(req)
 		resp, err := hopperClient.Do(req)
 		if err != nil {
 			timer.Stop()
@@ -7616,7 +7627,7 @@ func postRescanToHopper(ctx context.Context, sha string) error {
 		// Local build error: hopper was never contacted; don't move the breaker.
 		return fmt.Errorf("build request: %w", err)
 	}
-	hopper.Authorize(req)
+	authorizeHopper(req)
 	start := time.Now()
 	resp, err := hopperClient.Do(req)
 	if err != nil {

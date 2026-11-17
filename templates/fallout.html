@@ -18,11 +18,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
     {{if .CurrentWeek}}<meta http-equiv="refresh" content="300">{{end}}
-    <title>Fallout - {{if isPublic}}isotope13 labs{{else}}litmus{{end}}</title>
+    <title>Fallout - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <link rel="canonical" href="/fallout{{if .SelectedEco}}?ecosystem={{.SelectedEco}}{{end}}" />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="{{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
-    <meta property="og:title" content="Fallout — {{if isPublic}}isotope13 labs{{else}}litmus{{end}}" />
+    <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:title" content="Fallout — {{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:description" content="This week's malware caught across open-source registries and marketplaces — campaigns collapsed into waves, evidence included." />
     <meta name="description" content="This week's malware caught across open-source registries and marketplaces — campaigns collapsed into waves, evidence included." />
     <meta name="twitter:card" content="summary" />
@@ -53,17 +53,18 @@
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
         :root {
-            --ink: #0D0008;
-            --ink-mid: #4A2040;
-            --ink-light: #8A6080;
+            --ink: #0a0a0a;
+            --ink-mid: #404040;
+            --ink-light: #6b7280;
             --paper: #ffffff;
-            --mist: #fdf5fc;
-            --rule: #efe3ec;
-            --rule-soft: #f6ecf3;
-            --fu: #FF00CC;
-            --fu-deep: #CC0077;
-            --fu-dim: #FFEDFB;
-            --fu-border: #FFC7F4;
+            --mist: #f5f5f5;
+            --rule: #e8e8e8;
+            --rule-soft: #f0f0f0;
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: #f8ffdb;
+            --toxic-border: #d9ea9a;
             --hostile: #e11d48;
             --suspicious: #d97706;
             --notable: #2563eb;
@@ -82,7 +83,7 @@
             -webkit-font-smoothing: antialiased;
         }
         a { color: inherit; text-decoration: none; }
-        :focus-visible { outline: 3px solid var(--fu); outline-offset: 3px; border-radius: 4px; }
+        :focus-visible { outline: 3px solid var(--toxic-dark); outline-offset: 3px; border-radius: 4px; }
 {{template "chromestyle" .}}
         .shell {
             display: grid;
@@ -107,23 +108,23 @@
             padding: 14px;
             border-radius: 8px;
             background: var(--mist);
-            border: 1px solid var(--fu-border);
-            box-shadow: inset 3px 0 0 var(--fu);
+            border: 1px solid var(--toxic-border);
+            box-shadow: inset 3px 0 0 var(--toxic-muted);
         }
-        .count-card .eyebrow { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fu-deep); }
-        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fu); animation: pulse 2.4s ease-out infinite; }
+        .count-card .eyebrow { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--toxic-dark); }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--toxic-muted); animation: pulse 2.4s ease-out infinite; }
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(255, 0, 204, 0.45); }
-            70% { box-shadow: 0 0 0 9px rgba(255, 0, 204, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(255, 0, 204, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0.45); }
+            70% { box-shadow: 0 0 0 9px rgba(154, 190, 37, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(154, 190, 37, 0); }
         }
         @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
         .count-card .num { font-family: var(--display); font-size: 40px; font-weight: 700; color: var(--ink); line-height: 1; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
         /* One bar per day of the week, oldest on the left, the busiest day in
-           full fuchsia. It says at a glance whether today is a quiet one. */
+           full green. It says at a glance whether today is a quiet one. */
         .spark { display: block; width: 100%; height: 26px; margin-top: 4px; }
-        .spark rect { fill: var(--fu-border); }
-        .spark rect.peak { fill: var(--fu); }
+        .spark rect { fill: var(--toxic-border); }
+        .spark rect.peak { fill: var(--toxic-muted); }
         .count-card .sub { font-size: 12px; color: var(--ink-mid); }
         .day-list { display: flex; flex-direction: column; gap: 2px; }
         .day-list a {
@@ -148,9 +149,9 @@
             border: 1px solid var(--rule);
             border-radius: 4px;
         }
-        .sector.active { border-color: var(--fu); background: var(--fu-dim); }
+        .sector.active { border-color: var(--toxic-muted); background: var(--toxic-dim); }
         .sector .n { font-family: var(--mono); font-size: 11px; color: var(--ink-mid); }
-        .week-link { font-size: 12.5px; font-weight: 600; color: var(--fu-deep); }
+        .week-link { font-size: 12.5px; font-weight: 600; color: var(--toxic-dark); }
         .week-link[aria-disabled="true"] { color: var(--ink-light); font-weight: 500; }
         h1 {
             margin: 0;
@@ -161,8 +162,8 @@
             line-height: 1.1;
             color: var(--ink);
         }
-        h1 .eco { color: var(--fu-deep); }
-        h1 em { font-style: normal; color: var(--fu); }
+        h1 .eco { color: var(--toxic-dark); }
+        h1 em { font-style: normal; color: var(--toxic-dark); }
         .lede { margin: 8px 0 0; font-size: 16px; line-height: 1.5; color: var(--ink-mid); max-width: none; }
         .day-head {
             position: sticky;
@@ -173,17 +174,17 @@
             align-items: baseline;
             gap: 12px;
             padding: 26px 0 8px;
-            border-bottom: 2px solid var(--fu);
+            border-bottom: 2px solid var(--toxic-muted);
         }
         .day-head h2 { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.4px; color: var(--ink); }
-        .day-head .sub { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--fu-deep); }
+        .day-head .sub { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--toxic-dark); }
         .lead-tag {
             font-family: var(--mono);
             font-size: 9.5px;
             letter-spacing: 0.06em;
             text-transform: uppercase;
-            color: var(--fu-deep);
-            border: 1px solid var(--fu-border);
+            color: var(--toxic-dark);
+            border: 1px solid var(--toxic-border);
             border-radius: 3px;
             padding: 1px 6px;
             white-space: nowrap;
@@ -210,21 +211,21 @@
             background: transparent;
             transition: background 0.15s;
         }
-        .row:hover::before { background: var(--fu); }
-        .row:hover .file-link { color: var(--fu-deep); }
+        .row:hover::before { background: var(--toxic-muted); }
+        .row:hover .file-link { color: var(--toxic-dark); }
         .row.lead {
             margin-top: 10px;
             border-radius: 8px;
             background: var(--mist);
-            border: 1px solid var(--fu-border);
-            box-shadow: inset 3px 0 0 var(--fu);
+            border: 1px solid var(--toxic-border);
+            box-shadow: inset 3px 0 0 var(--toxic-muted);
         }
         .row.lead::before { display: none; }
-        .row.lead:hover { background: var(--fu-dim); }
+        .row.lead:hover { background: var(--toxic-dim); }
         /* A faint ring around the lead's nucleus: the one drawing on the page
            that is asked to stand out. */
         .row.lead .mol { position: relative; }
-        .row.lead .mol::before { content: ""; position: absolute; width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255, 0, 204, 0.28); pointer-events: none; }
+        .row.lead .mol::before { content: ""; position: absolute; width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(154, 190, 37, 0.28); pointer-events: none; }
         .row-when { display: none; }
         .tiles { display: flex; flex-direction: column; gap: 3px; align-self: start; }
         .tier { display: flex; align-items: center; gap: 3px; }
@@ -243,10 +244,10 @@
             flex: none;
         }
         .tile sub { position: absolute; right: 2px; bottom: 0; font-size: 7px; line-height: 1.2; }
-        .tier-O { color: #4A2040; background: #EDE9EC; }
-        .tier-H { color: #CC0077; background: #FFE6FA; }
-        .tier-Md, .tile.tier-, .tier-sym.tier- { color: #8A6080; background: #fdf5fc; }
-        .tier-K, .tier-Th { color: #4A2040; background: #F3EFF2; }
+        .tier-O { color: #404040; background: #ececec; }
+        .tier-H { color: #4a6b0f; background: #eef8c4; }
+        .tier-Md, .tile.tier-, .tier-sym.tier- { color: #6b7280; background: #f5f5f5; }
+        .tier-K, .tier-Th { color: #404040; background: #f2f2f2; }
         .tier-sym.tier-O, .tier-sym.tier-H, .tier-sym.tier-Md, .tier-sym.tier-K, .tier-sym.tier-Th { background: none; }
         .row-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
         .row-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -261,7 +262,7 @@
         }
         .file-link { transition: color 0.15s; }
         .pkg { font-family: var(--mono); font-size: 11.5px; color: var(--ink-mid); }
-        .siblings { font-size: 13px; font-weight: 600; color: var(--fu-deep); white-space: nowrap; }
+        .siblings { font-size: 13px; font-weight: 600; color: var(--toxic-dark); white-space: nowrap; }
         .siblings b { font-family: var(--mono); font-weight: 600; }
         .row-meta { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
         .users { font-family: var(--mono); font-size: 12px; color: var(--ink-mid); white-space: nowrap; }
@@ -275,9 +276,9 @@
             border-radius: 3px;
             font-size: 11px;
             font-weight: 700;
-            color: var(--fu-deep);
-            background: var(--fu-dim);
-            border: 1px solid var(--fu-border);
+            color: var(--toxic-dark);
+            background: var(--toxic-dim);
+            border: 1px solid var(--toxic-border);
         }
         .why {
             margin: 0;
@@ -310,7 +311,7 @@
         .chip.crit-hostile::before { background: var(--hostile); }
         .chip.crit-suspicious::before { background: var(--suspicious); }
         .chip.crit-notable::before { background: var(--notable); }
-        a.chip:hover { color: var(--fu-deep); border-color: var(--fu-border); }
+        a.chip:hover { color: var(--toxic-dark); border-color: var(--toxic-border); }
         .eco-badge {
             display: inline-flex;
             align-items: center;
@@ -336,14 +337,14 @@
         .legend { display: flex; align-items: center; gap: 10px; padding: 18px 0 0; font-size: 12px; color: var(--ink-light); }
         .legend b { font-family: var(--mono); font-weight: 600; }
         .empty { padding: 42px 12px; color: var(--ink-light); text-align: center; }
-        .empty a { color: var(--fu-deep); font-weight: 600; }
+        .empty a { color: var(--toxic-dark); font-weight: 600; }
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--fu-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(204, 0, 119, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; background: var(--paper); box-shadow: 0 4px 14px rgba(74, 107, 15, 0.12); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
         .top-upload-status:empty { display: none; }
         .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 700; }
         .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
-        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--fu-deep); animation: fallout-upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-dark); animation: fallout-upload-dot 0.86s infinite ease-in-out; }
         .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
         .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
         .analyzing-file { color: var(--ink-light); font-weight: 700; }
@@ -379,7 +380,7 @@
             .day-list, .sectors, .rail-block:last-child { contain: inline-size; }
             .rail, .rail > * { min-width: 0; }
             .day-list a, .sector, .week-link { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); font-size: 13px; white-space: nowrap; }
-            .sector.active { border-color: var(--fu); background: var(--fu-dim); }
+            .sector.active { border-color: var(--toxic-muted); background: var(--toxic-dim); }
             .week-link[aria-disabled="true"] { display: none; }
             h1 { font-size: 26px; }
             .lede { display: none; }
@@ -404,7 +405,7 @@
 <body>
     {{template "banner" .}}
     <nav class="topbar" aria-label="Primary">
-        <a href="https://isotope13.io/" class="logo">{{template "wordmark" .}}</a>
+        <a href="/" class="logo">{{template "wordmark" .}}</a>
         <div class="site-nav">
             <a href="/" class="active">Fallout</a>
             <a href="/stream">Index</a>

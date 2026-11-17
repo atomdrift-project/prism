@@ -42,9 +42,9 @@ func critColor(crit string) string {
 	case "notable":
 		return "#2563eb"
 	case "baseline":
-		return "#9a7d90"
+		return "#8b8b8b"
 	default:
-		return "#c9b3c3"
+		return "#bdbdbd"
 	}
 }
 
@@ -867,7 +867,7 @@ func maleculeSVG(graph maleculeGraph, width, height float64) string {
 		marks = append(marks, mark{func() {
 			// A contact, not a bond: the dashed stick a molecular viewer uses
 			// for an interaction that is not covalent.
-			maleculeStroke(&out, p, q, maleculeFade("#b9a6b4", f*maleculeHaze), wid*1.25,
+			maleculeStroke(&out, p, q, maleculeFade("#adadad", f*maleculeHaze), wid*1.25,
 				fmt.Sprintf("%.1f %.1f", wid*1.4, wid*1.5))
 		}, math.Min(depth[k.A], depth[k.B]) - 0.02})
 	}
@@ -915,7 +915,7 @@ func maleculeSVG(graph maleculeGraph, width, height float64) string {
 
 	if hidden := len(graph.Atoms) - len(rank); hidden > 0 {
 		fmt.Fprintf(&out, `<text x="%.1f" y="%.1f" text-anchor="end" font-family="%s"`+
-			` font-size="7.5" fill="#8A6080">+%d</text>`, width-3, height-3, maleculeFont, hidden)
+			` font-size="7.5" fill="#6b7280">+%d</text>`, width-3, height-3, maleculeFont, hidden)
 	}
 	out.WriteString(`</svg>`)
 	return out.String()
