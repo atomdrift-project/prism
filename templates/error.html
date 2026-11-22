@@ -6,201 +6,24 @@
     {{template "favicon"}}
     <title>{{.Title}} - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">
-    {{template "fonts" .}}
-        :root {
-            --carbon: #0a0a0a;
-            --graphite: #404040;
-            --iron: #52525b;
-            --slate: #6b7280;
-            --mist: #f5f5f5;
-            --white: #ffffff;
-            --cream: #ffffff;
-            --border: #e8e8e8;
-            --isotope: #2563eb;
-            --isotope-dim: rgba(59, 130, 246, 0.1);
-            --toxic: #d0ff00;
-            --toxic-muted: #9abe25;
-            --toxic-dark: #4a6b0f;
-            --toxic-dim: #f8ffdb;
-            --hostile: #e11d48;
-            --suspicious: #d97706;
-            --notable: #2563eb;
-        }
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--cream);
-            color: var(--carbon);
-            line-height: 1.6;
-            -webkit-font-smoothing: antialiased;
-        }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 60px 24px;
-        }
-        header {
-            margin-bottom: 48px;
-        }
-        .logo {
-            font-family: 'Oxanium', sans-serif;
-            font-weight: 700;
-            font-size: 28px;
-            letter-spacing: -0.5px;
-            margin-bottom: 12px;
-            text-decoration: none;
-            color: inherit;
-        }
-        .logo-accent {
-            color: var(--toxic-muted);
-        }
-        {{template "wordmarkstyle"}}
-        .beta-tag {
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid rgba(208, 255, 0, 0.2);
-            padding: 1px 5px;
-            border-radius: 3px;
-            margin-left: 6px;
-            vertical-align: super;
-            letter-spacing: 0.5px;
-        }
-        .error-box {
-            border-radius: 16px;
-            padding: 48px 40px;
-            text-align: center;
-            margin: 32px 0;
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.04) 0%, rgba(59, 130, 246, 0.06) 100%);
-            border: 1px solid rgba(239, 68, 68, 0.15);
-            position: relative;
-            overflow: hidden;
-        }
-        .error-box::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, var(--hostile), var(--isotope));
-        }
-        .error-icon {
-            font-size: 56px;
-            margin-bottom: 20px;
-            filter: saturate(1.2);
-        }
-        .error-beaker {
-            margin-bottom: 24px;
-        }
-        .error-beaker img {
-            width: 200px;
-            border-radius: 12px;
-            opacity: 0.9;
-        }
-        .error-title {
-            font-family: 'Oxanium', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .error-quip {
-            font-size: 14px;
-            color: var(--iron);
-            font-style: italic;
-            margin-bottom: 20px;
-        }
-        .error-message {
-            font-size: 16px;
-            color: var(--slate);
-            margin-bottom: 24px;
-            max-width: 520px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.6;
-        }
-        .error-message a {
-            color: var(--isotope);
-            text-decoration: underline;
-        }
-        .error-detail {
-            font-size: 13px;
-            color: var(--iron);
-            font-family: 'SF Mono', Consolas, monospace;
-            margin-bottom: 24px;
-            background: rgba(0, 0, 0, 0.03);
-            display: inline-block;
-            padding: 6px 14px;
-            border-radius: 6px;
-        }
-        .btn {
-            display: inline-block;
-            padding: 14px 28px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            border: none;
-            font-family: inherit;
-            text-decoration: none;
-        }
-        .btn-primary {
-            background: var(--carbon);
-            color: var(--white);
-        }
-        .btn-primary:hover {
-            background: var(--graphite);
-        }
-        footer {
-            margin-top: 60px;
-            padding-top: 24px;
-            border-top: 1px solid var(--mist);
-            font-size: 14px;
-            color: var(--iron);
-            display: flex;
-            justify-content: space-between;
-            position: relative;
-        }
-        footer::before {
-            content: '';
-            position: absolute;
-            top: -1px;
-            left: 0;
-            width: 80px;
-            height: 2px;
-            background: var(--toxic);
-        }
-        footer a {
-            color: var(--slate);
-            text-decoration: none;
-        }
-        footer a:hover {
-            color: var(--carbon);
-        }
+        {{template "fonts" .}}
+        {{template "sitestyle" .}}
+        .lede a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+        .detail { align-self: flex-start; padding: 6px 12px; border-radius: 6px; background: var(--mist); font-family: var(--mono); font-size: 13px; color: var(--ink-mid); overflow-wrap: anywhere; }
     </style>
 </head>
 <body>
     {{template "banner" .}}
-    <div class="container">
-        <header>
-            <a href="/" class="logo">{{template "wordmark" .}}</a>
-        </header>
-
-        <div class="error-box">
-            {{if .ShowBeaker}}<div class="error-beaker"><img src="/static/beaker.webp" alt="Beaker panicking" /></div>{{else}}<div class="error-icon">{{.Icon}}</div>{{end}}
-            <div class="error-title">{{.Title}}</div>
-            <div class="error-message">{{if .MessageHTML}}{{.MessageHTML}}{{else}}{{.Message}}{{end}}</div>
-            {{if .Detail}}<div class="error-detail">{{.Detail}}</div>{{end}}
-            <a href="/stream" class="btn btn-primary">{{.Action}}</a>
+    {{template "topbar" .Chrome}}
+    <main class="page">
+        <div class="page-head">
+            <div>
+                <h1>{{.Title}}</h1>
+                <p class="lede">{{if .MessageHTML}}{{.MessageHTML}}{{else}}{{.Message}}{{end}}</p>
+            </div>
         </div>
-
-        {{template "footer" .}}
-    </div>
+        {{if .Detail}}<code class="detail">{{.Detail}}</code>{{end}}
+    </main>
+    {{template "footer" .}}
 </body>
 </html>

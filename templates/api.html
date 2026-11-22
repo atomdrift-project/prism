@@ -16,17 +16,14 @@
         {{template "fonts" .}}
         {{template "sitestyle" .}}
         .verb { color: var(--toxic-dark); font-weight: 600; }
-        .tabs { display: flex; padding: 0 8px; border-bottom: 1px solid var(--rule); }
-        .tabs button { min-height: 44px; padding: 0 18px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--ink-soft); font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
-        .tabs button[aria-selected="true"] { border-bottom-color: var(--toxic-muted); color: var(--ink); }
-        .try { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 20px; }
+        .try { display: flex; flex-direction: column; gap: 12px; padding: 0 20px 20px; }
         .try + .try { border-top: 1px solid var(--rule); }
         .try-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .try-line pre { flex: 1 1 420px; }
-        pre { min-width: 0; margin: 0; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 4px; background: var(--ground); overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
-        .run { height: 32px; padding: 0 16px; border: 1px solid var(--ink); border-radius: 4px; background: var(--toxic); color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 14px; cursor: pointer; }
-        .run:hover { background: var(--ink); color: var(--toxic); }
-        .run:disabled { background: transparent; border-color: var(--rule); color: var(--ink-light); cursor: progress; }
+        pre { min-width: 0; margin: 0; padding: 14px 16px; border-radius: 8px; background: var(--ink); color: #f4f4f5; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+        .run { min-height: 44px; padding: 0 18px; border: 1px solid var(--toxic); border-radius: 8px; background: var(--toxic); color: var(--ink); font-family: inherit; font-weight: 600; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+        .run:hover { background: var(--toxic-muted); border-color: var(--toxic-muted); }
+        .run:disabled { background: #ffffff; border-color: var(--rule); color: var(--ink-light); cursor: progress; }
     </style>
 </head>
 <body>
@@ -39,30 +36,16 @@
                 <p class="lede">JSON. No key.</p>
             </div>
         </div>
-        <section class="card" aria-label="Endpoints">
+        <section class="card">
             <ul class="kv first">
                 <li><span><span class="verb">GET</span> {{.Links.SHA256}}{sha256}</span><span>One file.</span></li>
-                <li><span><span class="verb">GET</span> {{.Links.PURL}}{purl}</span><span>One package.</span></li>
             </ul>
-        </section>
-        <section class="card" aria-label="Try it">
-            <div class="tabs" role="tablist" aria-label="Endpoint">
-                <button type="button" role="tab" id="tab-sha256" aria-controls="try-sha256" aria-selected="true">SHA-256</button>
-                <button type="button" role="tab" id="tab-purl" aria-controls="try-purl" aria-selected="false">PURL</button>
-            </div>
-            <div class="try" id="try-sha256" role="tabpanel" aria-labelledby="tab-sha256" data-url="{{.Links.SHA256}}c2f4dc64aec4631540a568e88932b61daebbfb7e8281b812fa01b7215f9be9ea">
+            <div class="try" data-url="{{.Links.SHA256}}c2f4dc64aec4631540a568e88932b61daebbfb7e8281b812fa01b7215f9be9ea">
                 <div class="try-line">
                     <pre>$ curl {{.Links.SHA256}}c2f4dc64aec4631540a568e88932b61daebbfb7e8281b812fa01b7215f9be9ea</pre>
                     <button type="button" class="run">Run</button>
                 </div>
-                <pre class="out" role="status">Ready</pre>
-            </div>
-            <div class="try" id="try-purl" role="tabpanel" aria-labelledby="tab-purl" data-url="{{.Links.PURL}}pkg:npm/node-ipc@9.2.3">
-                <div class="try-line">
-                    <pre>$ curl {{.Links.PURL}}pkg:npm/node-ipc@9.2.3</pre>
-                    <button type="button" class="run">Run</button>
-                </div>
-                <pre class="out" role="status">Ready</pre>
+                <pre class="out" role="status" hidden></pre>
             </div>
         </section>
         <section class="card">
@@ -72,7 +55,8 @@
                 <li><span>severity</span><span>benign, suspicious, hostile, unknown</span></li>
                 <li><span>fires_at</span><span>Tightest false-positive budget at which this is hostile. -1: never.</span></li>
                 <li><span>findings</span><span>At most three: id, crit, desc.</span></li>
-                <li><span>sha256, purl</span><span>What was answered.</span></li>
+                <li><span>sha256</span><span>What was answered.</span></li>
+                <li><span>purl</span><span>Its package, when known.</span></li>
                 <li><span>engine_version, analyzed_at</span><span>Present when an engine ran.</span></li>
             </ul>
         </section>

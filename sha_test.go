@@ -156,3 +156,18 @@ func TestSHARouteLeavesEcosystemsAlone(t *testing.T) {
 		t.Errorf("GET /npm = %d %q, want 301 /npm/", rr.Code, rr.Header().Get("Location"))
 	}
 }
+
+// Old /file/{sha256} page links land on /{sha256}, query intact.
+func TestLegacyFileRouteRedirects(t *testing.T) {
+	tests := []struct{ path, want string }{
+		{"/file/" + shaRouteTestSHA, "/" + shaRouteTestSHA},
+		{"/file/" + strings.ToUpper(shaRouteTestSHA) + "?refresh=1", "/" + shaRouteTestSHA + "?refresh=1"},
+	}
+	for _, tt := range tests {
+		rr := httptest.NewRecorder()
+		newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
+		if rr.Code != http.StatusMovedPermanently || rr.Header().Get("Location") != tt.want {
+			t.Errorf("GET %s = %d %q, want 301 %q", tt.path, rr.Code, rr.Header().Get("Location"), tt.want)
+		}
+	}
+}

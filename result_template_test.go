@@ -109,7 +109,7 @@ func TestResultDownloadTracksHopperAvailability(t *testing.T) {
 	if err := tmpl.Execute(&buf, available); err != nil {
 		t.Fatalf("execute available: %v", err)
 	}
-	if !strings.Contains(buf.String(), `class="download-btn" href="/file/`) {
+	if !strings.Contains(buf.String(), `class="download-btn" href="/`+singleFileData().SHA256+`.dl?t=`) {
 		t.Fatal("available hopper-api did not render the download link")
 	}
 

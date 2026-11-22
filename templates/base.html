@@ -18,65 +18,100 @@ font-style: normal; font-weight: 700; font-display: swap; src:
 url(/static/fonts/oxanium-latin.woff2) format('woff2'); unicode-range:
 U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
 U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
-U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="logo-hash">hash</span><span class="logo-by">an <b>atomdrift</b> project</span>{{else}}lit<span class="logo-accent">mus</span>{{end}}{{end}} {{define
-"tagline"}}Open-source atomic malware analysis{{end}} {{define "favicon"}}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="logo-accent">hash</span>{{else}}lit<span class="logo-accent">mus</span>{{end}}{{end}} {{define
+"tagline"}}{{if isPublic}}An atomdrift project{{else}}Open-source atomic malware analysis{{end}}{{end}} {{define "favicon"}}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/static/favicon.svg" />{{end}} {{define "feedicon"}}<svg class="feed-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><circle cx="3" cy="13" r="2" fill="currentColor"/><path d="M2 8.2a5.8 5.8 0 0 1 5.8 5.8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/><path d="M2 3.1A10.9 10.9 0 0 1 12.9 14" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>{{end}}
+{{- /* The atomdrift mark, as drawn in the atomdrift.org header. */ -}}
+{{define "atom"}}<svg class="atom-logo" viewBox="0 0 100 100" aria-hidden="true" focusable="false"><circle cx="50" cy="50" r="6" fill="#3b82f6"/><ellipse cx="50" cy="50" rx="38" ry="14" fill="none" stroke="#0a0a0a" stroke-width="1.5" transform="rotate(-30 50 50)"/><ellipse cx="50" cy="50" rx="38" ry="14" fill="none" stroke="#0a0a0a" stroke-width="1.5" transform="rotate(30 50 50)"/><ellipse cx="50" cy="50" rx="38" ry="14" fill="none" stroke="#0a0a0a" stroke-width="1.5" transform="rotate(90 50 50)"/><circle cx="18" cy="28" r="3.5" fill="#d0ff00"/><circle cx="82" cy="28" r="3.5" fill="#d0ff00"/><circle cx="50" cy="88" r="3.5" fill="#d0ff00"/></svg>{{end}}
 
 {{define "wordmarkstyle"}}
-        /* OpenHash lockup: lime is a fill, never text. */
-        .logo-hash { margin-left: 2px; padding: 3px 6px 0; border-radius: 4px; background: #d0ff00; }
-        .logo-by { margin-left: 14px; font-family: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace; font-size: 11px; font-weight: 400; letter-spacing: 0.16em; text-transform: uppercase; color: #52525b; white-space: nowrap; }
-        .logo-by b, .logo-by a { color: #0a0a0a; font-weight: 600; border-bottom: 2px solid #9abe25; }
-        @media (max-width: 560px) { .logo-by { display: none; } }
+        .logo-accent { color: #9abe25; }
+{{end}}
+{{- /* Design tokens, taken from atomdrift.org so both sites share one palette. */ -}}
+{{define "tokens"}}
+            --ink: #0a0a0a;
+            --ink-mid: #404040;
+            --ink-soft: #52525b;
+            --ink-light: #6b7280;
+            --cream: #fafaf9;
+            --mist: #f5f5f5;
+            --rule: #e8e8e8;
+            --blue: #2563eb;
+            --blue-dim: rgba(59, 130, 246, 0.1);
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: #f8ffdb;
+            --toxic-border: #d9ea9a;
+            --mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
+            --display: "Oxanium", sans-serif;
+            --width: 1180px;
 {{end}}
 {{define "chromestyle"}}
-        /* Header and footer, shared by every page so the chrome never drifts
-           between them. Page-specific styles live in each template. */
-        .topbar { display: flex; align-items: center; gap: 12px 28px; flex-wrap: wrap; padding: 16px 48px; }
-        .brand { display: flex; align-items: center; flex-wrap: wrap; }
-        .logo { display: inline-flex; align-items: center; min-height: 44px; font-family: var(--display); font-weight: 700; font-size: 25px; letter-spacing: -0.6px; color: var(--ink); white-space: nowrap; }
-        .logo-accent { color: var(--toxic-dark); }
+        /* Header, nav and footer, shared by every page and modelled on
+           atomdrift.org: white masthead, lime stripe, mist tab bar, carbon
+           footer. Page-specific styles live in each template. */
+        .site-header a, .site-nav a, .site-footer a { text-decoration: none; }
+        .site-header { background: #ffffff; border-bottom: 1px solid var(--rule); padding: 14px 0 12px; }
+        .header-inner, .nav-inner, .footer-inner { max-width: var(--width); margin: 0 auto; padding: 0 24px; display: flex; }
+        .header-inner { align-items: center; gap: 12px 28px; flex-wrap: wrap; }
+        .brand { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--ink); }
+        .brand:hover { color: var(--ink); text-decoration: none; }
+        .atom-logo { width: 38px; height: 38px; flex: none; }
+        .brand-text { display: flex; flex-direction: column; }
+        .logo { font-family: var(--display); font-weight: 700; font-size: 24px; letter-spacing: -0.5px; line-height: 1; color: var(--ink); white-space: nowrap; }
         {{template "wordmarkstyle"}}
-        .search-form { flex: 1 1 260px; max-width: 460px; display: flex; align-items: center; gap: 9px; height: 40px; margin: 0; padding: 0 12px; background: #ffffff; border: 2px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 #a0a0a0; }
+        .logo-tagline { margin-top: 3px; font-size: 13px; letter-spacing: 0.2px; color: var(--ink-soft); white-space: nowrap; }
+        .search-form { flex: 1 1 260px; max-width: 440px; display: flex; align-items: center; gap: 9px; height: 42px; margin: 0; padding: 0 14px; background: #ffffff; border: 1px solid #d4d4d8; border-radius: 8px; color: var(--ink-light); transition: border-color 0.2s, box-shadow 0.2s; }
         .search-form svg { flex: none; }
         .search-form input { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 13px; }
+        .search-form input::-webkit-search-cancel-button { display: none; }
         .search-form input::placeholder { color: var(--ink-light); opacity: 1; }
-        .search-form:focus-within { outline: 3px solid var(--toxic-dark); outline-offset: 3px; }
-        .site-nav { margin-left: auto; display: flex; align-items: center; gap: 8px 26px; flex-wrap: wrap; font-size: 14px; color: var(--ink-mid); }
-        /* Every destination reads the same; only the current page is marked. */
-        .site-nav a { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink-mid); }
-        .site-nav a:hover { color: var(--toxic-dark); }
-        .site-nav a[aria-current] { color: var(--toxic-dark); font-weight: 600; }
-        .nav-count { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--toxic-dark); background: var(--toxic-dim); border: 1px solid var(--toxic-border); border-radius: 999px; padding: 0 7px; line-height: 1.6; font-variant-numeric: tabular-nums; }
-        /* Upload is the one thing you do here rather than read, so it is the
-           one control that looks like a control. */
-        .upload-btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border: 1px solid var(--ink); border-radius: 4px; background: var(--toxic); color: var(--ink); font-weight: 600; font-size: 13px; }
+        .search-form:hover { border-color: var(--ink-light); }
+        .search-form:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-dim); }
+        .header-links { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+        .header-links a, .upload-btn { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px; border: 1px solid var(--rule); border-radius: 8px; background: #ffffff; color: var(--ink-mid); font-size: 14px; transition: all 0.2s; }
+        .header-links a:hover { border-color: var(--blue); color: var(--ink-mid); text-decoration: none; }
+        /* Upload is the one thing you do here rather than read: it takes the
+           lime that atomdrift.org gives Install. */
+        .upload-btn { background: var(--toxic); border-color: var(--toxic); color: var(--ink); font-weight: 600; }
         label.upload-btn { cursor: pointer; }
-        label.upload-btn:hover { background: var(--ink); color: var(--toxic); }
-        .upload-btn.is-disabled { background: transparent; border-color: var(--rule); color: var(--ink-light); cursor: not-allowed; }
+        label.upload-btn:hover { background: var(--toxic-muted); border-color: var(--toxic-muted); }
+        .upload-btn.is-disabled { background: #ffffff; border-color: var(--rule); color: var(--ink-light); font-weight: 400; cursor: not-allowed; }
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-        .top-upload input[type="file"]:focus-visible + .upload-btn { outline: 3px solid var(--toxic-dark); outline-offset: 3px; }
-        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--rule); border-radius: 4px; background: #ffffff; color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload input[type="file"]:focus-visible + .upload-btn { outline: 2px solid var(--blue); outline-offset: 2px; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 10px); max-width: min(360px, 70vw); padding: 6px 12px; border: 1px solid var(--rule); border-radius: 8px; background: #ffffff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
         .top-upload-status:empty { display: none; }
         .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 600; }
-        .top-upload-status a { color: var(--toxic-dark); font-weight: 600; }
+        .top-upload-status a { color: var(--blue); font-weight: 500; }
         .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
-        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-dark); animation: upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-muted); animation: upload-dot 0.86s infinite ease-in-out; }
         .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
         .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
         .analyzing-file { color: var(--ink-light); font-weight: 600; }
         @keyframes upload-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.55; } 40% { transform: translateY(-4px); opacity: 1; } }
-        footer { display: flex; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; padding: 20px 48px 28px; border-top: 1px solid var(--rule); color: #52525b; font-size: 12px; }
-        footer a { color: var(--ink); }
-        footer a:hover { color: var(--toxic-dark); }
-        footer span:last-child { font-family: var(--mono); }
-        @media (max-width: 960px) {
-            .topbar { padding: 12px 20px; }
-            .site-nav { gap: 4px 18px; }
+        .toxic-stripe { height: 4px; background: linear-gradient(90deg, var(--toxic) 0%, var(--toxic-muted) 50%, transparent 100%); }
+        .site-nav { background: var(--mist); border-bottom: 1px solid var(--rule); font-size: 14px; }
+        .site-nav a { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 10px 18px; border-right: 1px solid var(--rule); color: var(--ink-mid); transition: background 0.2s; }
+        .site-nav a:first-child { border-left: 1px solid var(--rule); }
+        .site-nav a:hover { background: var(--rule); color: var(--ink-mid); text-decoration: none; }
+        .site-nav a[aria-current] { margin-bottom: -1px; border-bottom: 2px solid var(--blue); background: var(--cream); color: var(--ink); font-weight: 500; }
+        .nav-count { font-family: var(--mono); font-size: 11px; font-weight: 600; line-height: 1.6; padding: 0 6px; border: 1px solid var(--toxic-border); border-radius: 4px; background: var(--toxic-dim); color: var(--toxic-dark); font-variant-numeric: tabular-nums; }
+        .site-footer { position: relative; margin-top: 32px; padding: 18px 0; background: var(--ink); color: #a1a1aa; font-size: 14px; }
+        .site-footer::before { content: ""; position: absolute; top: 0; left: 0; width: 80px; height: 2px; background: var(--toxic); }
+        .footer-inner { justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
+        .site-footer a { color: #93c5fd; }
+        .site-footer a:hover { color: #93c5fd; text-decoration: underline; }
+        .footer-build { font-family: var(--mono); font-size: 12px; }
+        @media (max-width: 760px) {
+            .header-inner { padding-top: 2px; }
+            .search-form { order: 3; flex-basis: 100%; max-width: none; }
+            .logo-tagline { display: none; }
+            .header-links > a { display: none; }
+            .nav-inner { flex-wrap: wrap; }
             .top-upload-status { max-width: 80vw; white-space: normal; }
-            footer { padding: 20px; }
         }
         @media (prefers-reduced-motion: reduce) { .analyzing-dots span { animation: none; } }
 {{end}}
@@ -84,40 +119,30 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
        tokens, chrome, cards and the list every index page is made of. */ -}}
 {{define "sitestyle"}}
         :root {
-            --ink: #0a0a0a;
-            --ink-mid: #404040;
-            --ink-soft: #52525b;
-            --ink-light: #6b7280;
-            --ground: #fafaf9;
-            --rule: #e8e8e8;
-            --toxic: #d0ff00;
-            --toxic-muted: #9abe25;
-            --toxic-dark: #4a6b0f;
-            --toxic-dim: #f8ffdb;
-            --toxic-border: #d9ea9a;
+            {{template "tokens"}}
+            --ground: var(--cream);
             --hostile: #be123c;
             --suspicious: #b45309;
-            --mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
-            --display: "Oxanium", sans-serif;
         }
         * { box-sizing: border-box; }
-        body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--ground); color: var(--ink); font-family: "Inter", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+        body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: #ffffff; color: var(--ink); font-family: "Inter", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
         a { color: inherit; text-decoration: none; }
-        a:hover { color: var(--toxic-dark); }
-        :focus-visible { outline: 3px solid var(--toxic-dark); outline-offset: 3px; border-radius: 4px; }
+        a:hover { color: var(--blue); }
+        :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         {{template "chromestyle" .}}
-        .page { flex: 1; width: 100%; max-width: 1180px; margin: 0 auto; padding: 40px 24px 56px; display: flex; flex-direction: column; gap: 24px; }
+        .page { flex: 1; width: 100%; max-width: var(--width); margin: 0 auto; padding: 32px 24px 48px; display: flex; flex-direction: column; gap: 22px; }
         .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
-        .page-head > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-        h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 36px; letter-spacing: -0.7px; line-height: 1.1; overflow-wrap: anywhere; }
+        .page-head > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 27px; letter-spacing: -0.5px; line-height: 1.15; overflow-wrap: anywhere; }
         .lede { margin: 0; font-size: 16px; color: var(--ink-mid); }
-        .card { background: #ffffff; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
-        .card h2 { margin: 0; padding: 16px 20px 14px; font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -0.3px; }
+        .card { background: #ffffff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+        .card h2 { margin: 0; padding: 16px 20px 12px; font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.3px; }
         .label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
-        .link { color: var(--toxic-dark); font-weight: 600; }
+        .link { color: var(--blue); font-weight: 500; }
+        .link:hover { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
         .counter { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--toxic-muted); box-shadow: 0 0 0 4px #eef8c4; }
+        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--toxic-muted); box-shadow: 0 0 0 4px var(--toxic-dim); }
         .notice { padding: 12px 20px; border-bottom: 1px solid var(--rule); background: var(--ground); font-size: 13px; color: var(--ink-mid); }
         .empty { padding: 28px 20px; border-top: 1px solid var(--rule); color: var(--ink-mid); }
         /* Two-column fact rows: the API reference, Contributing. */
@@ -127,34 +152,38 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .kv li > :last-child { color: var(--ink-mid); }
         .kv.first li:first-child { border-top: 0; }
         /* The list: one card, a filter bar, a column head, rows, a pager. */
-        .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; min-height: 60px; padding: 8px 20px; border-bottom: 1px solid var(--rule); }
+        .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; min-height: 60px; padding: 8px 20px; border-bottom: 1px solid var(--rule); background: var(--cream); }
         .bar-side { margin-left: auto; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; font-size: 13px; color: var(--ink-mid); }
         .bar-side a, .bar-side label { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
-        .bar-side input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--toxic-dark); }
-        .pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .bar-side input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+        .pills { flex: 1 1 320px; min-width: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
         .pills .label { margin-right: 6px; }
-        .pill { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-mid); font-family: var(--mono); font-size: 11.5px; }
-        .pill:hover { border-color: var(--ink); color: var(--ink); }
+        .pill { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 999px; background: #ffffff; color: var(--ink-mid); font-family: var(--mono); font-size: 11.5px; transition: border-color 0.2s; }
+        .pill:hover { border-color: var(--blue); color: var(--ink); }
         .pill[aria-current] { border-color: var(--ink); background: var(--ink); color: var(--toxic); font-weight: 600; }
         .filter-form { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; margin: 0; }
         .filter-form .field { display: inline-flex; align-items: center; gap: 8px; }
-        .filter-form select { height: 32px; max-width: 180px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 4px; background: #ffffff; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+        .filter-form select { height: 32px; max-width: 180px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: #ffffff; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
         .scroll { overflow-x: auto; }
         .list { min-width: 900px; }
         .list ol { margin: 0; padding: 0; list-style: none; }
         .cols, .row { display: grid; grid-template-columns: minmax(0, 2.3fr) 104px minmax(0, 2.7fr) 96px; column-gap: 18px; padding: 12px 20px; }
-        .cols { padding-block: 10px; }
+        /* Column heads read like the tables on atomdrift.org. */
+        .cols { padding-block: 10px 8px; font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink-soft); }
         .cols > :last-child { text-align: right; }
-        .row { align-items: start; border-top: 1px solid var(--rule); }
-        .day { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 20px; border-top: 1px solid var(--rule); background: var(--ground); }
-        .day h2 { margin: 0; padding: 0; font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
-        .day span { font-family: var(--mono); font-size: 12px; color: var(--ink-mid); }
+        .row { align-items: start; border-top: 1px solid var(--rule); transition: background 0.15s, box-shadow 0.15s; }
+        .row:hover { background: var(--cream); box-shadow: inset 3px 0 0 var(--toxic-muted); }
+        .day { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 20px; border-top: 1px solid var(--rule); background: var(--mist); }
+        .day h2 { margin: 0; padding: 0; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--ink-soft); }
+        .day span { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
         .row-id { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
         .row-name, .row-hash { min-width: 0; display: flex; align-items: center; gap: 7px; }
         .row-name svg, .row-hash svg { flex: none; }
-        .file-link { min-width: 0; font-weight: 600; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
+        .file-link { min-width: 0; font-weight: 500; font-size: 14.5px; color: var(--blue); overflow-wrap: anywhere; }
+        .file-link:hover { text-decoration: underline; text-underline-offset: 2px; }
         .siblings { flex: none; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
-        .file-sha, .file-link.hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-soft); }
+        .file-sha, .file-link.hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-light); }
+        .file-link.hash { font-size: 12px; color: var(--blue); }
         .file-sha { cursor: copy; }
         .file-sha.copied { color: var(--toxic-dark); }
         .installs { flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink); white-space: nowrap; }
@@ -170,7 +199,7 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .eco-blue { color: #1e40af; background: #ebf2fe; }
         .eco-indigo { color: #3730a3; background: #efeffe; }
         .eco-purple { color: #6b21a8; background: #f6eefe; }
-        .row-desc { min-width: 0; padding-top: 1px; overflow-wrap: anywhere; }
+        .row-desc { min-width: 0; padding-top: 1px; color: var(--ink-mid); overflow-wrap: anywhere; }
         .row-desc .why { display: block; }
         .row-desc .why::first-letter { text-transform: uppercase; }
         .verdict { margin-right: 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -179,51 +208,61 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .verdict.suspicious { color: var(--suspicious); }
         /* Traits read as a sentence, not as chips. A linked one is a dependency. */
         .why-chip + .why-chip::before { content: ", "; }
-        a.why-chip { color: var(--toxic-dark); text-decoration: underline; text-underline-offset: 3px; }
+        a.why-chip { color: var(--blue); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
         .row-when { padding-top: 2px; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
         .pager { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-height: 52px; padding: 4px 20px; border-top: 1px solid var(--rule); font-size: 13px; }
-        .pager a { display: inline-flex; align-items: center; min-height: 44px; color: var(--toxic-dark); font-weight: 600; }
+        .pager a { display: inline-flex; align-items: center; min-height: 44px; color: var(--blue); font-weight: 500; }
+        .pager a:hover { text-decoration: underline; text-underline-offset: 2px; }
         .pager [aria-disabled] { color: var(--ink-light); }
         .pager .mid { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
         @media (max-width: 960px) {
             .page { padding: 24px 16px 40px; }
-            h1 { font-size: 30px; }
+            h1 { font-size: 24px; }
             .kv li { grid-template-columns: 1fr; row-gap: 4px; }
         }
 {{end}}
-{{- /* The header. Dot is a chrome. */ -}}
+{{- /* The masthead, stripe and tab bar. Dot is a chrome. */ -}}
 {{define "topbar"}}
-    <header class="topbar">
-        <div class="brand">
-            {{if isPublic}}<a href="/" class="logo" aria-label="OpenHash home">open<span class="logo-hash">hash</span></a><span class="logo-by">an <a href="https://atomdrift.org/">atomdrift</a> project</span>{{else}}<a href="/" class="logo">lit<span class="logo-accent">mus</span></a>{{end}}
+    <header class="site-header">
+        <div class="header-inner">
+            <a href="/" class="brand" aria-label="{{if isPublic}}OpenHash{{else}}litmus{{end}} home">
+                {{template "atom"}}
+                <span class="brand-text">
+                    <span class="logo">{{template "wordmark"}}</span>
+                    <span class="logo-tagline">{{template "tagline"}}</span>
+                </span>
+            </a>
+            {{if not .Home}}{{template "searchform" .}}{{end}}
+            <div class="header-links">
+                <a href="https://github.com/atomdrift-project/prism" rel="noopener">GitHub</a>
+                {{if .UploadEnabled}}
+                <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+                    <input type="file" name="file" id="file-input" required />
+                    <label class="upload-btn" for="file-input">Upload</label>
+                    <div id="upload-status" class="top-upload-status" aria-live="polite"></div>
+                </form>
+                {{else}}
+                <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+                {{end}}
+            </div>
         </div>
-        {{if not .Home}}{{template "searchform" .}}{{end}}
-        {{template "sitenav" .}}
     </header>
-{{end}}
-{{define "searchform"}}
-        <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
-            <input type="search" name="q" id="search-input" value="{{.Query}}" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" aria-label="Search by sha256, purl, filename or filter" />
-        </form>
-{{end}}
-{{define "sitenav"}}
-        <nav class="site-nav" aria-label="Site">
+    <div class="toxic-stripe"></div>
+    <nav class="site-nav" aria-label="Site">
+        <div class="nav-inner">
             <a href="/fallout"{{if eq .Nav "fallout"}} aria-current="page"{{end}}>Fallout{{if .FalloutCount}} <span class="nav-count" title="Supply-chain attacks this week">{{.FalloutCount}}</span>{{end}}</a>
             <a href="/malware"{{if eq .Nav "malware"}} aria-current="page"{{end}}>Malware</a>
             <a href="/api"{{if eq .Nav "api"}} aria-current="page"{{end}}>API</a>
             <a href="/contributing"{{if eq .Nav "contributing"}} aria-current="page"{{end}}>Contributing</a>
-            {{if .UploadEnabled}}
-            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
-                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-                <input type="file" name="file" id="file-input" required />
-                <label class="upload-btn" for="file-input">Upload</label>
-                <div id="upload-status" class="top-upload-status" aria-live="polite"></div>
+        </div>
+    </nav>
+{{end}}
+{{define "searchform"}}
+            <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+                <input type="search" name="q" id="search-input" value="{{.Query}}" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" aria-label="Search by sha256, purl, filename or filter" />
             </form>
-            {{else}}
-            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
-            {{end}}
-        </nav>
 {{end}}
 {{define "sighted"}}<svg role="img" aria-label="Sighted elsewhere" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="#4a6b0f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><title>Sighted by an external threat feed</title><path d="M2 8.2 10.8 4l1.4 3-8.8 4.2z"></path><path d="M10.4 3 12.8 8"></path><path d="M7.4 9.6 5.2 14.2M7.4 9.6l2.4 4.6"></path></svg>{{end}}
 {{- /* One trait. A linked one leads to the dependency that carries it. */ -}}
@@ -258,8 +297,10 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
                     </li>
 {{end}}
 {{define "banner"}}{{end}} {{define "footer"}}
-<footer>
-    <span>&copy; 2026 <a href="https://atomdrift.org/">The Atomdrift Project</a></span>
-    <span><a href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank" rel="noopener">prism {{buildCommitShort}}</a></span>
+<footer class="site-footer">
+    <div class="footer-inner">
+        <span>&copy; 2026 <a href="https://atomdrift.org/">The Atomdrift Project</a></span>
+        <a class="footer-build" href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank" rel="noopener">prism {{buildCommitShort}}</a>
+    </div>
 </footer>
 {{end}}

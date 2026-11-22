@@ -153,7 +153,7 @@ func latestMalware(ctx context.Context) []feedRow {
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
-	renderStatic(w, r, apiTemplate, "api", map[string]string{"SHA256": sha256API, "PURL": purlAPI})
+	renderStatic(w, r, apiTemplate, "api", map[string]string{"SHA256": sha256API})
 }
 
 func handleContributing(w http.ResponseWriter, r *http.Request) {

@@ -298,8 +298,6 @@ func TestStaticPages(t *testing.T) {
 	api := get("/api")
 	for _, want := range []string{
 		sha256API + "{sha256}",
-		purlAPI + "{purl}",
-		`data-url="` + purlAPI + `pkg:npm/node-ipc@9.2.3"`,
 		"/static/js/api.js",
 		`<a href="/api" aria-current="page">API</a>`,
 	} {

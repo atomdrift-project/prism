@@ -26,7 +26,10 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--cream);
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
             color: var(--carbon);
             line-height: 1.6;
             -webkit-font-smoothing: antialiased;
@@ -36,18 +39,6 @@
             margin: 0 auto;
             padding: 60px 24px;
         }
-        header { margin-bottom: 48px; }
-        .logo {
-            font-family: 'Oxanium', sans-serif;
-            font-weight: 700;
-            font-size: 28px;
-            letter-spacing: -0.5px;
-            margin-bottom: 12px;
-            text-decoration: none;
-            color: inherit;
-        }
-        .logo-accent { color: var(--toxic-muted); }
-        {{template "wordmarkstyle"}}
         .beta-tag {
             font-size: 11px;
             font-weight: 600;
@@ -150,37 +141,21 @@
             padding: 12px 14px;
             border-radius: 4px;
         }
-        footer {
-            margin-top: 60px;
-            padding-top: 24px;
-            border-top: 1px solid var(--mist);
-            font-size: 14px;
-            color: var(--iron);
-            display: flex;
-            justify-content: space-between;
-            position: relative;
+        :root {
+            {{template "tokens"}}
         }
-        footer::before {
-            content: '';
-            position: absolute;
-            top: -1px;
-            left: 0;
-            width: 80px;
-            height: 2px;
-            background: var(--toxic);
-        }
-        footer a { color: var(--slate); text-decoration: none; }
-        footer a:hover { color: var(--carbon); }
+        .container { flex: 1; width: 100%; max-width: var(--width); padding: 32px 24px 48px; }
+        .container > * { max-width: 800px; }
+        .page-title { font-size: 27px; letter-spacing: -0.5px; line-height: 1.15; }
+        {{template "chromestyle" .}}
     </style>
 </head>
 <body>
     {{template "banner" .}}
+    {{template "topbar" .Chrome}}
     <div class="container">
-        <header>
-            <a href="/" class="logo">{{template "wordmark" .}}</a>
-        </header>
 
-        <div class="page-title">Search syntax</div>
+        <h1 class="page-title">Search syntax</h1>
         <p class="page-desc">
             The search box on the Fallout feed accepts a small query language. Tokens are separated by spaces; keys are case-insensitive. Press <strong>Enter</strong> to submit.
         </p>
@@ -291,7 +266,7 @@
             </p>
         </div>
 
-        {{template "footer" .}}
     </div>
+    {{template "footer" .}}
 </body>
 </html>

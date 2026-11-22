@@ -1,24 +1,10 @@
-// The API page's "Try it" card: one tab per endpoint, and a Run button that
-// sends the request shown and prints the answer. Without this script both
-// examples stay on the page as plain curl lines.
-
-const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-
-function select(tab) {
-  for (const t of tabs) {
-    const on = t === tab;
-    t.setAttribute("aria-selected", String(on));
-    document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-  }
-}
-
-for (const tab of tabs) {
-  tab.addEventListener("click", () => select(tab));
-}
-if (tabs.length > 0) select(tabs[0]);
+// The API page's "Try it" card: a Run button that sends the request shown
+// and prints the answer. Without this script the example stays on the page as
+// a plain curl line.
 
 async function run(pane, button, out) {
   button.disabled = true;
+  out.hidden = false;
   out.textContent = "…";
   try {
     const res = await fetch(pane.dataset.url, { headers: { Accept: "application/json" } });
