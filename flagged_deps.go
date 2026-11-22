@@ -95,7 +95,7 @@ func flaggedDeps(files []cleaveFile, raisers []hopper.LookupRaiser) (flagged []f
 			dep.Kind = f.FileType
 		}
 		if validSHA256(f.SHA256) {
-			dep.Href = "/file/" + f.SHA256
+			dep.Href = "/" + f.SHA256
 		}
 		deps = append(deps, dep)
 	}
@@ -123,7 +123,7 @@ func flaggedDeps(files []cleaveFile, raisers []hopper.LookupRaiser) (flagged []f
 		dep := flaggedDep{Locator: locator, SHA256: sha, Crit: classificationName(crit), critN: crit}
 		dep.Label, _ = depLabel(locator)
 		if validSHA256(sha) {
-			dep.Href = "/file/" + sha
+			dep.Href = "/" + sha
 		}
 		deps = append(deps, dep)
 	}

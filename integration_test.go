@@ -304,12 +304,18 @@ func uploadFile(t *testing.T, filePath, filename string) (sha string, body []byt
 		t.Fatalf("expected 303 from /upload, got %d", resp.StatusCode)
 	}
 	loc := resp.Header.Get("Location")
-	if !strings.HasPrefix(loc, "/file/") {
+	sha = strings.TrimPrefix(loc, "/")
+	if !validSHA256(sha) {
 		t.Fatalf("unexpected redirect location: %q", loc)
 	}
-	sha = strings.TrimPrefix(loc, "/file/")
 
-	resultResp, err := http.Get(prismBase + loc) //nolint:noctx
+	// /{sha256} answers a browser with the page and anything else with JSON.
+	pageReq, err := http.NewRequest(http.MethodGet, prismBase+loc, http.NoBody) //nolint:noctx
+	if err != nil {
+		t.Fatalf("build GET %s: %v", loc, err)
+	}
+	pageReq.Header.Set("Accept", "text/html")
+	resultResp, err := http.DefaultClient.Do(pageReq)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}

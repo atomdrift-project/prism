@@ -65,8 +65,9 @@ func uploadTemplateForTest(t *testing.T) *template.Template {
 }
 
 // hostileRow builds a row that clears the fallout gate (falloutQualifies): a
-// hostile verdict with an LLM summary and a hostile LLM grade. Tests that
-// probe the gate itself override Why/LLMGrade.
+// hostile verdict with an LLM summary and a hostile LLM grade, fetched from a
+// registry URL like every package catch. Tests that probe the gate itself
+// override Why/LLMGrade/HasURL.
 func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feedRow {
 	return feedRow{
 		SHA256:         sha,
@@ -78,6 +79,7 @@ func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feed
 		Formula:        formula,
 		Why:            "exfiltrates credentials on install",
 		LLMGrade:       "hostile",
+		HasURL:         true,
 		AnalyzedAt:     falloutTestNow.Add(-age),
 	}
 }
@@ -187,6 +189,22 @@ func TestFalloutVerificationFilter(t *testing.T) {
 	}
 	if _, err := parseFalloutVerification("maybe"); err == nil {
 		t.Error("invalid verified value was accepted")
+	}
+}
+
+// A file nobody cited and nothing fetched was only uploaded: test data, not a
+// catch. A sighting or a URL is what puts it in the log.
+func TestFalloutLeavesOutBareUploads(t *testing.T) {
+	fetched := hostileRow(shaN(1), "npm", "javascript", "O1(C)", "fetched", time.Hour)
+	upload := hostileRow(shaN(2), "", "elf", "O1(C)", "upload", time.Hour)
+	upload.HasURL = false
+	sighted := hostileRow(shaN(3), "", "elf", "O1(C)", "sighted", time.Hour)
+	sighted.HasURL = false
+	sighted.Corroborated = true
+
+	got := falloutRowsInWindow([]feedRow{fetched, upload, sighted}, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny)
+	if len(got) != 2 || got[0].SHA256 != fetched.SHA256 || got[1].SHA256 != sighted.SHA256 {
+		t.Fatalf("rows = %+v, want the fetched and sighted catches only", got)
 	}
 }
 
@@ -542,7 +560,7 @@ func TestFalloutTemplateRenders(t *testing.T) {
 	}
 	for _, want := range []string{
 		"and <b>22</b> siblings",
-		"/file/" + testSHAHero,
+		`href="/` + testSHAHero + `"`,
 		"/fallout?ecosystem=npm",
 		// The day head links to itself, so a day can be cited.
 		`href="#day-2026-08-04"`,

@@ -13,15 +13,15 @@
 // silently does nothing on the rest — which is exactly what happened.
 
 document.addEventListener("click", (ev) => {
-  const link = ev.target.closest('a.file-link[href^="/file/"]');
+  const link = ev.target.closest("a.file-link");
   if (!link) return;
-  const all = Array.from(document.querySelectorAll('a.file-link[href^="/file/"]'));
+  const all = Array.from(document.querySelectorAll("a.file-link"));
   const samples = all
     .map((a) => ({
-      sha: (a.getAttribute("href") || "").replace(/^\/file\//, ""),
+      sha: (a.getAttribute("href") || "").replace(/^\//, ""),
       label: (a.textContent || "").trim(),
     }))
-    .filter((s) => /^[0-9a-f]{8,64}$/i.test(s.sha));
+    .filter((s) => /^[0-9a-f]{64}$/i.test(s.sha));
   try {
     sessionStorage.setItem(
       "prism_nav",

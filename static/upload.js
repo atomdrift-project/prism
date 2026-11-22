@@ -29,7 +29,7 @@ function setAnalyzingStatus(fileName) {
 //
 // The search box is the canonical view of the URL state. Supported tokens
 // (whitespace-separated, case-insensitive keys):
-//   sha256:<hex>   → /file/<hex> redirect
+//   sha256:<hex>   → /<hex> redirect
 //   crit:<v>       → ?criticality=<v>   (hostile | suspicious | benign, or a
 //                                        comparison over the class number:
 //                                        N, =N, >=N, >N, <=N, <N where
@@ -194,7 +194,7 @@ function buildURL(parsed) {
 function navigateFromBox() {
   const parsed = parseQuery(searchInput ? searchInput.value : "");
   if (parsed.sha) {
-    window.location = `/file/${parsed.sha}`;
+    window.location = `/${parsed.sha}`;
     return;
   }
   window.location = buildURL(parsed);

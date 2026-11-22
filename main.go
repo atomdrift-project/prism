@@ -1007,6 +1007,10 @@ type feedRow struct {
 	// the per-row "✓" mark. The citing sources stay off the feed page; the
 	// detail page names only open databases and blogs (DetectedBy).
 	Corroborated bool
+	// HasURL marks a sample hopper fetched from a URL: something published it.
+	// A file that is neither cited nor fetched was only ever uploaded, and
+	// the fallout log leaves it out (falloutTraceable).
+	HasURL bool
 	// ShowVerdict labels the row with its verdict, for a list that mixes them.
 	ShowVerdict bool
 	Downloads   int64
@@ -1349,6 +1353,7 @@ type cachedFeedSample struct {
 	TopTraits    []feedTrait
 	Conf         int
 	Corroborated bool
+	HasURL       bool
 	Downloads    int64
 	Probability  float64
 	SuspiciousT  float64
@@ -3062,6 +3067,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			TopTraits:      sample.TopTraits,
 			LLMGrade:       sample.LLMGrade,
 			Corroborated:   sample.Corroborated,
+			HasURL:         sample.HasURL,
 			AnalyzedAt:     sample.CreatedAt,
 			AnalyzedDate:   feedDate(sample.CreatedAt, now),
 			TimeAgo:        timeAgo(now.Sub(sample.CreatedAt)),
@@ -3312,6 +3318,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			TopTraits:      row.TopTraits,
 			LLMGrade:       row.LLMGrade,
 			Corroborated:   row.Corroborated,
+			HasURL:         row.HasURL,
 			CreatedAt:      row.AnalyzedAt,
 		})
 	}
@@ -3851,7 +3858,7 @@ func dependencyChip(traitID string, dep depIdentity, base feedTrait) feedTrait {
 	base.ID = truncateRunes(base.ID, 80)
 	base.Full = traitID + " — " + dep.Locator
 	if validSHA256(dep.SHA) {
-		base.Href = "/file/" + dep.SHA
+		base.Href = "/" + dep.SHA
 	}
 	return base
 }
@@ -4669,8 +4676,8 @@ func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
 	}
 	if version != "" {
 		if sha := soleSampleByPURL(r.Context(), base, version); sha != "" {
-			//nolint:gosec // G710: sha is a DB-sourced hex digest behind a literal "/file/" prefix, so the target stays same-origin.
-			http.Redirect(w, r, "/file/"+sha, http.StatusFound)
+			//nolint:gosec // G710: sha is a DB-sourced 64-hex digest behind a literal "/", so the target stays same-origin.
+			http.Redirect(w, r, "/"+sha, http.StatusFound)
 			return
 		}
 	}
@@ -4712,6 +4719,13 @@ func soleSampleByPURL(ctx context.Context, base, version string) string {
 
 func handleEcosystemRedirect(w http.ResponseWriter, r *http.Request) {
 	eco := strings.ToLower(strings.Trim(r.PathValue("ecosystem"), "/"))
+	// One path segment is either an ecosystem or a file's digest, and no
+	// ecosystem is 64 hex characters. They share this pattern because the mux
+	// refuses two identical ones.
+	if validSHA256(eco) {
+		handleSHA(w, r, eco)
+		return
+	}
 	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -4804,8 +4818,8 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 	// a no-JS client still gets the redirect. Run it on the raw value;
 	// shaFromSearchQuery trims and lowercases internally.
 	if sha, ok := shaFromSearchQuery(query.Get("q")); ok {
-		//nolint:gosec // G710: shaFromSearchQuery returns only validSHA256 hex, behind a literal "/file/" prefix.
-		http.Redirect(w, r, "/file/"+sha, http.StatusFound)
+		//nolint:gosec // G710: shaFromSearchQuery returns only validSHA256 hex, behind a literal "/".
+		http.Redirect(w, r, "/"+sha, http.StatusFound)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -7238,7 +7252,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		previous, valid := actual.(uploadState)
 		if valid && previous.FailedAt.IsZero() {
 			<-beamlineSlots
-			http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+			http.Redirect(w, r, "/"+sha, http.StatusSeeOther)
 			return
 		}
 		if uploadsInFlight.CompareAndSwap(sha, actual, state) {
@@ -7265,7 +7279,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 			})
 			return
 		}
-		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+		http.Redirect(w, r, "/"+sha, http.StatusSeeOther)
 	case <-r.Context().Done():
 		return
 	}
@@ -7279,12 +7293,12 @@ func redirectExistingSample(ctx context.Context, w http.ResponseWriter, r *http.
 	_, err := loadParentSample(ctx, sha)
 	if err == nil {
 		reqLogger.Info("upload already exists in hopper; redirecting to sample")
-		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+		http.Redirect(w, r, "/"+sha, http.StatusSeeOther)
 		return true
 	}
 	if _, pending := errors.AsType[*pendingAnalysisError](err); pending {
 		reqLogger.Info("upload already exists in hopper; redirecting to pending sample")
-		http.Redirect(w, r, "/file/"+sha, http.StatusSeeOther)
+		http.Redirect(w, r, "/"+sha, http.StatusSeeOther)
 		return true
 	}
 	if !strings.Contains(err.Error(), "sample not found in hopper") {

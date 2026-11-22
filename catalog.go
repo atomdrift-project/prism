@@ -647,6 +647,7 @@ func feedRowFromStore(r *store.FeedRow, now time.Time) feedRow {
 		TopTraits:      chips,
 		LLMGrade:       grade,
 		Corroborated:   r.Cited,
+		HasURL:         r.URL != "",
 		AnalyzedAt:     r.CreatedAt,
 		AnalyzedDate:   feedDate(r.CreatedAt, now),
 		TimeAgo:        timeAgo(now.Sub(r.CreatedAt)),

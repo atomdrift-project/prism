@@ -93,7 +93,7 @@ func buildAtomFeed(rows []feedRow, base string, now time.Time) ([]byte, error) {
 			Title:   title,
 			ID:      "urn:sha256:" + row.SHA256,
 			Updated: row.AnalyzedAt.UTC().Format(time.RFC3339),
-			Link:    atomLink{Href: base + "/file/" + row.SHA256, Rel: "alternate", Type: "text/html"},
+			Link:    atomLink{Href: base + "/" + row.SHA256, Rel: "alternate", Type: "text/html"},
 			Summary: summary,
 		})
 	}

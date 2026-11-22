@@ -1,6 +1,6 @@
 {{- /* One preview row. Dot is a feedRow, or something that embeds one. */ -}}
 {{define "homerow"}}
-            <a class="hrow" href="/file/{{.SHA256}}">
+            <a class="hrow" href="/{{.SHA256}}">
                 <span class="hrow-main">
                     <span class="hrow-name"><b>{{or .Name .SHA256Short}}</b>{{with .Ecosystem}}<span class="eco-badge eco-{{ecoColor .}}">{{.}}</span>{{end}}</span>
                     <span class="hrow-desc">{{if .Why}}<span class="why">{{.Why}}</span>{{else}}{{range .FallbackTraits}}<span class="why-chip">{{.ID}}</span>{{else}}{{.Desc}}{{end}}{{end}}</span>
@@ -89,7 +89,7 @@
                 </form>
                 <p class="try">Try
                     <a href="/npm/node-ipc@9.2.3">pkg:npm/node-ipc@9.2.3</a>,
-                    <a href="/file/992d0ff525726a5f4aa73136243a3799c43227b90532ef514028d63ed4739f67">992d0ff525726a5f…</a>,
+                    <a href="/992d0ff525726a5f4aa73136243a3799c43227b90532ef514028d63ed4739f67">992d0ff525726a5f…</a>,
                     <a href="/chrome/?criticality=hostile">crit:hostile eco:chrome</a>{{if .Chrome.UploadEnabled}}
                     or <label for="file-input">upload a file</label>{{end}}.</p>
                 {{if .Chrome.UploadEnabled}}<p>Uploads: 100 MiB. Results are public.</p>{{end}}

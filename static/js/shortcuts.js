@@ -37,7 +37,7 @@ function readNav() {
 
 function neighbours(nav) {
   const samples = nav && Array.isArray(nav.samples) ? nav.samples : [];
-  const match = location.pathname.match(/^\/file\/([0-9a-f]{8,64})/i);
+  const match = location.pathname.match(/^\/(?:file\/)?([0-9a-f]{64})$/i);
   if (!match || samples.length < 2) return { prev: null, next: null };
   const sha = match[1].toLowerCase();
   const at = samples.findIndex((s) => String(s.sha || "").toLowerCase() === sha);
@@ -53,8 +53,8 @@ function neighbours(nav) {
 // against the same shape the router accepts rather than trusted.
 function go(sample) {
   const sha = String(sample?.sha ?? "");
-  if (!/^[0-9a-f]{8,64}$/i.test(sha)) return;
-  location.href = `/file/${sha}`;
+  if (!/^[0-9a-f]{64}$/i.test(sha)) return;
+  location.href = `/${sha}`;
 }
 
 // The feed to go back to. Same-origin paths only: this is a string from

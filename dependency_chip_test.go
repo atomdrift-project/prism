@@ -22,7 +22,7 @@ func TestParseTopTraitsDependencyPURL(t *testing.T) {
 		ID:   "depends on hostile npm: zaboodle v1.49",
 		Full: "fetch/dependency-verdict — pkg:npm/zaboodle@1.49",
 		Crit: "hostile",
-		Href: "/file/" + depTestSHA,
+		Href: "/" + depTestSHA,
 	}
 	if got[0] != want {
 		t.Errorf("chip = %+v,\nwant  %+v", got[0], want)
@@ -41,7 +41,7 @@ func TestParseTopTraitsDependencyURL(t *testing.T) {
 		ID:   "references suspicious pe: x.y.z/x.exe",
 		Full: "fetch/dependency-verdict — http://x.y.z/a/b/x.exe",
 		Crit: "suspicious",
-		Href: "/file/" + depTestSHA,
+		Href: "/" + depTestSHA,
 	}
 	if got[0] != want {
 		t.Errorf("chip = %+v,\nwant  %+v", got[0], want)
@@ -70,7 +70,7 @@ func TestParseTopTraitsDependencyFallbacks(t *testing.T) {
 			// An unsniffable type falls back to the neutral word.
 			"unknown type",
 			`[{"id":"fetch/dependency-verdict","crit":5,"dep":{"locator":"http://x.y.z/blob","sha":"` + depTestSHA + `","type":"unknown"}}]`,
-			feedTrait{ID: "depends on hostile dependency: x.y.z/blob", Full: "fetch/dependency-verdict — http://x.y.z/blob", Crit: "hostile", Href: "/file/" + depTestSHA},
+			feedTrait{ID: "depends on hostile dependency: x.y.z/blob", Full: "fetch/dependency-verdict — http://x.y.z/blob", Crit: "hostile", Href: "/" + depTestSHA},
 		},
 	}
 	for _, tc := range cases {
@@ -173,7 +173,7 @@ func TestUploadTemplateRendersDependencyChipAsLink(t *testing.T) {
 		ID:   "depends on hostile npm: zaboodle v1.49",
 		Full: "fetch/dependency-verdict — pkg:npm/zaboodle@1.49",
 		Crit: "hostile",
-		Href: "/file/" + depTestSHA,
+		Href: "/" + depTestSHA,
 	}
 	plainChip := feedTrait{ID: "exec.install-hook", Full: "objectives/exec/install-hook", Crit: "hostile"}
 	data := feedPageData{
@@ -194,7 +194,7 @@ func TestUploadTemplateRendersDependencyChipAsLink(t *testing.T) {
 	}
 	html := sb.String()
 
-	anchor := `<a class="why-chip crit-hostile" href="/file/` + depTestSHA + `"`
+	anchor := `<a class="why-chip crit-hostile" href="/` + depTestSHA + `"`
 	if n := strings.Count(html, anchor); n != 1 {
 		t.Errorf("dependency chip anchor rendered %d times, want 1", n)
 	}
@@ -245,7 +245,7 @@ func TestDependencyChipSurvivesAnLLMRationale(t *testing.T) {
 		ID:   "depends on hostile npm: zaboodle v1.49",
 		Full: "fetch/dependency-verdict — pkg:npm/zaboodle@1.49",
 		Crit: "hostile",
-		Href: "/file/" + depTestSHA,
+		Href: "/" + depTestSHA,
 	}
 	plainChip := feedTrait{ID: "exec.install-hook", Full: "objectives/exec/install-hook", Crit: "hostile"}
 
@@ -279,7 +279,7 @@ func TestUploadTemplateRendersDependencyChipBesideRationale(t *testing.T) {
 			Why:            "Pulls a hostile dependency at install time.",
 			TopTraits: []feedTrait{{
 				ID: "depends on hostile npm: zaboodle v1.49", Crit: "hostile",
-				Href: "/file/" + depTestSHA,
+				Href: "/" + depTestSHA,
 			}},
 			AnalyzedDate: "2h ago",
 		}},
@@ -292,7 +292,7 @@ func TestUploadTemplateRendersDependencyChipBesideRationale(t *testing.T) {
 	if !strings.Contains(html, "Pulls a hostile dependency at install time.") {
 		t.Error("rationale missing")
 	}
-	if !strings.Contains(html, `href="/file/`+depTestSHA+`"`) {
+	if !strings.Contains(html, `href="/`+depTestSHA+`"`) {
 		t.Error("dependency chip must render beside the rationale, not be replaced by it")
 	}
 }

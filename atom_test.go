@@ -50,7 +50,7 @@ func TestBuildAtomFeed(t *testing.T) {
 	for _, want := range []string{
 		"Volume Max 5.2.1 (hostile · chrome)",
 		"urn:sha256:" + testSHAHero,
-		"https://lab.atomdrift.org/file/" + testSHAHero,
+		"https://lab.atomdrift.org/" + testSHAHero,
 		"posts every visited URL to a hardcoded endpoint",
 		"Marketplace reach: 412,033 installs.",
 		"Traits: persist.systemd-unit.",

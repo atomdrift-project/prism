@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestFileViewsNativeVsInherited locks in the archive rule: only native
 // findings (Src == nil) show on a file; inherited ones are omitted (they render
@@ -462,5 +465,133 @@ func TestEvidenceRegionsDoNotRepeatOneTrait(t *testing.T) {
 	}
 	if total > maxEvidenceBlocks {
 		t.Errorf("page shows %d regions, over the %d cap", total, maxEvidenceBlocks)
+	}
+}
+
+// mlflowBeaconFiles mirrors how cleave reports a cross-file composite hoisted
+// onto a wheel (mlflow 2.15.1): the composite names ONE member in From, with no
+// location, while its Uses legs are bare container copies pointing at the
+// members they matched in. Each member holds its leg natively, with spans.
+func mlflowBeaconFiles() []cleaveFile {
+	const (
+		getID  = "micro-behaviors/communications/http/get::requests-get"
+		hostID = "micro-behaviors/communications/url/host/name::hostname-with-eight-hex-label"
+	)
+	return []cleaveFile{
+		{
+			ID: 0, Depth: 0, SHA256: "whl", Path: "mlflow-2.15.1-py3-none-any.whl", FileType: "zip",
+			Findings: []finding{
+				{ID: getID, Desc: "Calls requests.get in Python", Crit: 3, Conf: 0.85, From: []compactSource{{File: 1}}},
+				{ID: hostID, Desc: "References hostname with eight-hex label", Crit: 3, Conf: 0.9, From: []compactSource{{File: 2}}},
+				{
+					ID:   "objectives/exfiltration/oob/callback/request::python-console-entrypoint-hex-host-beacon",
+					Desc: "Console entry point calls HTTP on hex-label host", Crit: 5, Conf: 0.96,
+					From: []compactSource{{File: 1}}, Uses: []int{0, 1},
+				},
+			},
+			Ctx: []contextWindow{{Offset: 0, Data: []byte{0x50, 0x4b}}},
+		},
+		{
+			ID: 1, Depth: 1, SHA256: "openai", Path: "mlflow-2.15.1-py3-none-any.whl!!mlflow/deployments/openai/__init__.py", FileType: "python",
+			Findings: []finding{{ID: getID, Desc: "Calls requests.get in Python", Crit: 3, Conf: 0.85, Spans: [][2]int64{{40, 12}}}},
+			Ctx:      []contextWindow{{Offset: 201, Addr: ptrInt64(40), Data: []byte("requests.get(url)")}},
+		},
+		{
+			ID: 2, Depth: 1, SHA256: "hosts", Path: "mlflow-2.15.1-py3-none-any.whl!!mlflow/hosts.py", FileType: "python",
+			Findings: []finding{{ID: hostID, Desc: "References hostname with eight-hex label", Crit: 3, Conf: 0.9, Spans: [][2]int64{{10, 8}}}},
+			Ctx:      []contextWindow{{Offset: 5, Addr: ptrInt64(10), Data: []byte("deadbeef.example")}},
+		},
+	}
+}
+
+// countAnno counts rows annotated with desc across every rendered window.
+func countAnno(views []fileView, desc string) (n int, sha string) {
+	for i := range views {
+		for _, w := range views[i].Windows {
+			for _, a := range windowAnnos(w) {
+				if a == desc {
+					n++
+					sha = views[i].SHA256
+				}
+			}
+		}
+	}
+	return n, sha
+}
+
+// A hostile composite whose From names a single member without a location was
+// taken for an inherited finding and never shown in the evidence: the page
+// counted it in the malecule and badged its description, while every region
+// carried only the notable legs. Its legs are the authority on where it lives.
+func TestFileViewsSingleFromCrossFileCompositeIsNamed(t *testing.T) {
+	const desc = "Console entry point calls HTTP on hex-label host"
+	views, top, _ := buildFileViews(mlflowBeaconFiles())
+
+	n, sha := countAnno(views, desc)
+	if n != 1 {
+		t.Fatalf("composite annotated on %d rows, want exactly 1; views = %+v", n, views)
+	}
+	if sha != "openai" {
+		t.Errorf("composite named in %q, want its first leg's file (openai)", sha)
+	}
+
+	var beacon *topTrait
+	for i := range top {
+		if top[i].Desc == desc {
+			beacon = &top[i]
+		}
+	}
+	if beacon == nil {
+		t.Fatalf("top traits = %+v, want the hostile composite", top)
+	}
+	if beacon.Crit != "hostile" {
+		t.Errorf("composite crit = %q, want hostile", beacon.Crit)
+	}
+	labels := make([]string, 0, len(beacon.Sources))
+	for _, s := range beacon.Sources {
+		labels = append(labels, s.Label)
+		if s.Anchor == "" {
+			t.Errorf("trail entry %+v does not link to a rendered section", s)
+		}
+	}
+	if !slices.Equal(labels, []string{"__init__.py", "hosts.py"}) {
+		t.Errorf("composite trail = %v, want every leg's file [__init__.py hosts.py]", labels)
+	}
+}
+
+// When the first leg's file has no window to carry the name, the composite
+// moves to the next leg rather than vanishing from the evidence.
+func TestFileViewsCompositeFallsBackToRenderedLeg(t *testing.T) {
+	files := mlflowBeaconFiles()
+	files[1].Ctx = nil // first leg's member rendered no window
+	views, _, _ := buildFileViews(files)
+	if n, sha := countAnno(views, "Console entry point calls HTTP on hex-label host"); n != 1 || sha != "hosts" {
+		t.Errorf("composite annotated %d times in %q, want once in hosts", n, sha)
+	}
+}
+
+// A container's copy of a composite its single member holds natively is
+// inherited: the member renders it, so the container's copy must not annotate
+// a second row.
+func TestFileViewsInheritedCompositeNotDoubled(t *testing.T) {
+	const id, desc = "objectives/c2/beacon", "Beacons to C2"
+	leg := finding{ID: "micro/leg", Desc: "leg", Crit: 3, Conf: 0.9, Spans: [][2]int64{{40, 4}}}
+	files := []cleaveFile{
+		{
+			ID: 0, Depth: 0, SHA256: "zip", Path: "app.zip", FileType: "zip",
+			Findings: []finding{
+				{ID: leg.ID, Desc: leg.Desc, Crit: 3, Conf: 0.9, From: []compactSource{{File: 1}}},
+				{ID: id, Desc: desc, Crit: 5, Conf: 0.9, From: []compactSource{{File: 1}}, Uses: []int{0}},
+			},
+		},
+		{
+			ID: 1, Depth: 1, SHA256: "main", Path: "app.zip!!main.py", FileType: "python",
+			Findings: []finding{leg, {ID: id, Desc: desc, Crit: 5, Conf: 0.9, Uses: []int{0}}},
+			Ctx:      []contextWindow{{Offset: 3, Addr: ptrInt64(40), Data: []byte("beacon()")}},
+		},
+	}
+	views, _, _ := buildFileViews(files)
+	if n, _ := countAnno(views, desc); n > 1 {
+		t.Errorf("inherited composite annotated %d rows, want at most the member's own", n)
 	}
 }

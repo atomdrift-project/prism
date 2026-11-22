@@ -100,7 +100,7 @@
            eagerness is hover-triggered and the browser caps how many it will
            run at once, so a long list does not become as many fetches. */ -}}
     <script type="speculationrules" nonce="{{.Nonce}}">
-    {"prerender": [{"where": {"href_matches": "/file/*"}, "eagerness": "moderate"}]}
+    {"prerender": [{"where": {"href_matches": "/:sha([0-9a-f]{64})"}, "eagerness": "moderate"}]}
     </script>
     <script nonce="{{.Nonce}}" src="/static/js/nav-stash.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>

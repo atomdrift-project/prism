@@ -81,7 +81,7 @@ func TestNavStashContractMatches(t *testing.T) {
 	}
 	// nav-stash.js only records a sha that looks like one, and shortcuts.js
 	// re-checks the same shape before putting it in a URL.
-	shaRE := regexp.MustCompile(`\[0-9a-f\]\{8,64\}`)
+	shaRE := regexp.MustCompile(`\[0-9a-f\]\{64\}`)
 	if !shaRE.MatchString(writer) || !shaRE.MatchString(reader) {
 		t.Error("the two halves of the nav stash disagree about what a sha looks like")
 	}

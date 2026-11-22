@@ -45,7 +45,7 @@ func TestFlaggedDepsPrefersDeclaredPURL(t *testing.T) {
 	if got.Locator != "pkg:npm/zaboodle@1.49" {
 		t.Errorf("Locator = %q, want the declared PURL", got.Locator)
 	}
-	if got.Href != "/file/"+depSHAHostile {
+	if got.Href != "/"+depSHAHostile {
 		t.Errorf("Href = %q, want the dependency's own record", got.Href)
 	}
 	if got.Kind != "" {
@@ -153,7 +153,7 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 	tmpl := resultTemplateForTest(t)
 	data := singleFileData()
 	data.FlaggedDeps = []flaggedDep{
-		{Label: "npm: zaboodle v1.49", Locator: "pkg:npm/zaboodle@1.49", Crit: "hostile", SHA256: depSHAHostile, Href: "/file/" + depSHAHostile},
+		{Label: "npm: zaboodle v1.49", Locator: "pkg:npm/zaboodle@1.49", Crit: "hostile", SHA256: depSHAHostile, Href: "/" + depSHAHostile},
 		{Label: "x.y.z/x.exe", Locator: "https://x.y.z/dl/x.exe", Kind: "pe", Crit: "suspicious"},
 	}
 	data.FlaggedDepsHidden = 3
@@ -164,7 +164,7 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 	}
 	html := sb.String()
 
-	if !strings.Contains(html, `<a class="dep-chip hostile" href="/file/`+depSHAHostile+`"`) {
+	if !strings.Contains(html, `<a class="dep-chip hostile" href="/`+depSHAHostile+`"`) {
 		t.Error("linkable dependency must render as an anchor to its own record")
 	}
 	if !strings.Contains(html, `<span class="dep-chip suspicious" title="https://x.y.z/dl/x.exe">`) {
@@ -227,7 +227,7 @@ func TestFlaggedDepsNamesLookupRaisers(t *testing.T) {
 	if !ok {
 		t.Fatalf("saferwall/pe chip missing: %+v", deps)
 	}
-	if pe.Crit != "hostile" || pe.Href != "/file/"+sha || pe.Locator != "pkg:golang/github.com/saferwall/pe@v1.6.5" {
+	if pe.Crit != "hostile" || pe.Href != "/"+sha || pe.Locator != "pkg:golang/github.com/saferwall/pe@v1.6.5" {
 		t.Errorf("pe chip = %+v", pe)
 	}
 	if al := got["golang: actionlint.kjanat.dev v1.17.0"]; al.Href != "" || al.Crit != "hostile" {

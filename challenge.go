@@ -90,7 +90,7 @@ func challengeMAC(ip string, answer, exp int64) string {
 // challenge page rather than a bare 429: only browser navigations (a GET asking
 // for HTML). Scripts and file-download bots get the plain 429.
 func wantsChallenge(r *http.Request) bool {
-	return r.Method == http.MethodGet && strings.Contains(r.Header.Get("Accept"), "text/html")
+	return r.Method == http.MethodGet && acceptsHTML(r)
 }
 
 // randOperand returns a small positive integer for the arithmetic problem.

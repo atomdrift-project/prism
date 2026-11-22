@@ -386,7 +386,7 @@
             {{if .Parents}}
             <div class="rail-block">
                 <span class="rail-title">Found inside</span>
-                <div class="parents">{{range .Parents}}<a href="/file/{{.SHA256}}" title="{{.Path}}">{{.Filename}}</a>{{end}}</div>
+                <div class="parents">{{range .Parents}}<a href="/{{.SHA256}}" title="{{.Path}}">{{.Filename}}</a>{{end}}</div>
             </div>
             {{end}}
         </aside>

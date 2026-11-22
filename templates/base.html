@@ -240,9 +240,9 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
 {{define "listrow"}}
                     <li class="row">
                         <span class="row-id">
-                            {{if .Name}}<span class="row-name"><a class="file-link" href="/file/{{.SHA256}}">{{.Name}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{template "rowextra" .}}</span>{{end}}
+                            {{if .Name}}<span class="row-name"><a class="file-link" href="/{{.SHA256}}">{{.Name}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{template "rowextra" .}}</span>{{end}}
                             <span class="row-hash">
-                                {{if .Name}}<span class="file-sha" title="Copy">{{.SHA256}}</span>{{else}}<a class="file-link hash" href="/file/{{.SHA256}}">{{.SHA256}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{end}}
+                                {{if .Name}}<span class="file-sha" title="Copy">{{.SHA256}}</span>{{else}}<a class="file-link hash" href="/{{.SHA256}}">{{.SHA256}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{end}}
                                 {{with .Users}}<span class="installs">{{.}} installs</span>{{end}}
                             </span>
                         </span>

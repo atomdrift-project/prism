@@ -192,7 +192,7 @@ func TestListRow(t *testing.T) {
 	}
 
 	nameless := render(feedRow{SHA256: testSHARow, Filename: testSHARow, Classification: "hostile", Corroborated: true})
-	if !strings.Contains(nameless, `<a class="file-link hash" href="/file/`+testSHARow+`">`) || strings.Contains(nameless, "row-name") {
+	if !strings.Contains(nameless, `<a class="file-link hash" href="/`+testSHARow+`">`) || strings.Contains(nameless, "row-name") {
 		t.Errorf("a nameless row must link its hash and print no name line:\n%s", nameless)
 	}
 

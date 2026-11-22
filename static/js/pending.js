@@ -193,7 +193,7 @@
     setBusyState("Result ready", "Ready");
     setStep("result", 3);
     setCurrent("All clear — opening the result", "The full report is ready.");
-    setTimeout(() => window.location.replace(`/file/${encodeURIComponent(sha)}`), 180);
+    setTimeout(() => window.location.replace(`/${encodeURIComponent(sha)}`), 180);
   }
 
   function showFailure(message = "The analysis could not be completed.") {

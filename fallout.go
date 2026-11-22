@@ -514,12 +514,19 @@ func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
 		row := &snapshot.Rows[i]
 		if row.Classification == "hostile" &&
 			!row.CreatedAt.Before(week.Start) && row.CreatedAt.Before(week.End) &&
-			falloutQualifies(row.Why, row.LLMGrade) &&
+			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.Corroborated, row.HasURL) &&
 			!falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			n++
 		}
 	}
 	return n
+}
+
+// falloutTraceable reports a catch someone else can trace: cited by an
+// outside source, or fetched from a URL. A file that is neither was only ever
+// uploaded — test data, mostly — and is no evidence of anything in the wild.
+func falloutTraceable(corroborated, hasURL bool) bool {
+	return corroborated || hasURL
 }
 
 // falloutQualifies gates a hostile catch into the log. Beyond the hostile
@@ -728,8 +735,8 @@ func falloutRowsInWindow(rows []feedRow, week falloutWeek, verified falloutVerif
 		row := rows[i]
 		if row.Classification == "hostile" &&
 			!row.AnalyzedAt.Before(week.Start) && row.AnalyzedAt.Before(week.End) &&
-			falloutQualifies(row.Why, row.LLMGrade) && verified.matches(row.Corroborated) &&
-			!falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
+			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.Corroborated, row.HasURL) &&
+			verified.matches(row.Corroborated) && !falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			out = append(out, row)
 		}
 	}

@@ -214,7 +214,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 		idToFile[files[i].ID] = &files[i]
 	}
 
-	forced, inject := compositeLegs(files)
+	forced, composites := compositeLegs(files)
 
 	// Pick the headline traits up front and force-render the files they point at,
 	// so every top-trait location resolves to a real, clickable section instead of
@@ -259,9 +259,6 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 				}
 			}
 		}
-		for _, a := range inject[file.ID] {
-			attachComposite(fd.lws, a)
-		}
 
 		// Inside-archive members below the content-criticality floor are noise;
 		// skip building their content view entirely. The top-level file (depth 0)
@@ -283,6 +280,7 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 	if len(datas) == 0 {
 		return nil, nil, contentOmitted{}
 	}
+	attachComposites(datas, composites)
 
 	slices.SortStableFunc(datas, func(a, b fileData) int { return cmp.Compare(b.maxCrit, a.maxCrit) })
 
@@ -435,14 +433,15 @@ func headlineTraitsAtLeast(files []cleaveFile, minCrit, limit int) []topCand {
 // composite/inherited finding, or the host for a native one — so buildFileViews
 // can force-render them and keep the headline's links live.
 func traitTargetIDs(f *finding, host *cleaveFile) []int {
-	if len(f.From) > 0 {
-		ids := make([]int, 0, len(f.From))
-		for _, s := range f.From {
-			ids = append(ids, s.File)
-		}
-		return ids
+	srcs := traitSourceList(f, host)
+	if len(srcs) == 0 {
+		return []int{host.ID}
 	}
-	return []int{host.ID}
+	ids := make([]int, 0, len(srcs))
+	for _, s := range srcs {
+		ids = append(ids, s.File)
+	}
+	return ids
 }
 
 // traitSources renders a top trait's "filename:loc" trail: every leg of a
@@ -450,8 +449,8 @@ func traitTargetIDs(f *finding, host *cleaveFile) []int {
 // its section when that file rendered (force-rendering the targets keeps these
 // live); otherwise the location shows as plain text.
 func traitSources(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, rendered map[string]bool) []compositeLink {
-	if len(f.From) > 0 {
-		return compositeLinks(f.From, idToFile, rendered)
+	if srcs := traitSourceList(f, host); len(srcs) > 0 {
+		return compositeLinks(srcs, idToFile, rendered)
 	}
 	link := compositeLink{Label: extractBasename(host.Path)}
 	if rendered[host.SHA256] {
@@ -463,61 +462,211 @@ func traitSources(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, re
 	return []compositeLink{link}
 }
 
-// anchorAnno is a composite annotation to attach inline on its primary member:
-// the composite's description, placed on the row at its first leg's location.
-type anchorAnno struct {
+// traitSourceList is where a finding's evidence lives, for the headline trail:
+// its own From when that names every file a leg matched in (cleave's entries
+// carry locations), else the legs. Empty means native to the host.
+func traitSourceList(f *finding, host *cleaveFile) []compactSource {
+	legs := compositeSources(f, host)
+	covered := func(l legSource) bool {
+		return l.src.File == host.ID || slices.ContainsFunc(f.From, func(s compactSource) bool { return s.File == l.src.File })
+	}
+	if !crossFile(legs, host.ID) || !slices.ContainsFunc(legs, func(l legSource) bool { return !covered(l) }) {
+		return f.From
+	}
+	srcs := make([]compactSource, len(legs))
+	for i, l := range legs {
+		srcs[i] = l.src
+	}
+	return srcs
+}
+
+// legSource is one file a composite drew evidence from, located as precisely
+// as cleave recorded it, with the atomic leg that matched there.
+type legSource struct {
 	src  compactSource
+	id   string // the leg's trait ID
+	desc string // the leg's description: what its row is annotated with
+}
+
+// maxLegDepth bounds the walk through nested composites. Rules nest a few
+// levels at most; the bound keeps a malformed report's cyclic Uses finite.
+const maxLegDepth = 4
+
+// compositeSources lists the files a finding's evidence lives in, one entry per
+// file, in leg order. For a composite it walks Uses down to the atomic legs and
+// takes each leg's From (the host itself for a leg native to it). The legs are
+// the authority: cleave hoists a cross-file composite onto its container with a
+// From naming one member and no location, while the legs it Uses still say
+// where every match was. A finding without Uses, or whose Uses name nothing
+// this report carries, falls back to its own From.
+func compositeSources(f *finding, host *cleaveFile) []legSource {
+	var legs []legSource
+	files := map[int]bool{}
+	add := func(s compactSource, leg *finding) {
+		if !files[s.File] {
+			files[s.File] = true
+			legs = append(legs, legSource{src: s, id: leg.ID, desc: leg.Desc})
+		}
+	}
+	visited := map[int]bool{}
+	var walk func(g *finding, depth int)
+	walk = func(g *finding, depth int) {
+		if len(g.Uses) > 0 && depth < maxLegDepth {
+			for _, j := range g.Uses {
+				if j < 0 || j >= len(host.Findings) || visited[j] {
+					continue // a stale index names a finding this report does not carry
+				}
+				visited[j] = true
+				walk(&host.Findings[j], depth+1)
+			}
+			return
+		}
+		if len(g.From) == 0 {
+			add(compactSource{File: host.ID}, g)
+		}
+		for _, s := range g.From {
+			add(s, g)
+		}
+	}
+	if len(f.Uses) > 0 {
+		walk(f, 0)
+	}
+	if len(legs) == 0 {
+		for _, s := range f.From {
+			add(s, f)
+		}
+	}
+	return legs
+}
+
+// crossFile reports whether any leg lies outside the host file.
+func crossFile(legs []legSource, host int) bool {
+	return slices.ContainsFunc(legs, func(l legSource) bool { return l.src.File != host })
+}
+
+// compositeAnno is a cross-file composite to name inline in the evidence view:
+// its description and severity, and its legs in order. It is attached once, on
+// the first leg whose row rendered (see attachComposites).
+type compositeAnno struct {
 	desc string
+	legs []legSource
 	crit int
 }
 
-// compositeLegs scans every file for cross-file composites (multi-member From at
-// notable+) and returns, keyed by member file ID, the data the Content tab needs
-// to show a composite's members. forced maps a leg's file to the strongest
-// composite crit referencing it, so the member renders even below the content
-// floor and sorts up to its composite. inject maps a composite's primary leg
-// (From[0]) to the annotation that names the composite on that member's window;
-// the other legs keep the native trait that fired there.
-func compositeLegs(files []cleaveFile) (forced map[int]int, inject map[int][]anchorAnno) {
+// compositeLegs scans every file for cross-file composites at notable+ and
+// returns what the Content tab needs to show them. forced maps a leg's file to
+// the strongest composite crit referencing it, so the member renders even below
+// the content floor and sorts up to its composite. composites lists each one
+// for attachComposites to name on its first rendered leg.
+//
+// An inherited finding is skipped: a container's copy of a member's own
+// composite (one From, held natively by that member) already renders in the
+// member. A single From is not proof of inheritance on its own — cleave writes
+// one for a composite whose legs span several members, too.
+func compositeLegs(files []cleaveFile) (forced map[int]int, composites []compositeAnno) {
 	forced = map[int]int{}
-	inject = map[int][]anchorAnno{}
+	idToFile := make(map[int]*cleaveFile, len(files))
 	for i := range files {
-		for j := range files[i].Findings {
-			f := &files[i].Findings[j]
-			if len(f.From) <= 1 || f.Crit < minFileCrit {
+		idToFile[files[i].ID] = &files[i]
+	}
+	for i := range files {
+		host := &files[i]
+		for j := range host.Findings {
+			f := &host.Findings[j]
+			if f.Crit < minFileCrit || inherited(f, idToFile) {
 				continue
 			}
-			for _, s := range f.From {
-				if c, ok := forced[s.File]; !ok || f.Crit > c {
-					forced[s.File] = f.Crit
+			legs := compositeSources(f, host)
+			if !crossFile(legs, host.ID) {
+				continue
+			}
+			for _, l := range legs {
+				if c, ok := forced[l.src.File]; !ok || f.Crit > c {
+					forced[l.src.File] = f.Crit
 				}
 			}
 			desc := f.Desc
 			if desc == "" {
 				desc = traitDisplayID(f.ID)
 			}
-			first := f.From[0]
-			inject[first.File] = append(inject[first.File], anchorAnno{src: first, desc: desc, crit: f.Crit})
+			composites = append(composites, compositeAnno{desc: desc, crit: f.Crit, legs: legs})
 		}
 	}
-	return forced, inject
+	return forced, composites
 }
 
-// attachComposite annotates the window row at the leg's location with the
-// composite's description, so a composite's primary member carries the composite
-// name inline. Per cleave's one-comment-per-line rule it replaces the row's
-// native annotation. It is a no-op when the location falls outside every
-// rendered window — the composite still shows on the container with a link here.
-func attachComposite(lws []labeledWindow, a anchorAnno) {
-	for w := range lws {
-		rows := lws[w].Block.Rows
-		for r := range rows {
-			if legAtRow(a.src, &rows[r]) {
-				rows[r].Annos = []rowAnno{{Desc: a.desc, Crit: critIntToString(a.crit)}}
-				return
+// inherited reports whether f is a container's copy of a finding its single
+// source member holds natively.
+func inherited(f *finding, idToFile map[int]*cleaveFile) bool {
+	if len(f.From) != 1 {
+		return false
+	}
+	member, ok := idToFile[f.From[0].File]
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(member.Findings, func(g finding) bool { return g.ID == f.ID && len(g.From) == 0 })
+}
+
+// attachComposites names each cross-file composite inline on its first leg
+// whose row rendered, so a composite never vanishes from the evidence view
+// because its primary leg's file had no window to carry it. The file sorts up
+// to the composite's severity.
+func attachComposites(datas []fileData, composites []compositeAnno) {
+	byFile := make(map[int]*fileData, len(datas))
+	for d := range datas {
+		byFile[datas[d].file.ID] = &datas[d]
+	}
+	for _, c := range composites {
+		for _, l := range c.legs {
+			fd, ok := byFile[l.src.File]
+			if ok && attachComposite(fd.lws, l, c.desc, c.crit) {
+				fd.maxCrit = max(fd.maxCrit, c.crit)
+				break
 			}
 		}
 	}
+}
+
+// attachComposite annotates the window row at the leg's location with the
+// composite's description, so a composite's member carries the composite name
+// inline. Per cleave's one-comment-per-line rule it replaces the row's native
+// annotation. A leg cleave recorded without a location is found by its own
+// trait instead: the row annotated with the leg's description, else the first
+// highlighted row of a window the leg's note falls in. Reports whether a row
+// took the annotation.
+func attachComposite(lws []labeledWindow, leg legSource, desc string, crit int) bool {
+	located := leg.src.Line != nil || leg.src.Offset != nil
+	var fallback *contextRow
+	for w := range lws {
+		rows := lws[w].Block.Rows
+		holdsLeg := !located && slices.ContainsFunc(lws[w].Notes, func(n ctxNoteRef) bool { return n.ID == leg.id })
+		for r := range rows {
+			row := &rows[r]
+			if (located && legAtRow(leg.src, row)) || (holdsLeg && annotatedWith(row, leg.desc)) {
+				row.Annos = []rowAnno{{Desc: desc, Crit: critIntToString(crit)}}
+				return true
+			}
+			if holdsLeg && fallback == nil && highlighted(row) {
+				fallback = row
+			}
+		}
+	}
+	if fallback == nil {
+		return false
+	}
+	fallback.Annos = []rowAnno{{Desc: desc, Crit: critIntToString(crit)}}
+	return true
+}
+
+// annotatedWith reports whether a row carries a written note with desc.
+func annotatedWith(row *contextRow, desc string) bool {
+	return desc != "" && slices.ContainsFunc(row.Annos, func(a rowAnno) bool { return a.Desc == desc })
+}
+
+// highlighted reports whether any of a row's segments is a matched span.
+func highlighted(row *contextRow) bool {
+	return slices.ContainsFunc(row.Segs, func(sg contextSeg) bool { return sg.Crit != "" })
 }
 
 // legAtRow reports whether a composite leg's location falls on a context row: a
