@@ -2542,7 +2542,7 @@ func securityHeaders(next http.Handler) http.Handler {
 				"font-src 'self'; "+
 				"img-src 'self'; "+
 				// The API page runs its example requests from the browser.
-				"connect-src 'self' "+strings.TrimSuffix(sha256API, "/")+" "+strings.TrimSuffix(purlAPI, "/")+"; "+
+				"connect-src 'self' "+strings.TrimSuffix(sha256API, "/")+"; "+
 				"worker-src 'self'; "+
 				"frame-src 'none'; "+
 				"frame-ancestors 'none'; "+
@@ -4317,8 +4317,12 @@ func composeSearchQuery(crit, purl, eco, domain, formula, q string) string {
 	if crit != "" {
 		parts = append(parts, "crit:"+crit)
 	}
+	// A PURL needs no key: its pkg: scheme already says what it is.
 	if purl != "" {
-		parts = append(parts, "purl:"+purl)
+		if !strings.HasPrefix(purl, "pkg:") {
+			purl = "purl:" + purl
+		}
+		parts = append(parts, purl)
 	}
 	if eco != "" {
 		parts = append(parts, "ecosystem:"+eco)
@@ -4636,6 +4640,11 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 	// case here: /NPM/ and /npm/ then share one cache key and one query
 	// instead of fragmenting into a hit and a guaranteed miss.
 	eco := strings.ToLower(strings.Trim(r.PathValue("ecosystem"), "/"))
+	// A Package URL as written: /pkg:npm/lodash@4.17.21.
+	if strings.HasPrefix(eco, "pkg:") {
+		servePURL(w, r, strings.Trim(r.URL.Path, "/"))
+		return
+	}
 	if !validEcosystem(eco) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -4651,28 +4660,22 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 	renderFeed(w, r, feedScope{ecosystem: eco})
 }
 
-// servePURL resolves a package coordinate from the URL path. A versioned
-// coordinate that pins exactly one sample lands directly on its /file page;
-// everything else — a version-less package, several matches, an unknown
-// package, hopper down — renders the feed filtered to that identity in
-// place, so /npm/lodash is the package's version index the way /npm/ is the
-// ecosystem's. A version-less coordinate always gets the index (never the
-// sole-sample shortcut): its URL promises every release, even when only one
-// exists yet. The redirect targets are a constant and a DB-sourced hex sha,
-// so no user-controlled byte ever starts the Location header (the
-// open-redirect trick validEcosystem defeats).
+// servePURL resolves a package coordinate from the URL path, written either
+// way: /npm/lodash@4.17.21 or /pkg:npm/lodash@4.17.21. A coordinate that
+// matches exactly one file lands on that file's page; anything else (several
+// files, none, hopper down) renders the package's file list in place. The
+// redirect target is a DB-sourced hex sha behind a literal "/", so no
+// user-controlled byte reaches the Location header.
 func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
 	canonical, base, version := normalizePURL(coordinate)
 	if base == "" {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	if version != "" {
-		if sha := soleSampleByPURL(r.Context(), base, version); sha != "" {
-			//nolint:gosec // G710: sha is a DB-sourced 64-hex digest behind a literal "/", so the target stays same-origin.
-			http.Redirect(w, r, "/"+sha, http.StatusFound)
-			return
-		}
+	if sha := soleSampleByPURL(r.Context(), base, version); sha != "" {
+		//nolint:gosec // G710: sha is a DB-sourced 64-hex digest behind a literal "/", so the target stays same-origin.
+		http.Redirect(w, r, "/"+sha, http.StatusFound)
+		return
 	}
 	renderFeed(w, r, feedScope{purl: canonical})
 }
@@ -4857,6 +4860,18 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 		}
 	}
 	purlCanonical, purlBase, purlVersion := normalizePURL(rawPURL)
+	// A PURL alone in the box is a lookup, not a filter: send it to its address.
+	if scope.purl == "" && purlBase != "" && searchRaw == "" {
+		lone := true
+		for key := range query {
+			lone = lone && (key == "q" || key == "purl")
+		}
+		if target := "/" + purlDisplayString(purlCanonical); lone && !strings.ContainsAny(target, "?# ") {
+			//nolint:gosec // G710: normalizePURL always yields "pkg:…", so "/pkg:…" stays a same-origin path.
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+	}
 	// Identity-claim filter: JS sends ?name= / ?signer=; a no-JS client types
 	// `name:` / `signer:` into the box. Like the purl sniff above, a consumed
 	// token must not also run as a filename search.

@@ -85,8 +85,8 @@ func TestNewPackageView(t *testing.T) {
 	shown[0].Users = "1,234"
 
 	v := newPackageView("pkg:pypi/thing", "1.0", all, shown)
-	if v.PURL != "pkg:pypi/thing@1.0" || v.JSON != purlAPI+"pkg:pypi/thing@1.0" {
-		t.Errorf("PURL = %q, JSON = %q", v.PURL, v.JSON)
+	if v.PURL != "pkg:pypi/thing@1.0" {
+		t.Errorf("PURL = %q", v.PURL)
 	}
 	if v.Files != "2, 1 hostile" || v.Downloads != "1,234" {
 		t.Errorf("Files = %q, Downloads = %q", v.Files, v.Downloads)
@@ -208,33 +208,46 @@ func TestListRow(t *testing.T) {
 func TestPackagePageRenders(t *testing.T) {
 	uploadTemplate = uploadTemplateForTest(t)
 	t.Cleanup(func() { uploadTemplate = nil })
-	rr := httptest.NewRecorder()
-	newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/pypi/cryptography@48.0.0", http.NoBody))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d", rr.Code)
-	}
-	body := rr.Body.String()
-	for _, want := range []string{
-		`<dd class="mono">pkg:pypi/cryptography@48.0.0</dd>`,
-		`href="https://pypi.org/project/cryptography/48.0.0"`,
-		`href="` + purlAPI + `pkg:pypi/cryptography@48.0.0"`,
-		"No database.", // nothing is connected in this test
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("package page missing %q", want)
+	for _, path := range []string{"/pypi/cryptography@48.0.0", "/pkg:pypi/cryptography@48.0.0", "/PKG:pypi/cryptography@48.0.0"} {
+		rr := httptest.NewRecorder()
+		newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rr.Code)
+		}
+		body := rr.Body.String()
+		for _, want := range []string{
+			`<dd class="mono">pkg:pypi/cryptography@48.0.0</dd>`,
+			`href="https://pypi.org/project/cryptography/48.0.0"`,
+			"No database.", // nothing is connected in this test
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("GET %s: package page missing %q", path, want)
+			}
 		}
 	}
 }
 
-// A PURL typed into the box reaches the server in ?q= when no script rewrote
-// it; it must still land on the package, not run as a filename search.
-func TestPURLInSearchBoxIsAPackage(t *testing.T) {
+// A PURL typed alone into the box is a lookup: it goes to the PURL's own
+// address, however it reached the server. With anything else beside it, it
+// stays a filter on the stream.
+func TestPURLInSearchBoxIsALookup(t *testing.T) {
+	for path, want := range map[string]string{
+		"/stream?q=pkg:npm/lodash":              "/pkg:npm/lodash",
+		"/stream?q=purl:npm/lodash@4.17.21":     "/pkg:npm/lodash@4.17.21",
+		"/stream?purl=pkg:npm/%40scope/x@1.0.0": "/pkg:npm/@scope/x@1.0.0",
+	} {
+		rr := httptest.NewRecorder()
+		newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+		if rr.Code != http.StatusFound || rr.Header().Get("Location") != want {
+			t.Errorf("GET %s = %d %q, want 302 %q", path, rr.Code, rr.Header().Get("Location"), want)
+		}
+	}
 	uploadTemplate = uploadTemplateForTest(t)
 	t.Cleanup(func() { uploadTemplate = nil })
 	rr := httptest.NewRecorder()
-	newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/stream?q=pkg:npm/lodash", http.NoBody))
-	if body := rr.Body.String(); !strings.Contains(body, `aria-label="Provenance"`) {
-		t.Error("?q=pkg:npm/lodash did not render the package page")
+	newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/stream?purl=pkg:npm/lodash&criticality=hostile", http.NoBody))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `aria-label="Provenance"`) {
+		t.Errorf("a filtered PURL search = %d, want the package page in place", rr.Code)
 	}
 }
 
@@ -341,7 +354,7 @@ func TestCSPAllowsTheAPI(t *testing.T) {
 	rr := httptest.NewRecorder()
 	securityHeaders(http.NotFoundHandler()).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api", http.NoBody))
 	csp := rr.Header().Get("Content-Security-Policy")
-	if want := "connect-src 'self' https://sha256.is https://purl.is; "; !strings.Contains(csp, want) {
+	if want := "connect-src 'self' https://sha256.is; "; !strings.Contains(csp, want) {
 		t.Errorf("CSP = %q, want it to contain %q", csp, want)
 	}
 }

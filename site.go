@@ -13,11 +13,8 @@ import (
 	"time"
 )
 
-// The lookup API's two front doors, one per kind of key.
-const (
-	sha256API = "https://sha256.is/"
-	purlAPI   = "https://purl.is/"
-)
+// sha256API is the lookup API's front door.
+const sha256API = "https://sha256.is/"
 
 // homeRows is how many rows each list on the home page previews.
 const homeRows = 5
@@ -284,9 +281,7 @@ type packageView struct {
 	// Downloads is the registry's install count, empty when it gave none.
 	Downloads string
 	// Files counts the rows shown and the hostile ones among them.
-	Files string
-	// JSON is the API's answer for the same coordinate.
-	JSON     string
+	Files    string
 	Versions []pill
 }
 
@@ -298,7 +293,6 @@ func newPackageView(base, version string, all, shown []feedRow) *packageView {
 	v := &packageView{
 		PURL:     display,
 		Registry: registryURL(base, version),
-		JSON:     purlAPI + display,
 	}
 	v.RegistryLabel = strings.TrimSuffix(strings.TrimPrefix(registryURL(base, ""), "https://"), "/")
 	hostile := 0

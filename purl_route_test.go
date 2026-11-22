@@ -9,10 +9,8 @@ import (
 
 // TestPURLRoutes covers the redirecting edges of the record-by-Package-URL
 // path: a degenerate coordinate (no name) drops to the frontpage instead of
-// a dead filter, and a first segment that isn't a plausible ecosystem (e.g.
-// a pasted pkg: scheme) keeps the ecosystem route's old redirect-home
-// behavior. The direct /file/{sha} redirect needs a live hopper sample to
-// pin exactly one record, so it isn't reachable here.
+// a dead filter, whichever way it is spelled. The redirect to a sole file
+// needs a live hopper sample, so it isn't reachable here.
 func TestPURLRoutes(t *testing.T) {
 	mux := newMux()
 	tests := []struct {
@@ -20,7 +18,7 @@ func TestPURLRoutes(t *testing.T) {
 		want string
 	}{
 		{"/npm/%20", "/"},
-		{"/pkg:npm/lodash@4.17.21", "/"},
+		{"/pkg:npm/%20", "/"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -93,12 +91,12 @@ func TestPackageVersionIndex(t *testing.T) {
 		path string
 		want string // canonical coordinate expected in the search box
 	}{
-		{"/npm/lodash", "purl:pkg:npm/lodash"},
-		{"/npm/lodash/", "purl:pkg:npm/lodash"},
-		{"/NPM/lodash@4.17.21", "purl:pkg:npm/lodash@4.17.21"},
+		{"/npm/lodash", `value="pkg:npm/lodash"`},
+		{"/npm/lodash/", `value="pkg:npm/lodash"`},
+		{"/NPM/lodash@4.17.21", `value="pkg:npm/lodash@4.17.21"`},
 		// CanonicalizePURL stores npm scope as %40; the search box shows @.
-		{"/npm/@scope/pkg@1.0.0", "purl:pkg:npm/@scope/pkg@1.0.0"},
-		{"/golang/github.com/user/repo@v1.0.0", "purl:pkg:golang/github.com/user/repo@v1.0.0"},
+		{"/npm/@scope/pkg@1.0.0", `value="pkg:npm/@scope/pkg@1.0.0"`},
+		{"/golang/github.com/user/repo@v1.0.0", `value="pkg:golang/github.com/user/repo@v1.0.0"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {

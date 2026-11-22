@@ -168,7 +168,8 @@ function composeQueryString(parsed) {
   if (parsed.name) return `name:${parsed.name}`;
   if (parsed.signer) return `signer:${parsed.signer}`;
   if (parsed.crit) parts.push(`crit:${parsed.crit}`);
-  if (parsed.purl) parts.push(`purl:${parsed.purl}`);
+  // A PURL needs no key: its pkg: scheme already says what it is.
+  if (parsed.purl) parts.push(/^pkg:/i.test(parsed.purl) ? parsed.purl : `purl:${parsed.purl}`);
   if (parsed.ecosystem) parts.push(`ecosystem:${parsed.ecosystem}`);
   if (parsed.domain) parts.push(`domain:${parsed.domain}`);
   if (parsed.m) parts.push(`m:${parsed.m}`);
