@@ -106,7 +106,8 @@ func TestEveryFeedStashesItsOrder(t *testing.T) {
 			continue
 		}
 		body := readStatic(t, "templates/"+page.Name())
-		if !strings.Contains(body, `class="file-link"`) {
+		// The row lives in base.html; a feed is a page that renders it.
+		if !strings.Contains(body, `{{template "listrow" .}}`) {
 			continue // not a feed: nothing to stash
 		}
 		checked++
@@ -116,7 +117,7 @@ func TestEveryFeedStashesItsOrder(t *testing.T) {
 		}
 	}
 	if checked == 0 {
-		t.Fatal("found no feed template rendering a.file-link; the selector has moved")
+		t.Fatal("found no feed template rendering the shared row; the partial has moved")
 	}
 }
 

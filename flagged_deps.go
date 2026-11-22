@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"slices"
 	"strings"
+
+	"github.com/atomdrift-project/hopper"
 )
 
 // maxFlaggedDeps bounds how many dependency chips the panel renders. A crafted
@@ -44,7 +46,12 @@ type flaggedDep struct {
 // Structure tab does that). Sidecars are skipped: a registry record about a
 // dependency is provenance, not the payload. Returns the capped chips and how
 // many were dropped, so the panel can say so instead of silently truncating.
-func flaggedDeps(files []cleaveFile) (flagged []flaggedDep, dropped int) {
+//
+// raisers are the references hopper's lookup found hostile on their own record
+// (a go.mod requirement, a workflow action) without atomscan having fetched
+// them into the report; they raise the verdict just the same, so they join the
+// panel. Members are left to the evidence view, which already shows them.
+func flaggedDeps(files []cleaveFile, raisers []hopper.LookupRaiser) (flagged []flaggedDep, dropped int) {
 	declared := declaredLocators(files)
 
 	var deps []flaggedDep
@@ -82,20 +89,41 @@ func flaggedDeps(files []cleaveFile) (flagged []flaggedDep, dropped int) {
 			Crit:    f.Classification,
 			critN:   crit,
 		}
-		if eco, name, version, isPURL := purlCoords(locator); isPURL {
-			dep.Label = eco + ": " + name
-			if version != "" {
-				dep.Label += " v" + version
-			}
-		} else {
-			dep.Label = urlCoords(locator)
-			if f.FileType != "" && f.FileType != "unknown" {
-				dep.Kind = f.FileType
-			}
+		var isPURL bool
+		dep.Label, isPURL = depLabel(locator)
+		if !isPURL && f.FileType != "" && f.FileType != "unknown" {
+			dep.Kind = f.FileType
 		}
-		dep.Label = truncateRunes(dep.Label, 60)
 		if validSHA256(f.SHA256) {
 			dep.Href = "/file/" + f.SHA256
+		}
+		deps = append(deps, dep)
+	}
+	for _, r := range raisers {
+		if r.Kind == "member" || r.Name == "" {
+			continue
+		}
+		locator := r.Name
+		if r.Version != "" && isPURL(locator) {
+			locator += "@" + r.Version
+		}
+		sha := ""
+		if r.SHA256 != nil {
+			sha = *r.SHA256
+		}
+		key := sha
+		if !validSHA256(key) {
+			key = locator
+		}
+		crit := classFromLevel(r.FiresAt)
+		if crit < 1 || seen[key] {
+			continue
+		}
+		seen[key] = true
+		dep := flaggedDep{Locator: locator, SHA256: sha, Crit: classificationName(crit), critN: crit}
+		dep.Label, _ = depLabel(locator)
+		if validSHA256(sha) {
+			dep.Href = "/file/" + sha
 		}
 		deps = append(deps, dep)
 	}
@@ -107,6 +135,20 @@ func flaggedDeps(files []cleaveFile) (flagged []flaggedDep, dropped int) {
 		return deps[:maxFlaggedDeps], len(deps) - maxFlaggedDeps
 	}
 	return deps, 0
+}
+
+// depLabel is a dependency chip's text: "npm: zaboodle v1.49" for a PURL,
+// "x.y.z/x.exe" for a URL, capped for display. isPURL reports which.
+func depLabel(locator string) (label string, isPURL bool) {
+	eco, name, version, isPURL := purlCoords(locator)
+	if !isPURL {
+		return truncateRunes(urlCoords(locator), 60), false
+	}
+	label = eco + ": " + name
+	if version != "" {
+		label += " v" + strings.TrimPrefix(version, "v") // Go versions carry their own
+	}
+	return truncateRunes(label, 60), true
 }
 
 // declaredLocators maps each resolved file id to the locator its referrer

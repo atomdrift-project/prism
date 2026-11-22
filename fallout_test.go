@@ -515,9 +515,6 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		HeatClass: "heat-2",
 		Ribbon:    "biggest blast radius",
 	}}
-	rows[0].MaleculeSVG = template.HTML(maleculeSVG(maleculeFromFormula(wave.Formula, []feedTrait{
-		{ID: "cred/browser-cookies", Full: "objectives/credential-access/browser::cookies", Crit: "hostile"},
-	}), 132, 62))
 	data := falloutPageData{
 		Nonce:         "test-script-nonce",
 		HasHopper:     true,
@@ -547,14 +544,7 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		"and <b>22</b> siblings",
 		"/file/" + testSHAHero,
 		"/fallout?ecosystem=npm",
-		// The malecule. A feed row has no cleave graph, but the formula's own
-		// lead-and-group structure is the same composite-depends-on-atomic
-		// relation, so the row draws a skeleton with real bonds and full
-		// two-segment paths — the same picture the sample page draws.
-		`<title>objectives/credential-access</title>`,
-		`class="malecule"`,
-		"<line",
-		// The rail: the day anchor.
+		// The day head links to itself, so a day can be cited.
 		`href="#day-2026-08-04"`,
 		// The week nav: a link back through the archive, and no forward link
 		// on the week in progress.

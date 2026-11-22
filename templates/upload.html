@@ -1,723 +1,68 @@
-{{- /* One evidence chip. A dependency-verdict chip carries an Href to the
-     dependency's own record and renders as a link; every other chip is a
-     plain span. Same classes either way, so they read as one family. */ -}}
-{{- define "why-chip" -}}
-{{- if .Href -}}
-<a class="why-chip crit-{{.Crit}}" href="{{.Href}}" title="{{.Full}}">{{.ID}}</a>
-{{- else -}}
-<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>
-{{- end -}}
-{{- end -}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    <title>{{if isPublic}}OpenHash{{else}}litmus{{end}} - Index</title>
+    <title>{{.Title}} - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{.Title}} — {{if isPublic}}OpenHash{{else}}litmus{{end}}" />
-    <meta property="og:description" content="Every file the lab has analyzed, with its evidence. Ask for a hash, a package, a formula, or just a name." />
-    <meta name="description" content="Every file the lab has analyzed, with its evidence. Ask for a hash, a package, a formula, or just a name." />
+    <meta property="og:description" content="{{or .Lede "Every analyzed file."}}" />
+    <meta name="description" content="{{or .Lede "Every analyzed file."}}" />
     <meta name="twitter:card" content="summary" />
-    <link rel="alternate" type="application/atom+xml" title="Fallout — hostile catches" href="/feed.atom" />
+    <link rel="alternate" type="application/atom+xml" title="Malware" href="/feed.atom" />
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
-        :root {
-            --carbon: #0a0a0a;
-            --graphite: #404040;
-            --iron: #52525b;
-            --slate: #6b7280;
-            --muted: #6b7280;
-            --mist: #f5f5f5;
-            --white: #ffffff;
-            --cream: #ffffff;
-            --border: #e8e8e8;
-            --isotope: #2563eb;
-            --toxic: #d0ff00;
-            --toxic-muted: #9abe25;
-            --toxic-dark: #4a6b0f;
-            --toxic-dim: #f8ffdb;
-            --hostile: #e11d48;
-            --suspicious: #d97706;
-            --benign: #9abe25;
-            --mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
-            /* Aliases for the shared header and footer (chromestyle). Same
-               values as this page's own names, under the site-wide vocabulary. */
-            --ink: #0a0a0a;
-            --ink-mid: #404040;
-            --ink-light: #6b7280;
-            --paper: #ffffff;
-            --rule: #e8e8e8;
-            --toxic-border: #d9ea9a;
-            --display: "Oxanium", sans-serif;
-        }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            min-height: 100vh;
-            background: var(--cream);
-            color: var(--carbon);
-            font-family: "Inter", system-ui, -apple-system, sans-serif;
-            font-size: 14px;
-            line-height: 1.45;
-            -webkit-font-smoothing: antialiased;
-        }
-        a { color: inherit; }
-        .shell {
-            width: min(1320px, calc(100vw - 32px));
-            margin: 0 auto;
-            padding: 24px 0 28px;
-        }
-{{template "chromestyle" .}}
-        .nav-count {
-            font-family: var(--mono);
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid var(--toxic-border);
-            border-radius: 999px;
-            padding: 0 6px;
-            line-height: 1.5;
-            font-variant-numeric: tabular-nums;
-        }
-        .top-upload {
-            margin: 0;
-            position: relative;
-        }
-        .top-upload input[type="file"] {
-            position: absolute;
-            inline-size: 1px;
-            block-size: 1px;
-            opacity: 0;
-            pointer-events: none;
-        }
-        .top-upload-status {
-            position: absolute;
-            z-index: 2;
-            right: 0;
-            top: calc(100% + 12px);
-            max-width: min(360px, 70vw);
-            padding: 5px 10px;
-            border: 1px solid var(--toxic-border);
-            border-radius: 999px;
-            background: var(--paper);
-            box-shadow: 0 4px 14px rgba(74, 107, 15, 0.12);
-            color: var(--muted);
-            font-size: 12px;
-            line-height: 1.35;
-            white-space: nowrap;
-        }
-        .top-upload-status:empty { display: none; }
-        .top-upload-status.is-analyzing {
-            display: inline-flex;
-            align-items: center;
-            color: var(--carbon);
-            font-size: 14px;
-            font-weight: 700;
-            letter-spacing: 0;
-        }
-        .analyzing-dots {
-            display: inline-flex;
-            align-items: flex-end;
-            gap: 3px;
-            margin-left: 3px;
-            margin-right: 5px;
-            height: 0.9em;
-            vertical-align: baseline;
-        }
-        .analyzing-dots span {
-            width: 5px;
-            height: 5px;
-            border-radius: 50%;
-            background: var(--toxic-dark);
-            animation: fallout-dot-bounce 0.86s infinite ease-in-out;
-        }
-        .analyzing-dots span:nth-child(2) {
-            animation-delay: 0.12s;
-        }
-        .analyzing-dots span:nth-child(3) {
-            animation-delay: 0.24s;
-        }
-        .analyzing-file {
-            color: var(--muted);
-            font-weight: 700;
-        }
-        @keyframes fallout-dot-bounce {
-            0%, 80%, 100% {
-                transform: translateY(0);
-                opacity: 0.45;
-            }
-            40% {
-                transform: translateY(-6px);
-                opacity: 1;
-            }
-        }
-        .intro {
-            padding: 20px 0 16px;
-        }
-        .headline {
-            padding-bottom: 4px;
-        }
-        h1 {
-            margin: 0;
-            font-size: 24px;
-            line-height: 1.1;
-            letter-spacing: 0;
-            font-weight: 650;
-        }
-        .search-title {
-            margin: 0;
-            font-family: "Oxanium", monospace;
-            font-weight: 700;
-            font-size: 24px;
-            line-height: 1.1;
-        }
-        .search-eco { color: var(--toxic-dark); }
-        .lede {
-            max-width: none;
-            margin: 6px 0 0;
-            color: var(--iron);
-            font-size: 13.5px;
-            white-space: nowrap;
-        }
-        .lede a { color: var(--toxic-dark); font-weight: 600; text-decoration: none; }
-        .lede a:hover { text-decoration: underline; text-underline-offset: 3px; }
-        /* Masthead: the Fallout lockup on the left, the live "samples analyzed"
-           counter (Peak Meter) on the right. Bottom-aligned so the number sits
-           on the lede's baseline and the two columns read as one lockup. */
-        .masthead {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 14px 48px;
-            align-items: end;
-        }
-        .mh-lock { min-width: 0; }
-        .mh-lock .lede { white-space: normal; max-width: 52ch; text-wrap: balance; }
-        .counter {
-            display: grid;
-            gap: 10px;
-            justify-items: end;
-            min-width: 0;
-        }
-        .c-eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-family: var(--mono);
-            font-size: 11px;
-            letter-spacing: 0.13em;
-            text-transform: uppercase;
-            color: var(--slate);
-            white-space: nowrap;
-        }
-        .live-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: var(--toxic-muted);
-            box-shadow: 0 0 0 3px var(--toxic-dim);
-            flex: 0 0 auto;
-        }
-        .meter-row { display: flex; align-items: flex-end; gap: 16px; }
-        .meter-num {
-            font-family: var(--mono);
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
-            font-size: clamp(30px, 5vw, 50px);
-            color: var(--carbon);
-            line-height: 1;
-            letter-spacing: -0.01em;
-        }
-        .filters {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            padding: 16px 0;
-            border-top: 1px solid var(--border);
-            border-bottom: 1px solid var(--border);
-        }
-        .filters-row {
-            display: flex;
-            align-items: end;
-            justify-content: space-between;
-            gap: 16px;
-        }
-        .search-form {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            width: 100%;
-        }
-        .search-form input[type="search"] {
-            flex: 1 1 auto;
-            min-width: 0;
-            min-height: 38px;
-            font-family: var(--mono);
-            font-size: 13.5px;
-            padding: 0 12px;
-        }
-        .search-form input[type="search"]::placeholder {
-            color: var(--slate);
-            font-family: var(--mono);
-        }
-        .search-form input[type="search"]:focus {
-            border-color: var(--toxic-muted);
-            outline: none;
-            box-shadow: 0 0 0 2px var(--toxic-dim);
-        }
-        .search-help {
-            flex: 0 0 auto;
-            font-size: 12px;
-            color: var(--slate);
-            text-decoration: none;
-            padding: 4px 8px;
-            border: 1px solid var(--border);
-            border-radius: 999px;
-            line-height: 1;
-            white-space: nowrap;
-            transition: color 0.12s, border-color 0.12s, background 0.12s;
-        }
-        .search-help:hover {
-            color: var(--toxic-dark);
-            border-color: var(--toxic-muted);
-            background: var(--toxic-dim);
-        }
-        .filter-form {
-            display: flex;
-            align-items: end;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .field {
-            display: grid;
-            gap: 5px;
-        }
-        .field label {
-            color: var(--muted);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            font-weight: 700;
-        }
-        .field.check .box {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            min-height: 34px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            background: var(--white);
-            padding: 0 12px;
-            cursor: pointer;
-            font-size: 13px;
-            color: var(--graphite);
-            text-transform: none;
-            letter-spacing: normal;
-            font-weight: 400;
-            user-select: none;
-        }
-        .field.check input {
-            accent-color: var(--toxic-dark);
-            width: 14px;
-            height: 14px;
-            margin: 0;
-        }
-        select, input[type="search"] {
-            min-height: 34px;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            background: var(--white);
-            color: var(--carbon);
-            padding: 0 10px;
-            font: inherit;
-        }
-        .count {
-            color: var(--muted);
-            font-size: 12px;
-            white-space: nowrap;
-        }
-        .pager {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            align-items: center;
-            padding: 12px;
-            border-top: 1px solid var(--border);
-        }
-        .pager-link {
-            min-width: 32px;
-            padding: 5px 9px;
-            text-align: center;
-            font-size: 13px;
-            color: var(--slate);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            text-decoration: none;
-        }
-        .pager-link:hover { border-color: var(--toxic-dark); color: var(--carbon); }
-        .pager-link.current {
-            color: var(--toxic-dark);
-            border-color: var(--toxic-dark);
-            font-weight: 650;
-        }
-        .pager-link.disabled {
-            color: var(--border);
-            cursor: default;
-        }
-        .table-wrap {
-            overflow-x: auto;
-            background: var(--white);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            margin-top: 16px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-        }
-        .row {
-            display: flex;
-            gap: 12px;
-            align-items: flex-start;
-            padding: 9px 14px 10px;
-            border-bottom: 1px solid var(--mist);
-        }
-        .row:nth-child(even) { background: rgba(0, 0, 0, 0.012); }
-        .row:hover { background: var(--toxic-dim); }
-        .row:last-of-type { border-bottom: none; }
-        .row .litmus-stamp { margin-top: 2px; }
-        .row-main {
-            min-width: 0;
-            flex: 1;
-            display: grid;
-            gap: 3px;
-        }
-        .row-id {
-            display: flex;
-            align-items: baseline;
-            gap: 10px;
-            min-width: 0;
-        }
-        .row-id .file-link {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            flex-shrink: 0;
-            max-width: 62%;
-        }
-        .pkg {
-            font-family: var(--mono);
-            font-size: 11.5px;
-            color: var(--graphite);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            min-width: 0;
-        }
-        .desc {
-            color: var(--slate);
-            font-size: 12.5px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            min-width: 0;
-            flex-shrink: 100;
-        }
-        .users {
-            font-size: 12px;
-            color: var(--iron);
-            white-space: nowrap;
-            font-variant-numeric: tabular-nums;
-            flex-shrink: 0;
-        }
-        .users b { font-weight: 600; color: var(--graphite); }
-        .catch-desc {
-            margin: 0;
-            color: var(--slate);
-            font-size: 13px;
-            font-style: italic;
-        }
-        .when {
-            margin-left: auto;
-            font-size: 12px;
-            color: var(--graphite);
-            font-variant-numeric: tabular-nums;
-            white-space: nowrap;
-        }
-        .row-hash {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            min-width: 0;
-        }
-        .file-sha {
-            font-family: var(--mono);
-            font-size: 10.5px;
-            color: var(--slate);
-            letter-spacing: 0.1px;
-            line-height: 1.3;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            cursor: copy;
-        }
-        .file-sha:hover { color: var(--carbon); }
-        .file-sha.copied { color: var(--toxic-dark); }
-        .feedmark {
-            flex-shrink: 0;
-            font-family: var(--mono);
-            font-size: 10.5px;
-            color: var(--toxic-dark);
-            background: var(--toxic-dim);
-            border: 1px solid #d9ea9a;
-            border-radius: 3px;
-            padding: 0 6px;
-            white-space: nowrap;
-            cursor: default;
-        }
-        .row-hash .formula {
-            margin-left: auto;
-            max-width: 34ch;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            min-width: 0;
-        }
-        .row-why {
-            display: flex;
-            align-items: baseline;
-            gap: 8px;
-            min-width: 0;
-        }
-        .conf-chip {
-            flex-shrink: 0;
-            font-family: var(--mono);
-            font-size: 10.5px;
-            color: var(--graphite);
-            background: var(--mist);
-            border: 1px solid var(--border);
-            border-radius: 3px;
-            padding: 1px 6px;
-            font-variant-numeric: tabular-nums;
-            white-space: nowrap;
-            cursor: default;
-        }
-        .why {
-            color: var(--iron);
-            font-size: 12.5px;
-            overflow: hidden;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            line-clamp: 2;
-            -webkit-box-orient: vertical;
-        }
-        .why-chip {
-            flex-shrink: 0;
-            font-family: var(--mono);
-            font-size: 10px;
-            letter-spacing: 0.03em;
-            color: var(--graphite);
-            background: var(--mist);
-            border: 1px solid var(--border);
-            border-radius: 3px;
-            padding: 1px 6px;
-            white-space: nowrap;
-            cursor: default;
-        }
-        .why-chip::before {
-            content: "";
-            display: inline-block;
-            width: 7px;
-            height: 7px;
-            border-radius: 2px;
-            margin-right: 5px;
-        }
-        .why-chip.crit-hostile::before { background: #e11d48; }
-        .why-chip.crit-suspicious::before { background: #facc15; }
-        .row-why .why-chip + .why-chip { margin-left: 6px; }
-        /* Dependency chips are links to the dependency's own record. Same
-           chip anatomy; the ↗ suffix and hover tint are the affordance. A
-           pathological locator ellipsizes rather than stretching the row. */
-        .why-chip {
-            max-width: 48ch;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        a.why-chip {
-            cursor: pointer;
-            text-decoration: none;
-        }
-        a.why-chip::after { content: " ↗"; opacity: 0.55; }
-        a.why-chip:hover, a.why-chip:focus-visible {
-            color: var(--toxic-dark);
-            border-color: var(--toxic-muted);
-            background: var(--toxic-dim);
-        }
-        a.why-chip:focus-visible { outline: 2px solid var(--toxic-muted); outline-offset: 1px; }
-        .ledger-label {
-            display: flex;
-            align-items: baseline;
-            gap: 10px;
-            padding: 16px 0 0;
-        }
-        .ledger-label .l-title {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--slate);
-            font-weight: 700;
-        }
-        .ledger-label .l-sub { font-size: 12px; color: var(--slate); }
-        .ledger-label + .table-wrap { margin-top: 10px; }
-        .litmus-stamp {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 20px;
-            height: 20px;
-            border-radius: 4px;
-            flex-shrink: 0;
-        }
-        .litmus-stamp:hover {
-            background: var(--mist);
-        }
-        .band {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 2px;
-        }
-        .band.hostile { background: #e11d48; }
-        .band.suspicious { background: #facc15; }
-        .band.benign { background: #22c55e; }
-        .eco-badge {
-            display: inline-flex;
-            align-items: center;
-            font-family: var(--mono);
-            font-size: 10.5px;
-            border: 1px solid transparent;
-            border-radius: 3px;
-            padding: 1px 6px;
-            letter-spacing: 0.3px;
-            text-decoration: none;
-        }
-        .eco-badge.eco-red    { color: #991b1b; background: rgba(239, 68, 68, 0.10);  border-color: rgba(239, 68, 68, 0.25); }
-        .eco-badge.eco-rose   { color: #9f1239; background: rgba(244, 63, 94, 0.10);  border-color: rgba(244, 63, 94, 0.25); }
-        .eco-badge.eco-orange { color: #9a3412; background: rgba(249, 115, 22, 0.12); border-color: rgba(249, 115, 22, 0.25); }
-        .eco-badge.eco-yellow { color: #854d0e; background: rgba(234, 179, 8, 0.14);  border-color: rgba(234, 179, 8, 0.30); }
-        .eco-badge.eco-brown  { color: #78350f; background: rgba(161, 98, 7, 0.12);   border-color: rgba(161, 98, 7, 0.28); }
-        .eco-badge.eco-green  { color: #166534; background: rgba(34, 197, 94, 0.10);  border-color: rgba(34, 197, 94, 0.25); }
-        .eco-badge.eco-cyan   { color: #155e75; background: rgba(6, 182, 212, 0.10);  border-color: rgba(6, 182, 212, 0.25); }
-        .eco-badge.eco-blue   { color: #1e40af; background: rgba(59, 130, 246, 0.10); border-color: rgba(59, 130, 246, 0.22); }
-        .eco-badge.eco-indigo { color: #3730a3; background: rgba(99, 102, 241, 0.10); border-color: rgba(99, 102, 241, 0.25); }
-        .eco-badge.eco-purple { color: #6b21a8; background: rgba(168, 85, 247, 0.10); border-color: rgba(168, 85, 247, 0.25); }
-        .eco-badge.eco-slate  { color: var(--graphite); background: var(--mist); border-color: var(--border); }
-        .eco-badge:hover { filter: brightness(0.95); }
-        .file-link {
-            color: var(--carbon);
-            text-decoration: underline;
-            text-underline-offset: 3px;
-            text-decoration-thickness: 1px;
-            font-weight: 650;
-        }
-        .file-link:hover, .cell-link:hover {
-            color: var(--carbon);
-            text-decoration-thickness: 2px;
-        }
-        .cell-link {
-            color: var(--slate);
-            text-decoration: underline;
-            text-underline-offset: 3px;
-            text-decoration-thickness: 1px;
-        }
-        .mono { font-family: var(--mono); font-size: 12px; }
-        .empty {
-            padding: 42px 12px;
-            color: var(--muted);
-            text-align: center;
-        }
-        .feed-degraded {
-            margin-bottom: 12px;
-            padding: 10px 14px;
-            border: 1px solid var(--warn, #b8860b);
-            border-radius: 6px;
-            background: color-mix(in srgb, var(--warn, #b8860b) 12%, transparent);
-            color: var(--muted);
-            font-size: 0.9em;
-            text-align: center;
-        }
-        @media (max-width: 860px) {
-            .shell { width: min(100vw - 22px, 1320px); padding-top: 14px; }
-            .filters-row { align-items: stretch; flex-direction: column; }
-            h1 { font-size: 22px; }
-            .lede { white-space: normal; }
-            .masthead { grid-template-columns: 1fr; gap: 16px; }
-            .mh-lock .lede { max-width: none; }
-            .counter { justify-items: start; }
-            .top-upload-status { position: static; margin-top: 8px; white-space: normal; }
-            .filter-form { display: grid; grid-template-columns: 1fr; }
-            select { width: 100%; }
-            .row-id { flex-wrap: wrap; }
-            .row-id .file-link { max-width: 100%; }
-            .row-hash { flex-wrap: wrap; }
-            .row-hash .formula { margin-left: 0; }
-        }
+        {{template "sitestyle" .}}
+        /* A package's provenance: a strip of labelled facts. */
+        .facts { display: flex; flex-wrap: wrap; margin: 0; }
+        .facts div { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 14px 20px; }
+        .facts dd { margin: 0; overflow-wrap: anywhere; }
+        .facts .mono, .json a { font-family: var(--mono); font-size: 13px; }
+        .json { justify-content: flex-start; }
+        .json a { min-height: 44px; display: inline-flex; align-items: center; color: var(--ink); font-weight: 400; overflow-wrap: anywhere; text-decoration: underline; text-decoration-color: var(--toxic-muted); text-underline-offset: 3px; }
     </style>
 </head>
 <body>
     {{template "banner" .}}
-    <nav class="topbar" aria-label="Primary">
-        <a href="/" class="logo">{{template "wordmark" .}}</a>
-        <div class="site-nav">
-            <a href="/">Fallout{{if .WeeklyHostile}} <span class="nav-count" title="recent hostile catches in the fallout log">{{.WeeklyHostile}}</span>{{end}}</a>
-            <a href="/stream" class="active">Index</a>
-            <a class="feed-link" href="/feed.atom" title="Atom feed of the latest hostile catches">{{template "feedicon" .}}Feed</a>
-            {{if .UploadEnabled}}
-            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
-                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-                <input type="file" name="file" id="file-input" required />
-                <label class="upload-btn" for="file-input">Upload</label>
-                <div id="upload-status" class="top-upload-status"></div>
-            </form>
-            {{else}}
-            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+    {{template "topbar" .Chrome}}
+    <main class="page">
+        <div class="page-head">
+            <div>
+                <h1>{{.Heading}}</h1>
+                {{with .Lede}}<p class="lede">{{.}}</p>{{end}}
+            </div>
+            {{if and .HasHopper (not .Malware) (not .Package)}}
+            <div class="counter" id="index-counter"{{with .Stats}} data-total="{{.Total}}"{{end}}>
+                <span class="live-dot" id="counter-dot" aria-hidden="true"></span>
+                <span>Files indexed</span>
+                <span id="counter-num">{{with .Stats}}{{commaInt .Total}}+{{end}}</span>
+            </div>
             {{end}}
         </div>
-    </nav>
-    <main class="shell">
-        <section class="intro">
-            <div class="masthead">
-                <div class="headline mh-lock">
-                    <h1 class="search-title">{{if .SelectedEco}}<span class="search-eco">{{.SelectedEco}}</span> · {{end}}Index</h1>
-                    <p class="lede">Query analyzed artifacts from registries, marketplaces, and lab uploads{{if .WeeklyHostile}} — or <a href="/fallout">see the latest {{.WeeklyHostile}} hostile catches in the fallout →</a>{{else}}.{{end}}</p>
-                </div>
-                {{if .HasHopper}}
-                <div class="counter c-meter" id="index-counter" role="img"
-                    aria-label="Files in the index"
-                    {{with .Stats}}data-total="{{.Total}}"{{end}}>
-                    <div class="c-eyebrow"><span class="live-dot" id="counter-dot"></span>Files indexed</div>
-                    <div class="meter-row">
-                        <div class="meter-num" id="counter-num">{{with .Stats}}{{commaInt .Total}}+{{end}}</div>
-                    </div>
-                </div>
-                {{end}}
-            </div>
+        {{with .Package}}
+        <section class="card" aria-label="Provenance">
+            <dl class="facts">
+                <div><dt class="label">PURL</dt><dd class="mono">{{.PURL}}</dd></div>
+                {{if .Registry}}<div><dt class="label">Registry</dt><dd><a class="link" href="{{.Registry}}" rel="noopener">{{.RegistryLabel}}</a></dd></div>{{end}}
+                {{with .Downloads}}<div><dt class="label">Downloads</dt><dd>{{.}}</dd></div>{{end}}
+                {{with .Files}}<div><dt class="label">Files</dt><dd>{{.}}</dd></div>{{end}}
+            </dl>
         </section>
-
-        <section class="filters" aria-label="Feed filters">
-            <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
-                <input type="search" name="q" id="search-input"
-                    value="{{.SearchQuery}}"
-                    placeholder="filename, purl, or sha256"
-                    autocomplete="off" spellcheck="false"
-                    aria-label="Search by SHA, filename, package, purl, malecule, or filter expression" />
-                <a class="search-help" href="/help/query" title="Query syntax">? syntax</a>
-                <a class="search-help" href="/feed.atom" title="Atom feed of the latest hostile catches">⚛ feed</a>
-            </form>
-            <div class="filters-row">
+        {{end}}
+        <section class="card" aria-label="{{.Heading}}">
+            {{if or .Pills (not .Package)}}
+            <div class="bar">
+                {{if .Pills}}
+                <nav class="pills" aria-label="{{if .Package}}Version{{else}}Platform{{end}}">
+                    <span class="label">{{if .Package}}Version{{else}}Platform{{end}}</span>
+                    {{range .Pills}}<a class="pill" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{with .Count}} {{.}}{{end}}</a>{{end}}
+                </nav>
+                {{else if not .Malware}}
                 <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/stream{{end}}" class="filter-form" id="filter-form">
                     <div class="field">
-                        <label for="criticality">Crit</label>
+                        <label class="label" for="criticality">Crit</label>
                         <select name="criticality" id="criticality">
                             <option value="any" {{if not .SelectedCrit}}selected{{end}}>Any</option>
                             <option value="hostile" {{if eq .SelectedCrit "hostile"}}selected{{end}}>Hostile</option>
@@ -727,7 +72,7 @@
                         </select>
                     </div>
                     <div class="field">
-                        <label for="ecosystem">Ecosystem</label>
+                        <label class="label" for="ecosystem-filter">Ecosystem</label>
                         <select id="ecosystem-filter">
                             <option value="" {{if not .SelectedEco}}selected{{end}}>Any</option>
                             {{range .Ecosystems}}
@@ -736,7 +81,7 @@
                         </select>
                     </div>
                     <div class="field">
-                        <label for="domain">Domain</label>
+                        <label class="label" for="domain-filter">Domain</label>
                         <select name="domain" id="domain-filter">
                             <option value="" {{if not .SelectedDomain}}selected{{end}}>Any</option>
                             {{range .Domains}}
@@ -744,84 +89,45 @@
                             {{end}}
                         </select>
                     </div>
-                    <div class="field check">
-                        <label for="feeds-filter">Sighted elsewhere</label>
-                        <label class="box" title="Only samples sighted by an external threat feed">
-                            <input type="checkbox" name="feeds" value="1" id="feeds-filter" {{if .FeedsOnly}}checked{{end}} />
-                        </label>
-                    </div>
                 </form>
+                {{end}}
+                {{if not .Package}}
+                <div class="bar-side">
+                    <label for="feeds-filter" title="Only samples sighted by an external threat feed"><input type="checkbox" name="feeds" value="1" id="feeds-filter" {{if .FeedsOnly}}checked{{end}} />Sighted elsewhere</label>
+                    {{if .Malware}}<a class="link" href="/feed.atom">Atom feed</a>{{else}}<a class="link" href="/help/query">Syntax</a>{{end}}
+                </div>
+                {{end}}
             </div>
-        </section>
-
-        {{if .ZeroState}}
-        <div class="ledger-label">
-            <span class="l-title">Latest analyses</span>
-            <span class="l-sub">the newest records across every verdict — search or filter to dig</span>
-        </div>
-        {{end}}
-        <section class="table-wrap" aria-label="Recently scanned records">
-            {{if .HasHopper}}
-            {{if .FeedDegraded}}
-            <div class="feed-degraded" role="status">The live feed is temporarily unavailable{{if .Rows}}; showing the most recent cached results{{end}}.</div>
             {{end}}
-            <div class="ledger" role="list">
-                {{range .Rows}}
-                <article class="row" role="listitem">
-                    <a class="litmus-stamp" href="?criticality={{.Classification}}" title="{{.Classification}}" aria-label="{{.Classification}}">
-                        <span class="band {{.Classification}}"></span>
-                    </a>
-                    <div class="row-main">
-                        <div class="row-id">
-                            <a class="file-link" href="/file/{{.SHA256}}">{{.Headline}}</a>
-                            {{with .SubID}}<span class="pkg" title="package id">{{.}}</span>{{end}}
-                            {{with .Desc}}<span class="desc">{{.}}</span>{{end}}
-                            {{with .Users}}<span class="users" title="marketplace install count"><b>{{.}}</b> installs</span>{{end}}
-                            <span class="when" title="{{.AnalyzedAt}}">{{.AnalyzedDate}}</span>
-                            {{if .Ecosystem}}
-                                {{if .EcosystemURL}}<a class="eco-badge eco-{{ecoColor .Ecosystem}}" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{else}}<span class="eco-badge eco-{{ecoColor .Ecosystem}}">{{.Ecosystem}}</span>{{end}}
-                            {{end}}
-                        </div>
-                        <div class="row-hash">
-                            <span class="file-sha" title="click to copy">{{.SHA256}}</span>
-                            {{if .Corroborated}}<span class="feedmark" title="Sighted by an external threat feed">✓</span>{{end}}
-                            {{if .Formula}}<a class="cell-link mono formula" href="/?m={{formulaQuery .Formula}}">{{.Formula}}</a>{{end}}
-                        </div>
-                        {{if .Why}}
-                        <div class="row-why">
-                            {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
-                            <span class="why">{{.Why}}</span>
-                            {{/* Dependency chips ride alongside the prose: the rationale
-                                 says why this sample is elevated, the chip is the only
-                                 link to the dependency that made it so. */}}
-                            {{range .DependencyTraits}}{{template "why-chip" .}}{{end}}
-                        </div>
-                        {{else if .FallbackTraits}}
-                        <div class="row-why">
-                            {{if .Conf}}<span class="conf-chip" title="overall verdict confidence">{{.Conf}}%</span>{{end}}
-                            {{range .FallbackTraits}}{{template "why-chip" .}}{{end}}
-                        </div>
-                        {{end}}
-                    </div>
-                </article>
-                {{else}}
-                {{if .FeedDegraded}}<div class="empty">Recent records will return once the feed reconnects.</div>{{else}}<div class="empty">No matching records.</div>{{end}}
-                {{end}}
+            {{if .FeedDegraded}}<div class="notice" role="status">Feed unavailable{{if .Rows}}. Showing the last copy{{end}}.</div>{{end}}
+            {{if .Rows}}
+            <div class="scroll">
+                <div class="list">
+                    <div class="cols label" aria-hidden="true"><span>{{if .Package}}File{{else}}Sample{{end}}</span><span>{{if .Package}}Version{{else if .Malware}}Platform{{else}}Ecosystem{{end}}</span><span>Description</span><span>Seen</span></div>
+                    <ol>
+                        {{range .Rows}}{{template "listrow" .}}{{end}}
+                    </ol>
+                </div>
             </div>
-            {{if .Pages}}
-            <nav class="pager" aria-label="Feed pages">
-                {{if .PrevURL}}<a class="pager-link" rel="prev" href="{{.PrevURL}}">Prev</a>{{else}}<span class="pager-link disabled">Prev</span>{{end}}
-                {{range .Pages}}
-                {{if .Current}}<span class="pager-link current" aria-current="page">{{.Num}}</span>{{else}}<a class="pager-link" href="{{.URL}}">{{.Num}}</a>{{end}}
-                {{end}}
-                {{if .NextURL}}<a class="pager-link" rel="next" href="{{.NextURL}}">Next</a>{{else}}<span class="pager-link disabled">Next</span>{{end}}
+            {{else if not .HasHopper}}
+            <div class="empty">No database.</div>
+            {{else if not .FeedDegraded}}
+            <div class="empty">{{if .Package}}Not indexed.{{else}}Nothing matches.{{end}}</div>
+            {{end}}
+            {{if or .PrevURL .NextURL}}
+            <nav class="pager" aria-label="Pages">
+                {{if .PrevURL}}<a rel="prev" href="{{.PrevURL}}">‹ Newer</a>{{else}}<span aria-disabled="true">‹ Newer</span>{{end}}
+                <span class="mid">page {{.Page}}</span>
+                {{if .NextURL}}<a rel="next" href="{{.NextURL}}">Older ›</a>{{else}}<span aria-disabled="true">Older ›</span>{{end}}
             </nav>
             {{end}}
-            {{else}}
-            <div class="empty">Connect hopper to show recent records.</div>
+            {{with .Package}}
+            <div class="pager json">
+                <span class="label">JSON</span>
+                <a href="{{.JSON}}" rel="noopener">{{.JSON}}</a>
+            </div>
             {{end}}
         </section>
-
     </main>
     {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/js/nav-stash.js?v={{.BuildCommit}}"></script>

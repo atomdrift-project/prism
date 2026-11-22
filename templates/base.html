@@ -25,73 +25,237 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
 
 {{define "wordmarkstyle"}}
         /* OpenHash lockup: lime is a fill, never text. */
-        .logo-hash { margin-left: 2px; padding: 3px 6px 0; border-radius: 4px; background: var(--toxic); }
-        .logo-by { margin-left: 12px; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 400; letter-spacing: 0; }
-        .logo-by b { font-weight: 600; }
+        .logo-hash { margin-left: 2px; padding: 3px 6px 0; border-radius: 4px; background: #d0ff00; }
+        .logo-by { margin-left: 14px; font-family: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace; font-size: 11px; font-weight: 400; letter-spacing: 0.16em; text-transform: uppercase; color: #52525b; white-space: nowrap; }
+        .logo-by b, .logo-by a { color: #0a0a0a; font-weight: 600; border-bottom: 2px solid #9abe25; }
         @media (max-width: 560px) { .logo-by { display: none; } }
 {{end}}
 {{define "chromestyle"}}
         /* Header and footer, shared by every page so the chrome never drifts
            between them. Page-specific styles live in each template. */
-        .topbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 24px;
-            height: 60px;
-            padding: 0 64px;
-            border-bottom: 2px solid var(--toxic-muted);
-        }
-        .logo {
-            font-family: var(--display);
-            font-weight: 700;
-            font-size: 21px;
-            letter-spacing: -0.5px;
-            color: var(--ink);
-            white-space: nowrap;
-        }
+        .topbar { display: flex; align-items: center; gap: 12px 28px; flex-wrap: wrap; padding: 16px 48px; }
+        .brand { display: flex; align-items: center; flex-wrap: wrap; }
+        .logo { display: inline-flex; align-items: center; min-height: 44px; font-family: var(--display); font-weight: 700; font-size: 25px; letter-spacing: -0.6px; color: var(--ink); white-space: nowrap; }
         .logo-accent { color: var(--toxic-dark); }
         {{template "wordmarkstyle"}}
-        .site-nav { display: flex; align-items: center; gap: 26px; font-size: 14px; color: var(--ink-mid); }
+        .search-form { flex: 1 1 260px; max-width: 460px; display: flex; align-items: center; gap: 9px; height: 40px; margin: 0; padding: 0 12px; background: #ffffff; border: 2px solid var(--ink); border-radius: 4px; box-shadow: 3px 3px 0 #a0a0a0; }
+        .search-form svg { flex: none; }
+        .search-form input { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 13px; }
+        .search-form input::placeholder { color: var(--ink-light); opacity: 1; }
+        .search-form:focus-within { outline: 3px solid var(--toxic-dark); outline-offset: 3px; }
+        .site-nav { margin-left: auto; display: flex; align-items: center; gap: 8px 26px; flex-wrap: wrap; font-size: 14px; color: var(--ink-mid); }
         /* Every destination reads the same; only the current page is marked. */
-        .site-nav a { color: var(--ink-mid); }
-        .site-nav a:hover { color: var(--ink); }
-        .site-nav a.active { color: var(--toxic-dark); font-weight: 600; }
-        .site-nav .feed-link { display: inline-flex; align-items: center; gap: 6px; }
-        .feed-icon { flex: none; }
+        .site-nav a { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink-mid); }
+        .site-nav a:hover { color: var(--toxic-dark); }
+        .site-nav a[aria-current] { color: var(--toxic-dark); font-weight: 600; }
+        .nav-count { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--toxic-dark); background: var(--toxic-dim); border: 1px solid var(--toxic-border); border-radius: 999px; padding: 0 7px; line-height: 1.6; font-variant-numeric: tabular-nums; }
         /* Upload is the one thing you do here rather than read, so it is the
            one control that looks like a control. */
-        .site-nav .upload-btn {
-            padding: 6px 16px;
-            border: 1px solid var(--toxic-muted);
-            border-radius: 5px;
-            background: var(--toxic);
-            color: var(--ink);
-            font-weight: 600;
-            font-size: 13px;
-            line-height: 1.4;
-        }
-        .site-nav label.upload-btn { cursor: pointer; }
-        .site-nav .upload-btn:hover { background: var(--ink); border-color: var(--ink); color: var(--toxic); }
-        .site-nav .upload-btn.is-disabled { background: transparent; border-color: var(--rule); color: var(--ink-light); cursor: not-allowed; }
-        footer {
-            display: flex;
-            justify-content: space-between;
-            gap: 16px;
-            flex-wrap: wrap;
-            padding: 20px 64px 28px;
-            margin-top: 8px;
-            border-top: 1px solid var(--rule);
-            color: var(--ink-light);
-            font-size: 12px;
-        }
-        footer a { color: var(--ink-mid); }
+        .upload-btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border: 1px solid var(--ink); border-radius: 4px; background: var(--toxic); color: var(--ink); font-weight: 600; font-size: 13px; }
+        label.upload-btn { cursor: pointer; }
+        label.upload-btn:hover { background: var(--ink); color: var(--toxic); }
+        .upload-btn.is-disabled { background: transparent; border-color: var(--rule); color: var(--ink-light); cursor: not-allowed; }
+        .top-upload { margin: 0; position: relative; }
+        .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+        .top-upload input[type="file"]:focus-visible + .upload-btn { outline: 3px solid var(--toxic-dark); outline-offset: 3px; }
+        .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 12px); max-width: min(360px, 70vw); padding: 5px 10px; border: 1px solid var(--rule); border-radius: 4px; background: #ffffff; color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+        .top-upload-status:empty { display: none; }
+        .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 600; }
+        .top-upload-status a { color: var(--toxic-dark); font-weight: 600; }
+        .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
+        .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-dark); animation: upload-dot 0.86s infinite ease-in-out; }
+        .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
+        .analyzing-dots span:nth-child(3) { animation-delay: 0.24s; }
+        .analyzing-file { color: var(--ink-light); font-weight: 600; }
+        @keyframes upload-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.55; } 40% { transform: translateY(-4px); opacity: 1; } }
+        footer { display: flex; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; padding: 20px 48px 28px; border-top: 1px solid var(--rule); color: #52525b; font-size: 12px; }
+        footer a { color: var(--ink); }
         footer a:hover { color: var(--toxic-dark); }
+        footer span:last-child { font-family: var(--mono); }
         @media (max-width: 960px) {
-            .topbar { height: auto; padding: 12px 20px; flex-wrap: wrap; }
-            .site-nav { gap: 18px; }
+            .topbar { padding: 12px 20px; }
+            .site-nav { gap: 4px 18px; }
+            .top-upload-status { max-width: 80vw; white-space: normal; }
             footer { padding: 20px; }
         }
+        @media (prefers-reduced-motion: reduce) { .analyzing-dots span { animation: none; } }
+{{end}}
+{{- /* sitestyle is the whole look of a page built from the shared parts:
+       tokens, chrome, cards and the list every index page is made of. */ -}}
+{{define "sitestyle"}}
+        :root {
+            --ink: #0a0a0a;
+            --ink-mid: #404040;
+            --ink-soft: #52525b;
+            --ink-light: #6b7280;
+            --ground: #fafaf9;
+            --rule: #e8e8e8;
+            --toxic: #d0ff00;
+            --toxic-muted: #9abe25;
+            --toxic-dark: #4a6b0f;
+            --toxic-dim: #f8ffdb;
+            --toxic-border: #d9ea9a;
+            --hostile: #be123c;
+            --suspicious: #b45309;
+            --mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, monospace;
+            --display: "Oxanium", sans-serif;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--ground); color: var(--ink); font-family: "Inter", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+        a { color: inherit; text-decoration: none; }
+        a:hover { color: var(--toxic-dark); }
+        :focus-visible { outline: 3px solid var(--toxic-dark); outline-offset: 3px; border-radius: 4px; }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+        {{template "chromestyle" .}}
+        .page { flex: 1; width: 100%; max-width: 1180px; margin: 0 auto; padding: 40px 24px 56px; display: flex; flex-direction: column; gap: 24px; }
+        .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
+        .page-head > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+        h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 36px; letter-spacing: -0.7px; line-height: 1.1; overflow-wrap: anywhere; }
+        .lede { margin: 0; font-size: 16px; color: var(--ink-mid); }
+        .card { background: #ffffff; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+        .card h2 { margin: 0; padding: 16px 20px 14px; font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -0.3px; }
+        .label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); }
+        .link { color: var(--toxic-dark); font-weight: 600; }
+        .counter { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--toxic-muted); box-shadow: 0 0 0 4px #eef8c4; }
+        .notice { padding: 12px 20px; border-bottom: 1px solid var(--rule); background: var(--ground); font-size: 13px; color: var(--ink-mid); }
+        .empty { padding: 28px 20px; border-top: 1px solid var(--rule); color: var(--ink-mid); }
+        /* Two-column fact rows: the API reference, Contributing. */
+        .kv { margin: 0; padding: 0; list-style: none; }
+        .kv li { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); column-gap: 24px; align-items: baseline; padding: 12px 20px; border-top: 1px solid var(--rule); }
+        .kv li > :first-child { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+        .kv li > :last-child { color: var(--ink-mid); }
+        .kv.first li:first-child { border-top: 0; }
+        /* The list: one card, a filter bar, a column head, rows, a pager. */
+        .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; min-height: 60px; padding: 8px 20px; border-bottom: 1px solid var(--rule); }
+        .bar-side { margin-left: auto; display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; font-size: 13px; color: var(--ink-mid); }
+        .bar-side a, .bar-side label { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+        .bar-side input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--toxic-dark); }
+        .pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .pills .label { margin-right: 6px; }
+        .pill { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-mid); font-family: var(--mono); font-size: 11.5px; }
+        .pill:hover { border-color: var(--ink); color: var(--ink); }
+        .pill[aria-current] { border-color: var(--ink); background: var(--ink); color: var(--toxic); font-weight: 600; }
+        .filter-form { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; margin: 0; }
+        .filter-form .field { display: inline-flex; align-items: center; gap: 8px; }
+        .filter-form select { height: 32px; max-width: 180px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 4px; background: #ffffff; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+        .scroll { overflow-x: auto; }
+        .list { min-width: 900px; }
+        .list ol { margin: 0; padding: 0; list-style: none; }
+        .cols, .row { display: grid; grid-template-columns: minmax(0, 2.3fr) 104px minmax(0, 2.7fr) 96px; column-gap: 18px; padding: 12px 20px; }
+        .cols { padding-block: 10px; }
+        .cols > :last-child { text-align: right; }
+        .row { align-items: start; border-top: 1px solid var(--rule); }
+        .day { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 20px; border-top: 1px solid var(--rule); background: var(--ground); }
+        .day h2 { margin: 0; padding: 0; font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
+        .day span { font-family: var(--mono); font-size: 12px; color: var(--ink-mid); }
+        .row-id { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .row-name, .row-hash { min-width: 0; display: flex; align-items: center; gap: 7px; }
+        .row-name svg, .row-hash svg { flex: none; }
+        .file-link { min-width: 0; font-weight: 600; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
+        .siblings { flex: none; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
+        .file-sha, .file-link.hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-soft); }
+        .file-sha { cursor: copy; }
+        .file-sha.copied { color: var(--toxic-dark); }
+        .installs { flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink); white-space: nowrap; }
+        .row-eco { padding-top: 2px; }
+        .eco-badge { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.3px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; color: #52525b; background: #f5f5f5; }
+        .eco-red { color: #991b1b; background: #fdecec; }
+        .eco-rose { color: #9f1239; background: #feecf0; }
+        .eco-orange { color: #9a3412; background: #feeee5; }
+        .eco-yellow { color: #854d0e; background: #fcf4de; }
+        .eco-brown { color: #78350f; background: #f6ede1; }
+        .eco-green { color: #166534; background: #e9f9ef; }
+        .eco-cyan { color: #155e75; background: #e6f8fb; }
+        .eco-blue { color: #1e40af; background: #ebf2fe; }
+        .eco-indigo { color: #3730a3; background: #efeffe; }
+        .eco-purple { color: #6b21a8; background: #f6eefe; }
+        .row-desc { min-width: 0; padding-top: 1px; overflow-wrap: anywhere; }
+        .row-desc .why { display: block; }
+        .row-desc .why::first-letter { text-transform: uppercase; }
+        .verdict { margin-right: 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .verdict { color: var(--ink-light); }
+        .verdict.hostile { color: var(--hostile); }
+        .verdict.suspicious { color: var(--suspicious); }
+        /* Traits read as a sentence, not as chips. A linked one is a dependency. */
+        .why-chip + .why-chip::before { content: ", "; }
+        a.why-chip { color: var(--toxic-dark); text-decoration: underline; text-underline-offset: 3px; }
+        .row-when { padding-top: 2px; text-align: right; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+        .pager { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-height: 52px; padding: 4px 20px; border-top: 1px solid var(--rule); font-size: 13px; }
+        .pager a { display: inline-flex; align-items: center; min-height: 44px; color: var(--toxic-dark); font-weight: 600; }
+        .pager [aria-disabled] { color: var(--ink-light); }
+        .pager .mid { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+        @media (max-width: 960px) {
+            .page { padding: 24px 16px 40px; }
+            h1 { font-size: 30px; }
+            .kv li { grid-template-columns: 1fr; row-gap: 4px; }
+        }
+{{end}}
+{{- /* The header. Dot is a chrome. */ -}}
+{{define "topbar"}}
+    <header class="topbar">
+        <div class="brand">
+            {{if isPublic}}<a href="/" class="logo" aria-label="OpenHash home">open<span class="logo-hash">hash</span></a><span class="logo-by">an <a href="https://atomdrift.org/">atomdrift</a> project</span>{{else}}<a href="/" class="logo">lit<span class="logo-accent">mus</span></a>{{end}}
+        </div>
+        {{if not .Home}}{{template "searchform" .}}{{end}}
+        {{template "sitenav" .}}
+    </header>
+{{end}}
+{{define "searchform"}}
+        <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+            <input type="search" name="q" id="search-input" value="{{.Query}}" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" aria-label="Search by sha256, purl, filename or filter" />
+        </form>
+{{end}}
+{{define "sitenav"}}
+        <nav class="site-nav" aria-label="Site">
+            <a href="/fallout"{{if eq .Nav "fallout"}} aria-current="page"{{end}}>Fallout{{if .FalloutCount}} <span class="nav-count" title="Supply-chain attacks this week">{{.FalloutCount}}</span>{{end}}</a>
+            <a href="/malware"{{if eq .Nav "malware"}} aria-current="page"{{end}}>Malware</a>
+            <a href="/api"{{if eq .Nav "api"}} aria-current="page"{{end}}>API</a>
+            <a href="/contributing"{{if eq .Nav "contributing"}} aria-current="page"{{end}}>Contributing</a>
+            {{if .UploadEnabled}}
+            <form method="POST" action="/upload{{if .Refresh}}?refresh=1{{end}}" enctype="multipart/form-data" id="upload-form" class="top-upload">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+                <input type="file" name="file" id="file-input" required />
+                <label class="upload-btn" for="file-input">Upload</label>
+                <div id="upload-status" class="top-upload-status" aria-live="polite"></div>
+            </form>
+            {{else}}
+            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+            {{end}}
+        </nav>
+{{end}}
+{{define "sighted"}}<svg role="img" aria-label="Sighted elsewhere" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="#4a6b0f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><title>Sighted by an external threat feed</title><path d="M2 8.2 10.8 4l1.4 3-8.8 4.2z"></path><path d="M10.4 3 12.8 8"></path><path d="M7.4 9.6 5.2 14.2M7.4 9.6l2.4 4.6"></path></svg>{{end}}
+{{- /* One trait. A linked one leads to the dependency that carries it. */ -}}
+{{- define "why-chip" -}}
+{{- if .Href -}}
+<a class="why-chip crit-{{.Crit}}" href="{{.Href}}" title="{{.Full}}">{{.ID}}</a>
+{{- else -}}
+<span class="why-chip crit-{{.Crit}}" title="{{.Full}}">{{.ID}}</span>
+{{- end -}}
+{{- end -}}
+{{- /* A page may say more beside a row's name; Fallout counts siblings. */ -}}
+{{define "rowextra"}}{{end}}
+{{- /* One row of a list. Dot is a feedRow, or something that embeds one. */ -}}
+{{define "listrow"}}
+                    <li class="row">
+                        <span class="row-id">
+                            {{if .Name}}<span class="row-name"><a class="file-link" href="/file/{{.SHA256}}">{{.Name}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{template "rowextra" .}}</span>{{end}}
+                            <span class="row-hash">
+                                {{if .Name}}<span class="file-sha" title="Copy">{{.SHA256}}</span>{{else}}<a class="file-link hash" href="/file/{{.SHA256}}">{{.SHA256}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{end}}
+                                {{with .Users}}<span class="installs">{{.}} installs</span>{{end}}
+                            </span>
+                        </span>
+                        <span class="row-eco">{{with .Badge}}<span class="eco-badge eco-{{ecoColor .}}">{{.}}</span>{{end}}</span>
+                        <span class="row-desc">
+                            {{- with .Verdict}}<span class="verdict {{.}}">{{.}}</span>{{end -}}
+                            {{- with .Why}}<span class="why">{{.}}</span>{{end -}}
+                            {{- range .FallbackTraits}}{{template "why-chip" .}}{{end -}}
+                            {{- /* Nothing says why: say what it is. */ -}}
+                            {{- if not (or .Why .TopTraits)}}{{.Desc}}{{end -}}
+                        </span>
+                        <span class="row-when" title="{{.AnalyzedAt.UTC.Format "2006-01-02 15:04 UTC"}}">{{.AnalyzedDate}}</span>
+                    </li>
 {{end}}
 {{define "banner"}}{{end}} {{define "footer"}}
 <footer>

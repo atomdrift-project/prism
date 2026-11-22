@@ -6,11 +6,11 @@
 // cleared implicitly when the tab closes, or overwritten the next time the
 // reader clicks through from any feed.
 //
-// This lives on its own rather than inside upload.js because every feed needs
-// it and only one of them is the upload page: /fallout and / render
-// fallout.html, /stream and /{ecosystem}/ render upload.html. Loaded by one
-// and not the other, j/k works on some samples and silently does nothing on
-// the rest — which is exactly what happened.
+// This lives on its own rather than inside upload.js because every list needs
+// it and upload.js is on pages that are not lists: /fallout renders
+// fallout.html; /stream, /malware, /{ecosystem}/ and package pages render
+// upload.html. Loaded by one and not the other, j/k works on some samples and
+// silently does nothing on the rest — which is exactly what happened.
 
 document.addEventListener("click", (ev) => {
   const link = ev.target.closest('a.file-link[href^="/file/"]');

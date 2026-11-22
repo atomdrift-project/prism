@@ -29,13 +29,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -246,9 +244,6 @@ func (f falloutVerificationFilter) matches(corroborated bool) bool {
 type falloutRow struct {
 	feedRow
 
-	// MaleculeSVG is the row's drawing, rendered server-side from the
-	// exemplar's formula and top traits.
-	MaleculeSVG template.HTML
 	// Lead marks the day's biggest campaign, the one row the band lifts.
 	Lead bool
 
@@ -271,77 +266,6 @@ type falloutRow struct {
 //
 //nolint:gocritic // see above — a pointer receiver breaks template rendering
 func (r falloutRow) IsWave() bool { return r.WaveSize >= waveMinSize }
-
-// TimeAgoShort is the row's age as a phone-width column reads it: "4m", "2h",
-// "3d". Value receiver for the same reason as IsWave.
-//
-//nolint:gocritic // see IsWave — a pointer receiver breaks template rendering
-func (r falloutRow) TimeAgoShort() string {
-	d := time.Since(r.AnalyzedAt)
-	switch {
-	case d < time.Hour:
-		return strconv.Itoa(max(int(d.Minutes()), 1)) + "m"
-	case d < 24*time.Hour:
-		return strconv.Itoa(int(d.Hours())) + "h"
-	default:
-		return strconv.Itoa(int(d.Hours()/24)) + "d"
-	}
-}
-
-// elideMiddle keeps a long name's head and tail and drops its middle, so what
-// follows it — "and 22 siblings" — is never the thing pushed off the end. A
-// 64-hex filename is unreadable either way, and its first and last bytes are
-// what a reader matches against a report.
-func elideMiddle(s string, limit int) string {
-	r := []rune(s)
-	if limit < 8 || len(r) <= limit {
-		return s
-	}
-	head := (limit - 1) / 2
-	return string(r[:head]) + "…" + string(r[len(r)-(limit-1-head):])
-}
-
-// DisplayName is the row's title as the list shows it: elided in the middle
-// when it is long enough to crowd out the sibling count beside it. Value
-// receiver, like IsWave, so html/template can call it on a range copy.
-//
-//nolint:gocritic // see IsWave — a pointer receiver breaks template rendering
-func (r falloutRow) DisplayName() string {
-	limit := 52
-	if r.IsWave() {
-		limit = 34 // leave room for "and N siblings"
-	}
-	return elideMiddle(r.Headline(), limit)
-}
-
-// falloutSpark is one bar of the count card's sparkline: a day's catches as a
-// percentage of the week's busiest day, which is the one drawn in full colour.
-type falloutSpark struct {
-	Height int
-	Y      int // 100 - Height: where the bar starts in a 100-unit viewBox
-	Peak   bool
-}
-
-// sparkline turns the rail's newest-first day bands into oldest-first bars.
-// A single day draws no bar: a chart of one point says nothing.
-func sparkline(days []falloutDay) []falloutSpark {
-	if len(days) < 2 {
-		return nil
-	}
-	peak := 0
-	for i := range days {
-		peak = max(peak, days[i].Count)
-	}
-	if peak == 0 {
-		return nil
-	}
-	out := make([]falloutSpark, 0, len(days))
-	for _, d := range slices.Backward(days) {
-		h := max(d.Count*100/peak, 2) // a quiet day still draws a sliver
-		out = append(out, falloutSpark{Height: h, Y: 100 - h, Peak: d.Count == peak})
-	}
-	return out
-}
 
 // falloutDay is one day band of the log.
 type falloutDay struct {
@@ -369,29 +293,25 @@ type falloutSector struct {
 }
 
 type falloutPageData struct {
-	Stats          *indexStats
-	CurrentURL     string
-	Nonce          string
-	SelectedEco    string
-	Verified       string
-	CSRFToken      string
-	WindowLabel    string
-	AllSectorsURL  string
-	OlderURL       string
-	NewerURL       string
-	StyleNonce     string
-	BuildCommit    string
-	Days           []falloutDay
-	Sectors        []falloutSector
-	MeterSegs      []bool
-	Spark          []falloutSpark
-	WeeklyCount    int
-	EcosystemCount int
-	HasHopper      bool
-	UploadEnabled  bool
-	CurrentWeek    bool
-	FeedDegraded   bool
-	Filtered       bool
+	CurrentURL    string
+	Nonce         string
+	SelectedEco   string
+	Verified      string
+	WindowLabel   string
+	AllSectorsURL string
+	OlderURL      string
+	NewerURL      string
+	StyleNonce    string
+	BuildCommit   string
+	Days          []falloutDay
+	Sectors       []falloutSector
+	MeterSegs     []bool
+	Chrome        chrome
+	WeeklyCount   int
+	HasHopper     bool
+	CurrentWeek   bool
+	FeedDegraded  bool
+	Filtered      bool
 }
 
 const falloutMeterSegs = 6
@@ -425,16 +345,15 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		week = falloutWeekOf(now, now)
 	}
 	data := falloutPageData{
-		Nonce:         nonceFor(r),
-		StyleNonce:    styleNonceFor(r),
-		BuildCommit:   buildCommit,
-		SelectedEco:   eco,
-		Verified:      verifiedRaw,
-		Filtered:      eco != "" || verified != falloutAny,
-		HasHopper:     hopperStore.Load() != nil,
-		CSRFToken:     csrfToken(r, "upload"),
-		UploadEnabled: uploadEnabled && uploadBackendsAvailable(),
-		CurrentWeek:   week.Current,
+		Nonce:       nonceFor(r),
+		StyleNonce:  styleNonceFor(r),
+		BuildCommit: buildCommit,
+		SelectedEco: eco,
+		Verified:    verifiedRaw,
+		Filtered:    eco != "" || verified != falloutAny,
+		HasHopper:   hopperStore.Load() != nil,
+		Chrome:      newChrome(r, "fallout"),
+		CurrentWeek: week.Current,
 		// The period the page names is a property of the URL, not of the
 		// query: a degraded or hopper-less page still says which week the
 		// reader is looking at. A snapshot that fell short of the window
@@ -442,14 +361,6 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 		WindowLabel:   week.label(),
 		AllSectorsURL: falloutURL(week.param(), "", verifiedRaw),
 		CurrentURL:    falloutURL("", eco, verifiedRaw),
-	}
-	if s, ok := cachedIndexStats(); ok {
-		data.Stats = &s
-	}
-	if data.HasHopper {
-		if dropdowns, err := feedDropdownOptions(r.Context()); err == nil {
-			data.EcosystemCount = len(dropdowns.Ecosystems)
-		}
 	}
 	if week.Prev != "" {
 		data.OlderURL = falloutURL(week.Prev, eco, verifiedRaw)
@@ -485,7 +396,6 @@ func handleFallout(w http.ResponseWriter, r *http.Request) {
 			)
 			viewMS = time.Since(viewStart).Milliseconds()
 			data.Days = view.Days
-			data.Spark = sparkline(view.Days)
 			data.Sectors = view.Sectors
 			data.WeeklyCount = view.WeeklyCount
 			data.MeterSegs = view.MeterSegs
@@ -909,10 +819,6 @@ func falloutDays(shown []feedRow, ecoCount, formulaCount map[string]int, poolSiz
 			continue
 		}
 		decorateFalloutRows(bandRows, now)
-		for i := range bandRows {
-			g := maleculeFromFormula(bandRows[i].Formula, bandRows[i].TopTraits)
-			bandRows[i].MaleculeSVG = template.HTML(maleculeSVG(g, 132, 62)) //nolint:gosec // every dynamic value is escaped or from a fixed palette
-		}
 		date, err := time.ParseInLocation("2006-01-02", day, loc)
 		if err != nil {
 			continue // impossible: the key came from Format with this layout

@@ -1,0 +1,126 @@
+{{- /* One preview row. Dot is a feedRow, or something that embeds one. */ -}}
+{{define "homerow"}}
+            <a class="hrow" href="/file/{{.SHA256}}">
+                <span class="hrow-main">
+                    <span class="hrow-name"><b>{{or .Name .SHA256Short}}</b>{{with .Ecosystem}}<span class="eco-badge eco-{{ecoColor .}}">{{.}}</span>{{end}}</span>
+                    <span class="hrow-desc">{{if .Why}}<span class="why">{{.Why}}</span>{{else}}{{range .FallbackTraits}}<span class="why-chip">{{.ID}}</span>{{else}}{{.Desc}}{{end}}{{end}}</span>
+                </span>
+                <span class="hrow-when">{{.AnalyzedDate}}</span>
+            </a>
+{{end}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {{template "favicon"}}
+    <title>{{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
+    <link rel="canonical" href="/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:title" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:description" content="Look up any file by hash, or package by PURL." />
+    <meta name="description" content="Look up any file by hash, or package by PURL." />
+    <meta name="twitter:card" content="summary" />
+    <link rel="alternate" type="application/atom+xml" title="Malware" href="/feed.atom" />
+    <style nonce="{{.StyleNonce}}">
+        {{template "fonts" .}}
+        {{template "sitestyle" .}}
+        .topbar { justify-content: space-between; }
+        .page { align-items: center; gap: 56px; padding-top: 64px; }
+        .hero { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 40px; }
+        .lockup { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+        .lockup h1 { display: flex; align-items: center; font-size: clamp(52px, 9vw, 88px); letter-spacing: -2.5px; line-height: 1; }
+        .lockup h1 span { margin-left: 6px; padding: 7px 14px 3px; border-radius: 4px; background: var(--toxic); }
+        .lockup h1 em { font-style: normal; color: var(--toxic-dark); }
+        .lockup .logo-by { margin: 0; font-size: 12px; }
+        .lookup { width: 100%; max-width: 780px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
+        .lookup > label { font-size: 16px; color: var(--ink-mid); }
+        .lookup .search-form { flex: none; max-width: none; height: auto; min-height: 68px; gap: 12px; padding: 8px 8px 8px 20px; box-shadow: 6px 6px 0 #a0a0a0; }
+        .lookup .search-form input { height: 48px; font-size: 17px; }
+        .lookup button { height: 48px; padding: 0 26px; border: 1px solid var(--ink); border-radius: 4px; background: var(--toxic); color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 16px; cursor: pointer; }
+        .lookup button:hover { background: var(--ink); color: var(--toxic); }
+        .lookup p { margin: 0; font-size: 12px; color: var(--ink-soft); }
+        .lookup .try { margin-top: 4px; font-size: 13px; line-height: 1.9; }
+        .try a { font-family: var(--mono); font-size: 12.5px; color: var(--ink); text-decoration: underline; text-decoration-color: var(--toxic-muted); text-underline-offset: 3px; }
+        .try label { color: var(--toxic-dark); font-weight: 600; cursor: pointer; }
+        .previews { width: 100%; display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+        .previews .card { flex: 1 1 420px; min-width: 0; }
+        .card-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 18px 20px 16px; }
+        .card-head h2 { padding: 0; }
+        .card-head p { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); }
+        .card-head a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; white-space: nowrap; }
+        .hrow { display: flex; align-items: flex-start; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--rule); color: var(--ink); }
+        .hrow:hover { background: var(--ground); color: var(--ink); }
+        .hrow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .hrow-name { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+        .hrow-name b { font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
+        .hrow-desc { font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
+        .hrow-desc .why { display: block; }
+        .hrow-desc .why::first-letter { text-transform: uppercase; }
+        .hrow-when { flex: none; margin-top: 3px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-light); white-space: nowrap; }
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    <header class="topbar">
+        <div class="counter" id="index-counter">
+            {{if .HasHopper}}<span class="live-dot" aria-hidden="true"></span>
+            <span><span id="counter-num">{{with .Stats}}{{commaInt .Total}}+{{end}}</span> files indexed</span>{{end}}
+        </div>
+        {{template "sitenav" .Chrome}}
+    </header>
+    <main class="page">
+        <div class="hero">
+            <div class="lockup">
+                {{if isPublic}}
+                <h1>open<span>hash</span></h1>
+                <p class="logo-by">an <a href="https://atomdrift.org/">atomdrift</a> project</p>
+                {{else}}
+                <h1>lit<em>mus</em></h1>
+                {{end}}
+            </div>
+            <div class="lookup">
+                <label for="search-input">Look up any file by hash, or package by PURL</label>
+                <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+                    <input type="search" name="q" id="search-input" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" autofocus />
+                    <button type="submit">Search</button>
+                </form>
+                <p class="try">Try
+                    <a href="/npm/node-ipc@9.2.3">pkg:npm/node-ipc@9.2.3</a>,
+                    <a href="/file/992d0ff525726a5f4aa73136243a3799c43227b90532ef514028d63ed4739f67">992d0ff525726a5f…</a>,
+                    <a href="/chrome/?criticality=hostile">crit:hostile eco:chrome</a>{{if .Chrome.UploadEnabled}}
+                    or <label for="file-input">upload a file</label>{{end}}.</p>
+                {{if .Chrome.UploadEnabled}}<p>Uploads: 100 MiB. Results are public.</p>{{end}}
+            </div>
+        </div>
+        {{if .HasHopper}}
+        <div class="previews">
+            <section class="card" aria-labelledby="fallout-h">
+                <div class="card-head">
+                    <div>
+                        <h2 id="fallout-h">Fallout</h2>
+                        <p>Supply-chain attacks</p>
+                    </div>
+                    <a class="link" href="/fallout">All{{with .Chrome.FalloutCount}} {{.}}{{end}} →</a>
+                </div>
+                {{range .Fallout}}{{template "homerow" .}}{{else}}<div class="empty">Nothing this week.</div>{{end}}
+            </section>
+            <section class="card" aria-labelledby="malware-h">
+                <div class="card-head">
+                    <div>
+                        <h2 id="malware-h">Malware</h2>
+                        <p>New malware, unfiltered</p>
+                    </div>
+                    <a class="link" href="/malware">All →</a>
+                </div>
+                {{range .Malware}}{{template "homerow" .}}{{else}}<div class="empty">Nothing yet.</div>{{end}}
+            </section>
+        </div>
+        {{end}}
+    </main>
+    {{template "footer" .}}
+    <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
+</body>
+</html>

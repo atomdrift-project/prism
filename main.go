@@ -693,18 +693,18 @@ type cachedMembers struct {
 //
 //nolint:govet // field alignment intentionally relaxed; see comment above
 type resultData struct {
-	Pending         bool
-	PendingUpload   bool
-	PendingStarted  int64
-	SHA256JSON      template.JS
-	SHA256Short     string
-	Filename        string
-	SHA256          string
-	Verdict         string
-	Formula         template.HTML
-	FormulaQuery    string // raw formula with subscript digits desubscripted, for ?m=… links
-	CSRFToken       string // signed CSRF token for operator actions (refresh)
-	UploadCSRFToken string // signed CSRF token for the upload form
+	Pending        bool
+	PendingUpload  bool
+	PendingStarted int64
+	SHA256JSON     template.JS
+	SHA256Short    string
+	Filename       string
+	SHA256         string
+	Verdict        string
+	Formula        template.HTML
+	FormulaQuery   string // raw formula with subscript digits desubscripted, for ?m=… links
+	CSRFToken      string // signed CSRF token for operator actions (refresh)
+	Chrome         chrome // the shared header
 	// DownloadToken is a separate CSRF token bound to the "download" action.
 	// Rendered into the download button's href as `?t=…` so /file/<sha>.dl is
 	// gated to button-driven flows: the token only validates for the browser
@@ -843,8 +843,6 @@ type resultData struct {
 	// what hopper's database knows about where this sample came from. Empty
 	// for samples with no recorded provenance beyond their own identity.
 	Provenance []ProvenanceGroup
-	// UploadEnabled controls the inline upload affordance on a result page.
-	UploadEnabled bool
 	// Badges are the traits the header names outright; Summary is the line
 	// under the title; ShortProv is the rail's provenance; MaleculeSVG is the
 	// compound drawing; CompoundURL finds other samples with this formula.
@@ -932,12 +930,16 @@ type storedResult struct {
 	// "pkg:npm/lodash"); empty for uploads and ecosystems without a defined
 	// PURL type. The full versioned PURL shown in the hero is this plus
 	// "@"+Version.
-	PURLBase          string
-	Filename          string
-	LabelSource       string
-	TraitsVersion     string
-	CanonicalSHA256   string
-	Symbols           string
+	PURLBase        string
+	Filename        string
+	LabelSource     string
+	TraitsVersion   string
+	CanonicalSHA256 string
+	Symbols         string
+	// RaisedBy is what hopper's lookup says tightened the verdict past
+	// atomscan's own reading: hostile references and members. The page names
+	// the references so a dependency-raised verdict explains itself.
+	RaisedBy          []hopper.LookupRaiser
 	SizeBytes         int64
 	RegistryDownloads int64
 }
@@ -969,6 +971,11 @@ type feedRow struct {
 	// through the feed snapshot so machine consumers can recover the full PURL
 	// without issuing a detail-page query.
 	PURLBase string
+	// Label and Tag are a page's own choice of name and badge for the row: a
+	// package page lists files, so it names each by filename and badges it
+	// with its version. Empty, the row uses Headline and Ecosystem.
+	Label string
+	Tag   string
 	// RegistryTitle is the marketplace display title from the provenance
 	// sidecar's registry record (e.g. a Chrome extension's store listing
 	// name) and Desc its short description; both empty when the collector
@@ -1000,10 +1007,12 @@ type feedRow struct {
 	// the per-row "✓" mark. The citing sources stay off the feed page; the
 	// detail page names only open databases and blogs (DetectedBy).
 	Corroborated bool
-	Downloads    int64
-	HostileT     float64
-	SuspiciousT  float64
-	Probability  float64
+	// ShowVerdict labels the row with its verdict, for a list that mixes them.
+	ShowVerdict bool
+	Downloads   int64
+	HostileT    float64
+	SuspiciousT float64
+	Probability float64
 	// Threshold/Class populated from v=5 envelopes; Threshold > 0 selects
 	// the exact-band rendering path in templates.
 	Threshold float64
@@ -1137,6 +1146,40 @@ func osDisplayName(slug string) string {
 	return strings.ToUpper(slug[:1]) + slug[1:]
 }
 
+// Name is what a list calls the row: the page's Label, else the Headline.
+// Empty when that is only a hash, which the row prints anyway.
+//
+//nolint:gocritic // value receiver required by html/template, as above
+func (r feedRow) Name() string {
+	name := r.Label
+	if name == "" {
+		// The hash stands in for a missing filename, so a row with no name
+		// at all comes out the same as one named only by its hash.
+		name = identityHeadline(r.RegistryTitle, r.Package, cmp.Or(r.Filename, r.SHA256), r.Version)
+	}
+	if isHashName(name) {
+		return ""
+	}
+	return name
+}
+
+// Badge is the row's second column: the page's Tag, else the ecosystem.
+//
+//nolint:gocritic // value receiver required by html/template, as above
+func (r feedRow) Badge() string {
+	return cmp.Or(r.Tag, r.Ecosystem)
+}
+
+// Verdict is the label a mixed list puts before the description.
+//
+//nolint:gocritic // value receiver required by html/template, as above
+func (r feedRow) Verdict() string {
+	if !r.ShowVerdict {
+		return ""
+	}
+	return r.Classification
+}
+
 // SubID is the machine coordinate shown muted beside the headline, only when
 // it says something the headline doesn't: the package id when a marketplace
 // title displaced it (a Chrome extension's store name vs its extension id).
@@ -1188,11 +1231,20 @@ func (r feedRow) DependencyTraits() []feedTrait {
 }
 
 type feedPageData struct {
-	SelectedDomain  string
+	// Stats seeds the "files indexed" counter with the latest exact snapshot
+	// published by statsPollLoop (nil until the first poll — the client's
+	// /_/stats poll fills it in either way). A lock-free pointer read, so it
+	// never adds a query to the feed's hot path.
+	Stats *indexStats
+	// Package is set on a package page and nil on every other list.
+	Package         *packageView
 	Nonce           string // script-src nonce
 	StyleNonce      string // style-src nonce
 	BuildCommit     string
-	Title           string
+	Title           string // the tab's title
+	Heading         string // the page's h1
+	Lede            string // one line under it; may be empty
+	SelectedDomain  string
 	SelectedFormula string
 	SelectedCrit    string
 	SelectedQ       string
@@ -1200,7 +1252,6 @@ type feedPageData struct {
 	// active purl: filter, echoed back into the search box; empty when unset.
 	SelectedPURL string
 	SearchQuery  string
-	CSRFToken    string
 	SelectedEco  string
 	// PrevURL/NextURL are empty when there is no adjacent page.
 	PrevURL    string
@@ -1208,43 +1259,26 @@ type feedPageData struct {
 	Domains    []string
 	Ecosystems []string
 	Rows       []feedRow
-	// Stats seeds the masthead's live "files indexed" counter with the latest
-	// exact snapshot published by statsPollLoop, projected to request time (nil until
-	// the first poll — the client's /_/stats poll fills it in either way). A
-	// lock-free pointer read, so it never adds a query to the feed's hot path.
-	Stats *indexStats
-	// Pages holds the per-page links (empty when a single page covers every
-	// row); Page is the 1-indexed current page over the cached snapshot.
-	Pages []feedPageLink
-	Page  int
-	// WeeklyHostile is the count behind the Fallout nav pill's badge: hostile
-	// catches in the fallout log's rolling window. Zero hides the badge.
-	WeeklyHostile int
-	Refresh       bool
-	HasHopper     bool
-	// ZeroState marks the unfiltered, unsearched first page — the view that
-	// gets the "Latest analyses" framing instead of query results.
-	ZeroState bool
+	// Pills replace the filter selects on the pages that have one obvious
+	// thing to filter by: platform on Malware, version on a package.
+	Pills []pill
+	// diags records each query behind the page, for the trailing comments.
+	diags  []queryDiag
+	Chrome chrome
+	// Page is the 1-indexed current page over the cached snapshot.
+	Page      int
+	HasHopper bool
+	// Malware marks the /malware page: every hostile sample, nothing else.
+	Malware bool
 	// FeedDegraded is set when hopper is connected but the feed query failed
 	// (timeout, circuit breaker open, replica blip). The page still renders —
-	// the feed section just shows a "temporarily unavailable" notice instead
-	// of a 500. HasHopper stays true so the filter bar keeps working.
+	// the list just shows a notice instead of a 500. HasHopper stays true so
+	// the filter bar keeps working.
 	FeedDegraded bool
-	// UploadEnabled combines the package-level toggle with the shared backend
-	// liveness state so the template can pick the real upload form vs. the
-	// disabled placeholder without probing either backend per request.
-	UploadEnabled bool
 	// FeedsOnly restricts the feed to samples cited by external sources through
-	// Hopper's version-aware sightings flag, also shown by the per-row checkmark.
+	// Hopper's version-aware sightings flag, also shown by the per-row mark.
 	// Toggled by the "Sighted elsewhere" checkbox (?feeds=1).
 	FeedsOnly bool
-}
-
-// feedPageLink is one entry in the feed's pagination strip.
-type feedPageLink struct {
-	URL     string
-	Num     int
-	Current bool
 }
 
 // queryDiag is a single data-source diagnostic, emitted as an HTML comment at
@@ -1906,6 +1940,8 @@ func main() {
 	cli.StringVar(&port, "port", "", "HTTP listen port (overrides PORT env)")
 	cli.StringVar(&hopperAPIAddr, "hopper-api-addr", hopperAPIAddr, "hopper API host:port")
 	cli.StringVar(&beamlineAPIAddr, "beamline-api-addr", beamlineAPIAddr, "Beamline API base URL (also reads BEAMLINE_API_ADDR)")
+	cli.StringVar(&donateURL, "donate-url", os.Getenv("DONATE_URL"), "donation link on the Contributing page (overrides DONATE_URL env; empty omits it)")
+	cli.StringVar(&sponsorURL, "sponsor-url", os.Getenv("SPONSOR_URL"), "sponsor contact on the Contributing page (overrides SPONSOR_URL env; empty omits it)")
 	var rateLimit int
 	var rateWindow time.Duration
 	cli.IntVar(&rateLimit, "rate-limit", 20, "max requests per client IP per --rate-window before 429/challenge (0 disables; served freely up to this rate, only the excess is shed)")
@@ -2035,6 +2071,21 @@ func main() {
 	falloutTemplate, tmplErr = template.New("fallout.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/fallout.html")
 	if tmplErr != nil {
 		logger.Error("template loading failed", "error", tmplErr)
+		os.Exit(1)
+	}
+	homeTemplate, tmplErr = template.New("home.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/home.html")
+	if tmplErr != nil {
+		logger.Error("failed to parse home template", "error", tmplErr)
+		os.Exit(1)
+	}
+	apiTemplate, tmplErr = template.New("api.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/api.html")
+	if tmplErr != nil {
+		logger.Error("failed to parse api template", "error", tmplErr)
+		os.Exit(1)
+	}
+	contributingTemplate, tmplErr = template.New("contributing.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/contributing.html")
+	if tmplErr != nil {
+		logger.Error("failed to parse contributing template", "error", tmplErr)
 		os.Exit(1)
 	}
 	resultTemplate, tmplErr = template.New("result.html").Funcs(funcs).ParseFS(templatesFS, "templates/base.html", "templates/result.html")
@@ -2245,19 +2296,25 @@ func newMux() *http.ServeMux {
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServer(http.FS(staticContent)))))
 	mux.HandleFunc("GET /favicon.ico", handleFavicon)
-	// The fallout log is the front page, but "/" was the stream's home for
-	// long enough that links and bookmarks still carry feed queries there.
-	// A query the log cannot answer is forwarded to the page that can, rather
-	// than being dropped on the floor — which is what a search for
-	// "/?q=lodash@1.0.0" used to do. Parameters the log does use (week,
-	// ecosystem, verified) are its own and stay put.
+	// "/" was the stream's home, then the fallout log's, long enough that
+	// links and bookmarks still carry their queries there. A query the front
+	// page cannot answer is forwarded to the page that can, rather than
+	// being dropped on the floor.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if q := r.URL.Query(); feedQueryPresent(q) {
-			target := url.URL{Path: "/stream", RawQuery: q.Encode()}
-			http.Redirect(w, r, target.String(), http.StatusMovedPermanently)
+		q := r.URL.Query()
+		target := url.URL{RawQuery: q.Encode()}
+		switch {
+		case feedQueryPresent(q):
+			target.Path = "/stream"
+		case q.Has("week") || q.Has("ecosystem") || q.Has("verified"):
+			target.Path = "/fallout"
+		default:
+			handleHome(w, r)
 			return
 		}
-		handleFallout(w, r)
+		// A fixed path plus a re-encoded query: nothing a caller supplies
+		// reaches the path or the host.
+		http.Redirect(w, r, target.String(), http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("GET /stream", handleIndex)
 	// /index was the stream's name until it got one that says what it is.
@@ -2269,6 +2326,9 @@ func newMux() *http.ServeMux {
 		http.Redirect(w, r, target.String(), http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("GET /fallout", handleFallout)
+	mux.HandleFunc("GET /malware", handleMalware)
+	mux.HandleFunc("GET /api", handleAPI)
+	mux.HandleFunc("GET /contributing", handleContributing)
 	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
 	mux.HandleFunc("GET /api/fallout", handleFalloutJSON)
 	mux.HandleFunc("GET /feed.atom", handleAtomFeed)
@@ -2476,7 +2536,8 @@ func securityHeaders(next http.Handler) http.Handler {
 				"style-src 'self' 'nonce-"+styleNonce+"'; "+
 				"font-src 'self'; "+
 				"img-src 'self'; "+
-				"connect-src 'self'; "+
+				// The API page runs its example requests from the browser.
+				"connect-src 'self' "+strings.TrimSuffix(sha256API, "/")+" "+strings.TrimSuffix(purlAPI, "/")+"; "+
 				"worker-src 'self'; "+
 				"frame-src 'none'; "+
 				"frame-ancestors 'none'; "+
@@ -3288,9 +3349,8 @@ func formatCount(n int64) string {
 	return b.String()
 }
 
-// feedDate formats t as a compact relative string for the feed table —
-// "7m ago", "3h ago", "2d ago" fit a narrow column; entries older than a
-// week fall back to a short date in the server's local timezone.
+// feedDate formats t for a list's narrow Seen column: a delta under a day
+// ("7m ago", "3h ago"), a short date in the server's local timezone after.
 func feedDate(t, now time.Time) string {
 	d := now.Sub(t)
 	switch {
@@ -3300,8 +3360,6 @@ func feedDate(t, now time.Time) string {
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
 	case d < 24*time.Hour:
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 7*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 	return t.Local().Format("Jan 2") //nolint:gosmopolitan // server-local rendering is intentional for the public feed
 }
@@ -4566,7 +4624,11 @@ func urlPathSegment(value string) string {
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
-	renderFeed(w, r, "", "")
+	renderFeed(w, r, feedScope{})
+}
+
+func handleMalware(w http.ResponseWriter, r *http.Request) {
+	renderFeed(w, r, feedScope{malware: true})
 }
 
 func handleEcosystem(w http.ResponseWriter, r *http.Request) {
@@ -4586,7 +4648,7 @@ func handleEcosystem(w http.ResponseWriter, r *http.Request) {
 		servePURL(w, r, coordinate)
 		return
 	}
-	renderFeed(w, r, eco, "")
+	renderFeed(w, r, feedScope{ecosystem: eco})
 }
 
 // servePURL resolves a package coordinate from the URL path. A versioned
@@ -4612,7 +4674,7 @@ func servePURL(w http.ResponseWriter, r *http.Request, coordinate string) {
 			return
 		}
 	}
-	renderFeed(w, r, "", canonical)
+	renderFeed(w, r, feedScope{purl: canonical})
 }
 
 // soleSampleByPURL returns the sha256 of the one judged top-level file
@@ -4718,10 +4780,6 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 		}
 		return r.URL.Path
 	}
-	data.Pages = make([]feedPageLink, 0, totalPages)
-	for n := 1; n <= totalPages; n++ {
-		data.Pages = append(data.Pages, feedPageLink{Num: n, URL: pageURL(n), Current: n == page})
-	}
 	if page > 1 {
 		data.PrevURL = pageURL(page - 1)
 	}
@@ -4730,12 +4788,22 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 	}
 }
 
-func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) {
+// feedScope is what a route pins before the query string has its say.
+type feedScope struct {
+	ecosystem string // /npm/
+	purl      string // /npm/lodash
+	malware   bool   // /malware: hostile only, any platform
+}
+
+// renderFeed renders every page that is a list of samples: the index and its
+// searches, an ecosystem, Malware, and a package.
+func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
+	query := r.URL.Query()
 	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
 	// JS already short-circuits these before sending, but a pasted URL or
 	// a no-JS client still gets the redirect. Run it on the raw value;
 	// shaFromSearchQuery trims and lowercases internally.
-	if sha, ok := shaFromSearchQuery(r.URL.Query().Get("q")); ok {
+	if sha, ok := shaFromSearchQuery(query.Get("q")); ok {
 		//nolint:gosec // G710: shaFromSearchQuery returns only validSHA256 hex, behind a literal "/file/" prefix.
 		http.Redirect(w, r, "/file/"+sha, http.StatusFound)
 		return
@@ -4750,9 +4818,18 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	// choices (critToken), so the default view keeps an empty box and round-trips
 	// back to itself.
 	crit, critToken := "", ""
-	if r.URL.Query().Has("criticality") {
-		crit = normalizeCriticality(r.URL.Query().Get("criticality"))
+	if query.Has("criticality") {
+		crit = normalizeCriticality(query.Get("criticality"))
 		critToken = firstNonEmpty(crit, "any")
+	}
+	ecosystem := scope.ecosystem
+	if scope.malware {
+		// Malware is one fixed question, so its box stays empty; the platform
+		// filter is the page's own and rides the query string.
+		crit, critToken = "hostile", ""
+		if eco := strings.ToLower(query.Get("ecosystem")); validEcosystem(eco) {
+			ecosystem = eco
+		}
 	}
 	// PURL filter: a package path (/npm/lodash) passes the coordinate in
 	// directly and wins. Otherwise JS sends it as ?purl=; a no-JS client or
@@ -4760,7 +4837,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	// ?q= for a bare pkg: / purl: token. A coordinate consumed from ?q= must
 	// not also run as a filename search, so its raw value is dropped before
 	// normalizeSearch.
-	rawPURL, searchRaw := firstNonEmpty(purl, r.URL.Query().Get("purl")), r.URL.Query().Get("q")
+	rawPURL, searchRaw := cmp.Or(scope.purl, query.Get("purl")), query.Get("q")
 	if rawPURL == "" {
 		if p, ok := purlFromSearchQuery(searchRaw); ok {
 			rawPURL, searchRaw = p, ""
@@ -4770,8 +4847,8 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 	// Identity-claim filter: JS sends ?name= / ?signer=; a no-JS client types
 	// `name:` / `signer:` into the box. Like the purl sniff above, a consumed
 	// token must not also run as a filename search.
-	claimName := sanitizeFilter(r.URL.Query().Get("name"))
-	claimSigner := sanitizeFilter(r.URL.Query().Get("signer"))
+	claimName := sanitizeFilter(query.Get("name"))
+	claimSigner := sanitizeFilter(query.Get("signer"))
 	if claimName == "" && claimSigner == "" {
 		if key, value, ok := claimTokenFromSearchQuery(searchRaw); ok {
 			if key == "name" {
@@ -4783,27 +4860,42 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		}
 	}
 	data := feedPageData{
-		CSRFToken:       csrfToken(r, "upload"),
-		WeeklyHostile:   weeklyHostileCount(r.Context(), viewerLocation(r)),
-		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
-		FeedsOnly:       parseBoolQuery(r.URL.Query().Get("feeds")),
+		Chrome:          newChrome(r, ""),
+		FeedsOnly:       parseBoolQuery(query.Get("feeds")),
 		Nonce:           nonceFor(r),
 		StyleNonce:      styleNonceFor(r),
 		BuildCommit:     buildCommit,
-		Refresh:         r.URL.Query().Get("refresh") == "1",
 		SelectedEco:     ecosystem,
-		SelectedDomain:  normalizeDomain(r.URL.Query().Get("domain")),
+		SelectedDomain:  normalizeDomain(query.Get("domain")),
 		SelectedCrit:    crit,
-		SelectedFormula: formulaFromQuery(r.URL.Query()),
+		SelectedFormula: formulaFromQuery(query),
 		SelectedQ:       normalizeSearch(searchRaw),
 		SelectedPURL:    purlCanonical,
 		Title:           "Index",
+		Heading:         "Index",
+		Lede:            "Every analyzed file.",
 		HasHopper:       hopperStore.Load() != nil,
+		Malware:         scope.malware,
 	}
-	data.SearchQuery = composeSearchQuery(
-		critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
-		data.SelectedFormula, data.SelectedQ,
-	)
+	data.Chrome.Refresh = query.Get("refresh") == "1"
+	switch {
+	case scope.malware:
+		data.Chrome.Nav = "malware"
+		data.Title, data.Heading, data.Lede = "Malware", "Malware", "New malware, unfiltered."
+	case purlBase != "":
+		// A package page titles itself by the coordinate.
+		data.Title = purlDisplayString(purlCanonical)
+		data.Heading, data.Lede = data.Title, ""
+	case ecosystem != "":
+		data.Title, data.Heading, data.Lede = ecosystem+" · Index", ecosystem, ""
+	}
+	if !scope.malware {
+		data.SearchQuery = composeSearchQuery(
+			critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
+			data.SelectedFormula, data.SelectedQ,
+		)
+	}
+	data.Chrome.Query = data.SearchQuery
 	// A bare name@version is a package coordinate without an ecosystem. The
 	// box keeps showing what was typed; the query behind it matches the name
 	// and pins the version, since "lodash@4.17.21" as one literal string
@@ -4814,58 +4906,35 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 			searchTerm, purlVersion = name, version
 		}
 	}
-	if ecosystem != "" {
-		data.Title = ecosystem + " · Index"
-	}
-	// A package path (/npm/lodash) titles its tab by the coordinate; the
-	// ?purl= query form stays a plain search, matching the box it came from.
-	if purl != "" && purlCanonical != "" {
-		data.Title = purlDisplayString(purlCanonical)
-	}
 
-	var diags []queryDiag
-	if hopperStore.Load() != nil {
-		snapshot, diag, err := loadFeedSnapshot(
-			r.Context(),
-			&feedQueryArgs{
-				ecosystem:   data.SelectedEco,
-				domain:      data.SelectedDomain,
-				criticality: data.SelectedCrit,
-				formula:     data.SelectedFormula,
-				search:      searchTerm,
-				purlBase:    purlBase,
-				purlVersion: purlVersion,
-				claimName:   claimName,
-				claimSigner: claimSigner,
-				feedsOnly:   data.FeedsOnly,
-			},
-			logger,
-			isHardRefresh(r),
-		)
-		if err != nil {
-			// The live query failed and no last-known-good snapshot was
-			// available to fall back on. This must not take down the whole
-			// index page — the upload form, filters, and footer still work
-			// without rows. Degrade gracefully: flag the feed section and fall
-			// through to render the page instead of serving a 500.
-			logger.Warn("failed to load feed rows", "error", err, "ecosystem", ecosystem)
-			data.FeedDegraded = true
-		} else {
-			diags = append(diags, diag)
-			// loadFeedSnapshot serves a stale last-known-good snapshot when the
-			// live query fails; diag.Source=="stale" marks that so the template
-			// can flag the rows as slightly out of date.
-			data.FeedDegraded = diag.Source == "stale"
-			data.Rows = feedRowsFromSnapshot(snapshot)
-			data.Domains = snapshot.Domains
-			data.Ecosystems = snapshot.Ecosystems
-			data.ZeroState = data.SelectedEco == "" && data.SelectedDomain == "" &&
-				data.SelectedFormula == "" && data.SelectedQ == "" &&
-				data.SelectedPURL == "" && data.SelectedCrit == "" &&
-				!data.FeedsOnly && r.URL.Query().Get("page") == ""
-			paginateFeed(&data, r)
+	args := feedQueryArgs{
+		ecosystem:   data.SelectedEco,
+		domain:      data.SelectedDomain,
+		criticality: data.SelectedCrit,
+		formula:     data.SelectedFormula,
+		search:      searchTerm,
+		purlBase:    purlBase,
+		purlVersion: purlVersion,
+		claimName:   claimName,
+		claimSigner: claimSigner,
+		feedsOnly:   data.FeedsOnly,
+	}
+	bypass := isHardRefresh(r)
+	switch {
+	case purlBase != "":
+		data.loadPackage(r.Context(), &args, bypass)
+	case !data.HasHopper:
+	case scope.malware:
+		data.Rows = data.load(r.Context(), &args, bypass)
+		data.Pills = platformPillsFor(r.Context(), ecosystem, data.FeedsOnly)
+	default:
+		data.Rows = data.load(r.Context(), &args, bypass)
+		// The index mixes verdicts, so each row says which it got.
+		for i := range data.Rows {
+			data.Rows[i].ShowVerdict = true
 		}
 	}
+	paginateFeed(&data, r)
 	// Seed the live counter with the latest exact published snapshot — a
 	// lock-free pointer read, no query on the feed path. When cold (before the
 	// first poll), the template omits the initial value and the client's
@@ -4880,7 +4949,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, ecosystem, purl string) 
 		)
 		return
 	}
-	writeQueryDiags(w, diags)
+	writeQueryDiags(w, data.diags)
 }
 
 // writeQueryDiags appends one HTML comment per executed query to the response.
@@ -5063,8 +5132,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 	data.StyleNonce = styleNonceFor(r)
 	data.BuildCommit = buildCommit
 	data.CSRFToken = csrfToken(r, "refresh")
-	data.UploadCSRFToken = csrfToken(r, "upload")
-	data.UploadEnabled = uploadEnabled && uploadBackendsAvailable()
+	data.Chrome = newChrome(r, "")
 	data.DownloadToken = csrfToken(r, "download")
 	data.DownloadEnabled = hopperAPIAvailable()
 	// A compacted-archive envelope carries member stubs but no member bodies;
@@ -6466,20 +6534,19 @@ func renderPending(w http.ResponseWriter, r *http.Request, sha, filename string,
 		shaJSON = []byte(`""`)
 	}
 	data := resultData{
-		Pending:         true,
-		PendingUpload:   pendingUpload,
-		PendingStarted:  startedAt.UnixMilli(),
-		SHA256JSON:      template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
-		Filename:        filename,
-		Headline:        filename,
-		SHA256:          sha,
-		SHA256Short:     sha[:12] + "...",
-		Nonce:           nonceFor(r),
-		StyleNonce:      styleNonceFor(r),
-		BuildCommit:     buildCommit,
-		UploadCSRFToken: csrfToken(r, "upload"),
-		UploadEnabled:   uploadEnabled && uploadBackendsAvailable(),
-		SourceLabel:     "browser upload",
+		Pending:        true,
+		PendingUpload:  pendingUpload,
+		PendingStarted: startedAt.UnixMilli(),
+		SHA256JSON:     template.JS(shaJSON), //nolint:gosec // sha is validated 64-hex
+		Filename:       filename,
+		Headline:       filename,
+		SHA256:         sha,
+		SHA256Short:    sha[:12] + "...",
+		Nonce:          nonceFor(r),
+		StyleNonce:     styleNonceFor(r),
+		BuildCommit:    buildCommit,
+		Chrome:         newChrome(r, ""),
+		SourceLabel:    "browser upload",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Pending pages must never be cached: a CDN that pins this could
@@ -7986,7 +8053,7 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 	// whose own scan classified suspicious or hostile — the panel answers "why
 	// is this sample elevated" at a glance. Benign dependencies stay out of it
 	// (they remain visible in the Structure tab's fetched chips).
-	data.FlaggedDeps, data.FlaggedDepsHidden = flaggedDeps(report.Files)
+	data.FlaggedDeps, data.FlaggedDepsHidden = flaggedDeps(report.Files, res.RaisedBy)
 
 	// Use formula from cleave with file type prefix.
 	// For archives, find the top-level entry (Depth == 0).

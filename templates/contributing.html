@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {{template "favicon"}}
+    <title>Contributing - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
+    <link rel="canonical" href="/contributing" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:title" content="Contributing — {{if isPublic}}OpenHash{{else}}litmus{{end}}" />
+    <meta property="og:description" content="Money. Support." />
+    <meta name="description" content="Money. Support." />
+    <meta name="twitter:card" content="summary" />
+    <style nonce="{{.StyleNonce}}">
+        {{template "fonts" .}}
+        {{template "sitestyle" .}}
+    </style>
+</head>
+<body>
+    {{template "banner" .}}
+    {{template "topbar" .Chrome}}
+    <main class="page">
+        <div class="page-head">
+            <div>
+                <h1>Contributing</h1>
+            </div>
+        </div>
+        {{if or .Links.Donate .Links.Sponsor}}
+        <section class="card">
+            <h2>Money</h2>
+            <ul class="kv">
+                {{with .Links.Donate}}<li><span>Donate</span><span><a class="link" href="{{.}}" rel="noopener">{{.}}</a></span></li>{{end}}
+                {{with .Links.Sponsor}}<li><span>Sponsor</span><span><a class="link" href="{{.}}" rel="noopener">{{.}}</a></span></li>{{end}}
+            </ul>
+        </section>
+        {{end}}
+        <section class="card">
+            <h2>Support</h2>
+            <ul class="kv">
+                <li><span>Community</span><span><a class="link" href="https://github.com/atomdrift-project/prism/issues" rel="noopener">GitHub issues</a>. Best effort.</span></li>
+                <li><span>Commercial</span><span><a class="link" href="https://isotope13.io/" rel="noopener">isotope¹³</a>. SLA support, rule feeds, hosted API.</span></li>
+            </ul>
+        </section>
+    </main>
+    {{template "footer" .}}
+    <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
+</body>
+</html>

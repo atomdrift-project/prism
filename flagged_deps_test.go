@@ -1,8 +1,11 @@
 package main
 
 import (
+	"html/template"
 	"strings"
 	"testing"
+
+	"github.com/atomdrift-project/hopper"
 )
 
 const (
@@ -28,7 +31,7 @@ func TestFlaggedDepsPrefersDeclaredPURL(t *testing.T) {
 		},
 	}
 
-	deps, hidden := flaggedDeps(files)
+	deps, hidden := flaggedDeps(files, nil)
 	if hidden != 0 {
 		t.Errorf("hidden = %d, want 0", hidden)
 	}
@@ -61,7 +64,7 @@ func TestFlaggedDepsURLReference(t *testing.T) {
 		},
 	}
 
-	deps, _ := flaggedDeps(files)
+	deps, _ := flaggedDeps(files, nil)
 	if len(deps) != 1 {
 		t.Fatalf("deps = %+v, want exactly one", deps)
 	}
@@ -84,7 +87,7 @@ func TestFlaggedDepsExcludesEverythingBenign(t *testing.T) {
 		{ID: 4, Parent: new(0), Path: "lib/evil.js", SHA256: depSHAHostile, Classification: "hostile"},
 	}
 
-	deps, _ := flaggedDeps(files)
+	deps, _ := flaggedDeps(files, nil)
 	if len(deps) != 0 {
 		t.Errorf("deps = %+v, want none — nothing here is a flagged dependency", deps)
 	}
@@ -100,7 +103,7 @@ func TestFlaggedDepsOrdersAndDedups(t *testing.T) {
 		{ID: 3, Parent: new(0), Rel: "fetched", Via: "https://c.example/same", SHA256: depSHAHostile, Classification: "hostile"},
 	}
 
-	deps, _ := flaggedDeps(files)
+	deps, _ := flaggedDeps(files, nil)
 	if len(deps) != 2 {
 		t.Fatalf("deps = %+v, want two (the duplicate sha collapses)", deps)
 	}
@@ -120,7 +123,7 @@ func TestFlaggedDepsReportsCappedRemainder(t *testing.T) {
 		})
 	}
 
-	deps, hidden := flaggedDeps(files)
+	deps, hidden := flaggedDeps(files, nil)
 	if len(deps) != maxFlaggedDeps {
 		t.Errorf("len(deps) = %d, want the cap %d", len(deps), maxFlaggedDeps)
 	}
@@ -137,7 +140,7 @@ func TestFlaggedDepsWithoutSHAHasNoHref(t *testing.T) {
 		{ID: 1, Parent: new(0), Rel: "fetched", Via: "https://a.example/a", SHA256: "not-a-sha", Classification: "hostile"},
 	}
 
-	deps, _ := flaggedDeps(files)
+	deps, _ := flaggedDeps(files, nil)
 	if len(deps) != 1 {
 		t.Fatalf("deps = %+v, want exactly one", deps)
 	}
@@ -192,5 +195,76 @@ func TestResultTemplateEscapesHostileLocator(t *testing.T) {
 	}
 	if strings.Contains(sb.String(), "<script>alert(1)</script>") {
 		t.Error("hostile locator reached the page unescaped")
+	}
+}
+
+// A verdict hopper's lookup raised through references atomscan never fetched
+// (go.mod requirements whose own records are hostile) must name them: the
+// panel is the only place the page explains a dependency-raised verdict.
+func TestFlaggedDepsNamesLookupRaisers(t *testing.T) {
+	sha := depSHAHostile
+	files := []cleaveFile{{ID: 0, Path: "v5.6.0", Classification: "benign"}}
+	raisers := []hopper.LookupRaiser{
+		{Kind: "dependency", Name: "pkg:golang/github.com/saferwall/pe", Version: "v1.6.5", SHA256: &sha, FiresAt: new(0), Why: hopper.RaisedDetected},
+		{Kind: "dependency", Name: "pkg:golang/actionlint.kjanat.dev", Version: "v1.17.0", FiresAt: new(0), Why: hopper.RaisedDetected},
+		{Kind: "member", Name: "pkg:golang/inner", SHA256: &sha, FiresAt: new(0)},
+		{Kind: "url_fetch", Name: "https://x.y.z/dl/x.exe", Version: "1", FiresAt: nil},
+		{Kind: "dependency", Name: "pkg:npm/clean", Version: "1.0.0", FiresAt: new(-1)},
+	}
+
+	deps, hidden := flaggedDeps(files, raisers)
+	if hidden != 0 {
+		t.Errorf("hidden = %d, want 0", hidden)
+	}
+	got := make(map[string]flaggedDep, len(deps))
+	for _, d := range deps {
+		got[d.Label] = d
+	}
+	if len(deps) != 3 {
+		t.Fatalf("deps = %+v, want the two go modules and the URL", deps)
+	}
+	pe, ok := got["golang: github.com/saferwall/pe v1.6.5"]
+	if !ok {
+		t.Fatalf("saferwall/pe chip missing: %+v", deps)
+	}
+	if pe.Crit != "hostile" || pe.Href != "/file/"+sha || pe.Locator != "pkg:golang/github.com/saferwall/pe@v1.6.5" {
+		t.Errorf("pe chip = %+v", pe)
+	}
+	if al := got["golang: actionlint.kjanat.dev v1.17.0"]; al.Href != "" || al.Crit != "hostile" {
+		t.Errorf("actionlint chip = %+v, want hostile with no link (no sha)", al)
+	}
+	if u := got["x.y.z/x.exe"]; u.Locator != "https://x.y.z/dl/x.exe" || u.Crit != "hostile" {
+		t.Errorf("url chip = %+v, want the bare URL, hostile for a level-less raise", u)
+	}
+}
+
+// A dependency atomscan fetched and hopper's lookup also raised is one chip.
+func TestFlaggedDepsDedupsFetchedAndRaised(t *testing.T) {
+	sha := depSHAHostile
+	files := []cleaveFile{
+		{ID: 0, Path: "wrapper.tgz", Refs: []cleaveRef{ref("pkg:npm/zaboodle@1.49", 1)}},
+		{ID: 1, Parent: new(0), Rel: "fetched", SHA256: sha, Classification: "hostile"},
+	}
+	raisers := []hopper.LookupRaiser{{Kind: "dependency", Name: "pkg:npm/zaboodle", Version: "1.49", SHA256: &sha, FiresAt: new(0)}}
+	if deps, _ := flaggedDeps(files, raisers); len(deps) != 1 {
+		t.Errorf("deps = %+v, want one chip", deps)
+	}
+}
+
+// Member evidence inlined from the members cache is evidence: the page must
+// not also claim none was recorded.
+func TestResultTemplateInlinedMembersSuppressNoEvidenceNote(t *testing.T) {
+	tmpl := resultTemplateForTest(t)
+	data := singleFileData()
+	data.FileViews = nil
+	data.DeferredMembers = false
+	data.MembersHTML = template.HTML(`<div id="file-x">member evidence</div>`)
+
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, data); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(sb.String(), "No evidence locations were recorded") {
+		t.Error("inlined member evidence rendered beside the no-evidence note")
 	}
 }

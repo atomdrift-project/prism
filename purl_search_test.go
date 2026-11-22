@@ -40,16 +40,19 @@ func TestPackageVersionSearch(t *testing.T) {
 // Both the no-JS form targets and the JS that intercepts the submit have to
 // name the stream explicitly.
 func TestStreamSearchTargetsTheStream(t *testing.T) {
-	page, err := templatesFS.ReadFile("templates/upload.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		`<form method="GET" action="/stream" class="search-form"`,
-		`action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/stream{{end}}" class="filter-form"`,
+	// The box lives in the shared header, and again on the home page; the
+	// filters are the stream's own.
+	for file, want := range map[string]string{
+		"templates/base.html":   `<form method="GET" action="/stream" class="search-form"`,
+		"templates/home.html":   `<form method="GET" action="/stream" class="search-form"`,
+		"templates/upload.html": `action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/stream{{end}}" class="filter-form"`,
 	} {
+		page, err := templatesFS.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if !strings.Contains(string(page), want) {
-			t.Errorf("stream template is missing %q; a search from the box lands on the fallout log", want)
+			t.Errorf("%s is missing %q; a search from the box lands on the wrong page", file, want)
 		}
 	}
 

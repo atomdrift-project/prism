@@ -135,6 +135,9 @@ func catalogResult(ctx context.Context, st *store.Store, sha string) (storedResu
 	res := storedResultFromSample(s, filename, env)
 	res.Classification = classificationName(classFromLevel(level))
 	res.Formula = mol
+	if raised != nil {
+		res.RaisedBy = raised.RaisedBy
+	}
 	return res, nil
 }
 
