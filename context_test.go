@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -162,6 +165,93 @@ func TestMarkContainers(t *testing.T) {
 		if got := files[i].Container; got != want[files[i].ID] {
 			t.Errorf("id %d (%s): Container=%v want %v", files[i].ID, files[i].FileType, got, want[files[i].ID])
 		}
+	}
+}
+
+// A payload decoded or carved out of a file's readable bytes does not make the
+// file a container: its bytes are still the evidence. Only `!!` members that
+// are not `embedded:` do, as in cleave's archive_container_paths.
+func TestCarvedPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"x.zip!!agent.go!!##base64@4296":      true, // as hopper serves cleave's `##` leaf
+		"agent.go##base64@0x10c7":             true, // as cleave names it
+		"x.zip!!dir/agent.go##base64-obf@0x1": true,
+		"setup.exe!!embedded:elf@0x10":        true,
+		"plain.js":                            false,
+		"x.zip!!a.js":                         false,
+		"x.zip!!a##b.tgz!!c.js":               false, // a member of an archive whose name holds ##
+		"ci.yml!!/jobs/test/steps/2/run":      false, // a `!!` member, as cleave counts it
+	} {
+		if got := carvedPath(path); got != want {
+			t.Errorf("carvedPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+	pid := func(i int) *int { return &i }
+	files := []cleaveFile{
+		{ID: 0, FileType: "zip", Path: "x.zip"},
+		{ID: 1, FileType: "go", Path: "x.zip!!agent.go", Parent: pid(0)},
+		{ID: 2, FileType: "shell", Path: "x.zip!!agent.go!!##base64@4296", Parent: pid(1)},
+	}
+	markContainers(files)
+	if !files[0].Container || files[1].Container {
+		t.Errorf("Container = %v, %v; want the zip only", files[0].Container, files[1].Container)
+	}
+}
+
+// The regions a reader sees first are where the malware is. This Go module
+// hides an SSH-key and systemd backdoor in base64 strings in agent.go, whose
+// decoded payloads once marked it a container, so the page showed Markdown
+// headings and imports instead (2026-11-23).
+func TestMalwareRegionsLead(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "solana-vigil-0.1.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := storedResult{RawLitmus: string(raw), Classification: "hostile"}
+	data := prepareResultData("solana-vigil-0.1.0.zip", strings.Repeat("a", 64), &res)
+	var shown []string
+	for _, v := range data.FileViews {
+		for _, w := range v.Windows {
+			shown = append(shown, v.Filename+": "+w.Title)
+		}
+	}
+	if len(shown) < 4 {
+		t.Fatalf("regions = %q, want at least four", shown)
+	}
+	for _, s := range shown[:4] {
+		if !strings.HasPrefix(s, "agent.go: ") {
+			t.Errorf("first four regions = %q, want all from agent.go", shown[:4])
+			break
+		}
+	}
+	if !slices.Contains(shown, "agent.go: Encoded shell appends SSH login keys") {
+		t.Errorf("regions = %q, want the SSH key append", shown)
+	}
+}
+
+// Among otherwise equal regions, one headed by a telling branch of the
+// taxonomy comes first, and a region is titled by its telling note over one
+// that merely sorts first. Neither outranks severity.
+func TestTellingTraitsBreakTies(t *testing.T) {
+	note := func(id string, crit int) ctxNoteRef { return ctxNoteRef{ID: id, Crit: crit, Atomic: true} }
+	headings := labeledWindow{Notes: []ctxNoteRef{note("metadata/lang/source/syntax/markup/markdown::headings", 3)}, Crit: 3}
+	exec := labeledWindow{Notes: []ctxNoteRef{
+		note("metadata/import/go/os::os", 3),
+		note("micro-behaviors/process/create::exec-command", 3),
+	}, Crit: 3}
+	hostile := labeledWindow{Notes: []ctxNoteRef{note("metadata/lang/natural/vocabulary::token", 4)}, Crit: 4}
+
+	if got := exec.headNote(nil).ID; got != "micro-behaviors/process/create::exec-command" {
+		t.Errorf("exec region titled %q, want its process note", got)
+	}
+	if windowScore(&exec, nil, nil) <= windowScore(&headings, nil, nil) {
+		t.Error("a process region does not outrank a Markdown one of equal severity")
+	}
+	if windowScore(&hostile, nil, nil) <= windowScore(&exec, nil, nil) {
+		t.Error("the taxonomy lift outranked a higher severity")
+	}
+	if traitIsTelling("metadata/encoded-payload/base64") {
+		t.Error("metadata is not a telling branch")
 	}
 }
 

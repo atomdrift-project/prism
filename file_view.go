@@ -75,7 +75,41 @@ func windowScore(lw *labeledWindow, wanted map[string]bool, priority map[string]
 	if !traitIsVendor(head.ID) {
 		rank += 100
 	}
-	return rank*8 + lw.Crit*100
+	score := rank*8 + lw.Crit*100
+	// Less than one step of anything above, so it only orders regions that
+	// tie on everything else.
+	if traitIsTelling(head.ID) {
+		score += 50
+	}
+	return score
+}
+
+// tellingPrefixes are the parts of the taxonomy malware leans on: objectives,
+// known families, process execution, networking, eval and decoding. Regions
+// they head get a minor lift so that, among otherwise equal regions, the
+// first ones a reader sees are where the malware is rather than a README's
+// headings. Keep in step with cleave's window prior (src/output/select.rs),
+// which ranks the windows of atomscan's interpret prompt.
+var tellingPrefixes = []string{
+	"objectives/",
+	"well-known/",
+	"micro-behaviors/process/",
+	"micro-behaviors/communications/",
+	"micro-behaviors/network/",
+	"micro-behaviors/metaprogramming/",
+	"micro-behaviors/data/decode",
+	"micro-behaviors/data/decompress",
+	"micro-behaviors/data/encoding",
+}
+
+// traitIsTelling reports whether a trait sits in a tellingPrefixes branch.
+func traitIsTelling(id string) bool {
+	for _, p := range tellingPrefixes {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // contentOmitted counts what the file cap dropped from the Content tab: how many
@@ -738,7 +772,8 @@ func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
 	// Preference, strongest term first: a note that reaches notable outranks
 	// one that does not, then our own traits outrank vendor signatures, then a
 	// note backing a headline finding outranks one that does not, then
-	// severity breaks the tie.
+	// severity, then a telling branch of the taxonomy (traitIsTelling) over an
+	// id that merely sorts first.
 	//
 	// Notability leads because it is the term that was missing. A headline
 	// composite's legs are marked wanted whatever their severity, and a
@@ -753,15 +788,18 @@ func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
 		if !n.Atomic {
 			continue
 		}
-		score := n.Crit
+		score := n.Crit * 2
 		if n.Crit >= minNotableCrit {
-			score += 64
+			score += 128
 		}
 		if !traitIsVendor(n.ID) {
-			score += 16
+			score += 32
 		}
 		if wanted[n.ID] {
-			score += 8
+			score += 16
+		}
+		if traitIsTelling(n.ID) {
+			score++
 		}
 		if score > bestScore {
 			best, bestScore = n, score

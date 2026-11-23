@@ -517,7 +517,7 @@ func markContainers(files []cleaveFile) {
 		idToIdx[files[i].ID] = i
 	}
 	for i := range files {
-		if p := files[i].Parent; p != nil && containmentRel(files[i].Rel) {
+		if p := files[i].Parent; p != nil && containmentRel(files[i].Rel) && !carvedPath(files[i].Path) {
 			if j, ok := idToIdx[*p]; ok {
 				files[j].Container = true
 			}
@@ -526,6 +526,23 @@ func markContainers(files []cleaveFile) {
 			files[i].Container = true
 		}
 	}
+}
+
+// carvedPath reports whether a file was decoded or carved out of its parent's
+// readable bytes rather than unpacked from an archive: cleave names a decoded
+// payload `<parent>##base64@0x…` and a carved one `<parent>!!embedded:…`. Such a
+// parent is source or a binary with a blob inside, and its own bytes are still
+// the evidence, so it is no container. This is cleave's own test
+// (archive_container_paths), which counts only `!!` members that are not
+// `embedded:`; hopper may join the `##` leaf with a `!!`, so the last `##`
+// winning over the last `!!` is what marks the edge.
+func carvedPath(path string) bool {
+	cut := strings.LastIndex(path, "!!")
+	leaf := path
+	if cut >= 0 {
+		leaf = path[cut+len("!!"):]
+	}
+	return strings.LastIndex(path, "##") > cut || strings.HasPrefix(leaf, "embedded:")
 }
 
 // containmentRel reports whether a child's pid edge means its parent physically
