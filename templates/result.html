@@ -32,10 +32,16 @@
 {{range .FileViews}}{{if .Windows}}<div id="{{.Anchor}}">{{template "region" .}}</div>{{end}}{{end}}
 {{if .FilesOmitted}}<p class="note">Showing the top {{.FilesShownLimit}} files — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}region{{else}}regions{{end}}) not shown.</p>{{end}}
 {{end}}
-{{- /* The header's findings, addressable by name for the members endpoint. */ -}}
+{{- /* The header's findings, addressable by name for the members endpoint:
+       the flagged dependencies first, then the top traits. */ -}}
 {{define "findingsbody"}}
-<div class="badges-slot">{{if .Badges}}<div class="badges" aria-label="Top two traits">{{range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end}}</div>{{end}}</div>
+<div class="badges-slot">{{if or .FlaggedDeps .Badges}}<div class="badges" aria-label="Findings">
+{{- range .FlaggedDeps}}{{if .Href}}<a class="badge {{.Crit}}" href="{{.Href}}" title="{{.Locator}}">{{template "depbadge" .}}</a>{{else}}<span class="badge {{.Crit}}" title="{{.Locator}}">{{template "depbadge" .}}</span>{{end}}{{end}}
+{{- with .FlaggedDepsHidden}}<span class="badge">+{{.}} more</span>{{end}}
+{{- range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end -}}
+</div>{{end}}</div>
 {{end}}
+{{define "depbadge"}}<span class="crit-dot {{.Crit}}" aria-hidden="true"></span>Depends on {{.Label}}{{with .Kind}} <em>{{.}}</em>{{end}}{{end}}
 <!doctype html>
 <html lang="en">
 <head>
@@ -103,13 +109,6 @@
         .prov .v.mono { font-family: var(--mono); font-size: 11.5px; }
         .prov a.v { color: var(--blue); }
         .registry-desc { margin: 0; font-size: 14px; color: var(--ink-light); font-style: italic; max-width: 60ch; }
-        .deps { display: flex; flex-direction: column; gap: 4px; }
-        .dep-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--rule); color: var(--ink-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .dep-chip::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--ink-light); flex: none; }
-        .dep-chip.hostile::before { background: var(--hostile); }
-        .dep-chip.suspicious::before { background: var(--suspicious); }
-        .dep-chip em { font-style: normal; color: var(--ink-light); }
-        a.dep-chip:hover { color: var(--ink); border-color: var(--blue); }
         .parents { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
         .parents a { color: var(--blue); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -141,6 +140,8 @@
         .summary { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-mid); max-width: 72ch; }
         .badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
         .badge { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 9px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink); border: 1px solid var(--rule); background: var(--paper); }
+        .badge em { font-style: normal; font-weight: 400; color: var(--ink-light); }
+        a.badge:hover { color: var(--ink); border-color: var(--blue); }
         .crit-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-light); flex: none; }
         .crit-dot.hostile { background: var(--hostile); }
         .crit-dot.suspicious { background: var(--suspicious); }
@@ -371,12 +372,6 @@
                     {{if .Size}}<div><span class="k">Size</span><span class="v">{{.Size}}{{if .FileType}}, {{.FileType}}{{end}}</span></div>{{end}}
                 </div>
             </div>
-            {{if .FlaggedDeps}}
-            <div class="rail-block">
-                <span class="rail-title">{{len .FlaggedDeps}} flagged {{if eq (len .FlaggedDeps) 1}}dependency{{else}}dependencies{{end}}</span>
-                <div class="deps">{{range .FlaggedDeps}}{{if .Href}}<a class="dep-chip {{.Crit}}" href="{{.Href}}" title="{{.Locator}}">{{.Label}}{{with .Kind}} <em>{{.}}</em>{{end}}</a>{{else}}<span class="dep-chip {{.Crit}}" title="{{.Locator}}">{{.Label}}{{with .Kind}} <em>{{.}}</em>{{end}}</span>{{end}}{{end}}{{if .FlaggedDepsHidden}}<span class="note">+{{.FlaggedDepsHidden}} more</span>{{end}}</div>
-            </div>
-            {{end}}
             {{if .Parents}}
             <div class="rail-block">
                 <span class="rail-title">Found inside</span>

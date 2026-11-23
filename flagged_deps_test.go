@@ -157,6 +157,7 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 		{Label: "x.y.z/x.exe", Locator: "https://x.y.z/dl/x.exe", Kind: "pe", Crit: "suspicious"},
 	}
 	data.FlaggedDepsHidden = 3
+	data.Badges = []topTrait{{Desc: "spawns child", Crit: "hostile"}}
 
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, data); err != nil {
@@ -164,17 +165,31 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 	}
 	html := sb.String()
 
-	if !strings.Contains(html, `<a class="dep-chip hostile" href="/`+depSHAHostile+`"`) {
-		t.Error("linkable dependency must render as an anchor to its own record")
+	dep := `<a class="badge hostile" href="/` + depSHAHostile + `" title="pkg:npm/zaboodle@1.49">`
+	if !strings.Contains(html, dep+`<span class="crit-dot hostile" aria-hidden="true"></span>Depends on npm: zaboodle v1.49</a>`) {
+		t.Error("linkable dependency must render as a chip linking to its own record")
 	}
-	if !strings.Contains(html, `<span class="dep-chip suspicious" title="https://x.y.z/dl/x.exe">`) {
+	if !strings.Contains(html, `<span class="badge suspicious" title="https://x.y.z/dl/x.exe">`) {
 		t.Error("dependency without a record must stay a plain span")
-	}
-	if !strings.Contains(html, "2 flagged dependencies") {
-		t.Error("panel title missing or miscounted")
 	}
 	if !strings.Contains(html, "+3 more") {
 		t.Error("capped remainder must be disclosed")
+	}
+	// The dependencies lead the findings: first chip, ahead of every trait.
+	if d, tr := strings.Index(html, dep), strings.Index(html, "spawns child"); d < 0 || tr < 0 || d > tr {
+		t.Errorf("dependency chip at %d, first trait at %d: the dependency must come first", d, tr)
+	}
+	if strings.Contains(html, "flagged dependenc") {
+		t.Error("the separate rail panel is gone; dependencies live in the findings row")
+	}
+	// An archive's findings are re-rendered once its members load; the
+	// dependency must survive that swap.
+	var findings strings.Builder
+	if err := tmpl.ExecuteTemplate(&findings, "findingsbody", data); err != nil {
+		t.Fatalf("findingsbody: %v", err)
+	}
+	if !strings.Contains(findings.String(), dep) {
+		t.Error("findingsbody dropped the dependency chip")
 	}
 }
 
@@ -266,5 +281,19 @@ func TestResultTemplateInlinedMembersSuppressNoEvidenceNote(t *testing.T) {
 	}
 	if strings.Contains(sb.String(), "No evidence locations were recorded") {
 		t.Error("inlined member evidence rendered beside the no-evidence note")
+	}
+}
+
+// The members cache holds rendered findings HTML, so a new build must never
+// serve an older build's markup: a template change shows on deploy, not a day
+// later.
+func TestMembersKeyBelongsToTheBuild(t *testing.T) {
+	saved := buildCommit
+	t.Cleanup(func() { buildCommit = saved })
+	buildCommit = "a543222"
+	before := membersKey(depSHAHostile)
+	buildCommit = "2b7066e"
+	if after := membersKey(depSHAHostile); after == before {
+		t.Errorf("membersKey = %q for both builds; an old build's HTML would be served", after)
 	}
 }

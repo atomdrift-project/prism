@@ -813,15 +813,14 @@ type resultData struct {
 	// in the Structure tab. Its single root has children only for an archive;
 	// a lone file yields a one-node tree, and the tab stays hidden.
 	Tree []*treeNode
-	// FlaggedDeps are the fetched dependencies whose own scan classified
-	// suspicious or hostile, shown in a panel between the hero and the tabs
-	// (same placement as "Found in"/"Referenced by"). Benign dependencies are
-	// deliberately absent — the panel exists to explain an elevated verdict,
-	// not to inventory every reference (the Structure tab does that).
+	// FlaggedDeps are the dependencies whose own verdict is suspicious or
+	// hostile, leading the hero's findings ahead of the top traits. Benign
+	// dependencies are deliberately absent: the row explains an elevated
+	// verdict, it does not inventory every reference.
 	FlaggedDeps []flaggedDep
-	// FlaggedDepsHidden is how many flagged dependencies the panel's cap
-	// dropped, so a sample with hundreds of them says so rather than
-	// presenting the first two dozen as the whole set.
+	// FlaggedDepsHidden is how many flagged dependencies the cap dropped, so a
+	// sample with hundreds of them says so rather than presenting the first
+	// few as the whole set.
 	FlaggedDepsHidden int
 	// TopTraits is the Content tab's headline: the few most significant traits
 	// (highest crit×confidence, suspicious+), each linking to its evidence
@@ -3585,7 +3584,7 @@ func invalidateSampleCaches(ctx context.Context, sha, reason string) {
 			if membersCache == nil {
 				return nil
 			}
-			return membersCache.Delete(ctx, sha)
+			return membersCache.Delete(ctx, membersKey(sha))
 		}},
 	} {
 		if err := c.del(ctx, sha); err != nil {
@@ -5191,7 +5190,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 		// Warming means this is usually already built by the time anyone asks.
 		// When it is, inline it: a second round trip the browser cannot even
 		// start until the HTML has parsed costs more than the bytes do.
-		if cached, ok, cerr := membersCache.Get(ctx, sha); cerr == nil && ok && cached.HasContent {
+		if cached, ok, cerr := membersCache.Get(ctx, membersKey(sha)); cerr == nil && ok && cached.HasContent {
 			data.MembersHTML = template.HTML(cached.ContentHTML)  //nolint:gosec // rendered by our own templates
 			data.MembersTraits = template.HTML(cached.TraitsHTML) //nolint:gosec // rendered by our own templates
 			data.DeferredMembers = false
@@ -5407,7 +5406,7 @@ func handleFileMembers(w http.ResponseWriter, r *http.Request) {
 	// onto one build, so a burst on a freshly-crawled archive costs one member
 	// fetch, not one per tab. renderMembersResponse holds the DB + reassembly +
 	// render cost; on a hit none of that runs.
-	cached, err := membersCache.FetchTTL(r.Context(), sha, auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
+	cached, err := membersCache.FetchTTL(r.Context(), membersKey(sha), auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
 		return renderMembersResponse(lctx, sha)
 	})
 	if err != nil {
@@ -5517,6 +5516,13 @@ func renderMembers(ctx context.Context, sha string, res *storedResult, start tim
 		TraitsHTML:  traits.String(),
 		HasContent:  len(data.FileViews) > 0,
 	}, nil
+}
+
+// membersKey is a sample's members-cache key. The entry is rendered HTML, so it
+// belongs to the build that rendered it: a deploy that changes the templates
+// must not serve the old markup for a day.
+func membersKey(sha string) string {
+	return sha + ":" + buildCommit
 }
 
 // maxParentArchives caps how many "found in" backlinks a child page renders.
@@ -5647,7 +5653,7 @@ func warmMembers(ctx context.Context, sha string, res *storedResult) {
 	go func() {
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), membersWarmTimeout)
 		defer cancel()
-		_, err := membersCache.FetchTTL(wctx, sha, auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
+		_, err := membersCache.FetchTTL(wctx, membersKey(sha), auxCacheTTL, func(lctx context.Context) (cachedMembers, error) {
 			// The page render already holds this sample's envelope, so the warm
 			// path splices members into that copy rather than re-reading a
 			// multi-megabyte row hopper just handed us.
@@ -8079,10 +8085,8 @@ func prepareResultData(filename, sha256Hex string, res *storedResult) resultData
 		data.HasTree = len(data.Tree) > 0 && len(data.Tree[0].Children) > 0
 	}
 
-	// Flagged fetched dependencies: external content the sample references
-	// whose own scan classified suspicious or hostile — the panel answers "why
-	// is this sample elevated" at a glance. Benign dependencies stay out of it
-	// (they remain visible in the Structure tab's fetched chips).
+	// Flagged dependencies lead the hero's findings: what the sample references
+	// whose own verdict is suspicious or hostile.
 	data.FlaggedDeps, data.FlaggedDepsHidden = flaggedDeps(report.Files, res.RaisedBy)
 
 	// Use formula from cleave with file type prefix.

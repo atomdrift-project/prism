@@ -8,11 +8,11 @@ import (
 	"github.com/atomdrift-project/hopper"
 )
 
-// maxFlaggedDeps bounds how many dependency chips the panel renders. A crafted
-// sample can declare an unbounded number of hostile references; the panel exists
-// to explain the verdict at a glance, so it shows the worst few and points the
-// remainder at the Structure tab rather than growing without limit.
-const maxFlaggedDeps = 24
+// maxFlaggedDeps bounds how many dependency chips lead the hero's findings. A
+// crafted sample can declare an unbounded number of hostile references; the
+// row explains the verdict at a glance, so it shows the worst few and counts
+// the rest rather than growing without limit.
+const maxFlaggedDeps = 3
 
 // flaggedDep is one fetched dependency whose own scan classified suspicious or
 // hostile — the sample reached out for it, and what came back was bad. It is a
@@ -39,18 +39,18 @@ type flaggedDep struct {
 	critN int
 }
 
-// flaggedDeps selects the fetched dependencies worth surfacing above the tabs:
-// children pulled over the network whose own verdict came back suspicious or
-// hostile, worst first. Benign dependencies are deliberately absent — the panel
-// answers "why is this sample elevated", not "what does it reference" (the
-// Structure tab does that). Sidecars are skipped: a registry record about a
-// dependency is provenance, not the payload. Returns the capped chips and how
-// many were dropped, so the panel can say so instead of silently truncating.
+// flaggedDeps selects the dependencies that lead the hero's findings: children
+// pulled over the network whose own verdict came back suspicious or hostile,
+// worst first. Benign dependencies are deliberately absent: the row answers
+// "why is this sample elevated", not "what does it reference". Sidecars are
+// skipped: a registry record about a dependency is provenance, not the
+// payload. Returns the capped chips and how many were dropped, so the row can
+// say so instead of silently truncating.
 //
 // raisers are the references hopper's lookup found hostile on their own record
 // (a go.mod requirement, a workflow action) without atomscan having fetched
 // them into the report; they raise the verdict just the same, so they join the
-// panel. Members are left to the evidence view, which already shows them.
+// row. Members are left to the evidence view, which already shows them.
 func flaggedDeps(files []cleaveFile, raisers []hopper.LookupRaiser) (flagged []flaggedDep, dropped int) {
 	declared := declaredLocators(files)
 
