@@ -27,6 +27,10 @@ const lookupTimeout = 5 * time.Second
 // which is prism's hostile cutoff.
 const defaultFalsePositiveBudget = CriticalLevel
 
+// maxFalsePositiveBudget is the loosest budget a caller may ask for, as
+// beamline bounds it.
+const maxFalsePositiveBudget = 3000
+
 // lookupAnswer is one artifact as beamline's /v1/lookup reports it. Fields
 // with nothing to say are omitted; findings is always present.
 type lookupAnswer struct {
@@ -76,7 +80,7 @@ func serveLookup(w http.ResponseWriter, r *http.Request, sha string) {
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]string{
 			"code":    "invalid_false_positive_budget",
-			"message": fmt.Sprintf("false_positive_budget must be a whole number from 0 to %d, not %q.", SuspiciousCeiling, raw),
+			"message": fmt.Sprintf("false_positive_budget must be a whole number from 0 to %d, not %q.", maxFalsePositiveBudget, raw),
 		}})
 		return
 	}
@@ -100,14 +104,14 @@ func serveLookup(w http.ResponseWriter, r *http.Request, sha string) {
 }
 
 // parseBudget reads false_positive_budget: absent is the default, anything
-// but a whole number from 0 to SuspiciousCeiling is refused rather than
+// but a whole number from 0 to maxFalsePositiveBudget is refused rather than
 // quietly replaced, as beamline refuses it.
 func parseBudget(raw string) (int, bool) {
 	if raw == "" {
 		return defaultFalsePositiveBudget, true
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 || n > SuspiciousCeiling {
+	if err != nil || n < 0 || n > maxFalsePositiveBudget {
 		return 0, false
 	}
 	return n, true
@@ -169,16 +173,17 @@ func answerFor(sha string, rec *hopper.LookupRecord, err error, budget int) look
 	return a
 }
 
-// severityAt reads a measured level at a caller's budget, as beamline does:
-// -1 never fires; at or under the budget is hostile; past it but within the
-// suspicious ceiling is suspicious; looser still is benign.
+// severityAt reads a measured level at a caller's budget: -1 never fires; at
+// or under the budget is hostile; past it but within the budget's suspicious
+// ceiling (scan's, which scales with the budget) is suspicious; looser still
+// is benign.
 func severityAt(level, budget int) string {
 	switch {
 	case level < 0:
 		return "benign"
 	case level <= budget:
 		return "hostile"
-	case level <= SuspiciousCeiling:
+	case level <= suspiciousCeiling(budget):
 		return "suspicious"
 	default:
 		return "benign"

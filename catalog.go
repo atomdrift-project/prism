@@ -164,7 +164,7 @@ func levelForClass(class string) *int {
 	case "hostile":
 		return nil
 	case "suspicious":
-		l := SuspiciousCeiling
+		l := suspiciousCeiling(CriticalLevel)
 		return &l
 	default:
 		l := -1

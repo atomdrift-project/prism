@@ -301,7 +301,7 @@ func TestVerdictLevel(t *testing.T) {
 		{"the lookup's level", store.Opinion{Class: "benign", FiresAt: at(-1)}, &hopper.LookupRecord{FiresAt: at(3)}, at(3)},
 		{"raised with no level reads hostile", store.Opinion{Class: "benign", FiresAt: at(-1)}, raised, nil},
 		{"atomscan's own level when it agrees with its class", store.Opinion{Class: "suspicious", FiresAt: at(400)}, nil, at(400)},
-		{"a class with no level", store.Opinion{Class: "suspicious"}, nil, at(SuspiciousCeiling)},
+		{"a class with no level", store.Opinion{Class: "suspicious"}, nil, at(suspiciousCeiling(CriticalLevel))},
 		{"a level the class disowns", store.Opinion{Class: "benign", FiresAt: at(3)}, nil, at(-1)},
 		{"hostile by its floor", store.Opinion{Class: "hostile", FiresAt: at(-1)}, nil, nil},
 	} {

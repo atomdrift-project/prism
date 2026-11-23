@@ -192,19 +192,22 @@ func TestFalloutVerificationFilter(t *testing.T) {
 	}
 }
 
-// A file nobody cited and nothing fetched was only uploaded: test data, not a
-// catch. A sighting or a URL is what puts it in the log.
-func TestFalloutLeavesOutBareUploads(t *testing.T) {
+// A PURL or a URL is what puts a catch in the log. A sighting alone does not:
+// the ledger also cites reconstructions.
+func TestFalloutNeedsAPURLOrURL(t *testing.T) {
 	fetched := hostileRow(shaN(1), "npm", "javascript", "O1(C)", "fetched", time.Hour)
-	upload := hostileRow(shaN(2), "", "elf", "O1(C)", "upload", time.Hour)
+	pkg := hostileRow(shaN(2), "npm", "javascript", "O1(C)", "pkg", time.Hour)
+	pkg.HasURL = false
+	pkg.PURLBase = "pkg:npm/pkg"
+	upload := hostileRow(shaN(3), "", "elf", "O1(C)", "upload", time.Hour)
 	upload.HasURL = false
-	sighted := hostileRow(shaN(3), "", "elf", "O1(C)", "sighted", time.Hour)
+	sighted := hostileRow(shaN(4), "", "elf", "O1(C)", "sighted", time.Hour)
 	sighted.HasURL = false
 	sighted.Corroborated = true
 
-	got := falloutRowsInWindow([]feedRow{fetched, upload, sighted}, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny)
-	if len(got) != 2 || got[0].SHA256 != fetched.SHA256 || got[1].SHA256 != sighted.SHA256 {
-		t.Fatalf("rows = %+v, want the fetched and sighted catches only", got)
+	got := falloutRowsInWindow([]feedRow{fetched, pkg, upload, sighted}, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny)
+	if len(got) != 2 || got[0].SHA256 != fetched.SHA256 || got[1].SHA256 != pkg.SHA256 {
+		t.Fatalf("rows = %+v, want the fetched and PURL-bearing catches only", got)
 	}
 }
 

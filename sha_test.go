@@ -44,8 +44,15 @@ func TestAnswerFor(t *testing.T) {
 		{"within budget", analyzed(level(10)), nil, 25, "analyzed", "hostile", ""},
 		{"at budget", analyzed(level(25)), nil, 25, "analyzed", "hostile", ""},
 		{"past a strict budget", analyzed(level(10)), nil, 5, "analyzed", "suspicious", ""},
-		{"at the suspicious ceiling", analyzed(level(3000)), nil, 25, "analyzed", "suspicious", ""},
+		{"at the suspicious ceiling", analyzed(level(2500)), nil, 25, "analyzed", "suspicious", ""},
+		// Where scan places a verdict a benign read cleared from L0: just past
+		// its band, so it must read benign here too, not suspicious.
+		{"just past the suspicious ceiling", analyzed(level(2501)), nil, 25, "analyzed", "benign", ""},
+		{"the old fixed ceiling", analyzed(level(3000)), nil, 25, "analyzed", "benign", ""},
 		{"past the suspicious ceiling", analyzed(level(5000)), nil, 25, "analyzed", "benign", ""},
+		// The ceiling scales with the budget, as scan's does with -l.
+		{"past a strict budget's ceiling", analyzed(level(1001)), nil, 10, "analyzed", "benign", ""},
+		{"within a loose budget's ceiling", analyzed(level(5000)), nil, 100, "analyzed", "suspicious", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -168,6 +175,27 @@ func TestLegacyFileRouteRedirects(t *testing.T) {
 		newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
 		if rr.Code != http.StatusMovedPermanently || rr.Header().Get("Location") != tt.want {
 			t.Errorf("GET %s = %d %q, want 301 %q", tt.path, rr.Code, rr.Header().Get("Location"), tt.want)
+		}
+	}
+}
+
+// suspiciousCeiling is scan's suspicious_ceiling: 100x the hostile cutoff,
+// never under L500, never past the grid. The table is scan's own
+// (model/tests.rs suspicious_ceiling_scales_with_the_hostile_level).
+func TestSuspiciousCeilingMatchesScan(t *testing.T) {
+	for _, tt := range []struct{ budget, want int }{
+		{0, 500},
+		{1, 500},
+		{5, 500},
+		{10, 1000},
+		{25, 2500},
+		{70, 7000},
+		{100, 10000},
+		{250, 25000},
+		{1000, 25000},
+	} {
+		if got := suspiciousCeiling(tt.budget); got != tt.want {
+			t.Errorf("suspiciousCeiling(%d) = %d, want %d", tt.budget, got, tt.want)
 		}
 	}
 }

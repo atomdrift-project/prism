@@ -265,11 +265,11 @@ func TestEnvelopeClass(t *testing.T) {
 	if got := envelopeClass(new(CriticalLevel + 1)); got != 1 {
 		t.Errorf("envelopeClass(CriticalLevel+1) = %d, want 1 (suspicious just above critical)", got)
 	}
-	if got := envelopeClass(new(SuspiciousCeiling)); got != 1 {
-		t.Errorf("envelopeClass(SuspiciousCeiling) = %d, want 1 (suspicious at the ceiling)", got)
+	if got := envelopeClass(new(suspiciousCeiling(CriticalLevel))); got != 1 {
+		t.Errorf("envelopeClass(suspiciousCeiling(CriticalLevel)) = %d, want 1 (suspicious at the ceiling)", got)
 	}
-	if got := envelopeClass(new(SuspiciousCeiling + 1)); got != 0 {
-		t.Errorf("envelopeClass(SuspiciousCeiling+1) = %d, want 0 (benign: past the ceiling)", got)
+	if got := envelopeClass(new(suspiciousCeiling(CriticalLevel) + 1)); got != 0 {
+		t.Errorf("envelopeClass(suspiciousCeiling(CriticalLevel)+1) = %d, want 0 (benign: past the ceiling)", got)
 	}
 }
 

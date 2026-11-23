@@ -11,7 +11,7 @@ import (
 // replaced by the single `l` verdict-and-level marker both at the top level
 // and inside fs[]. Unlike TestLitmusMlResponseV6 in litmus_v5_test.go (which
 // exercises the envelopeClass 0/2 mapping), this asserts the classFromLevel
-// policy. Boundary levels are derived from CriticalLevel/SuspiciousCeiling so
+// policy. Boundary levels are derived from CriticalLevel/suspiciousCeiling(CriticalLevel) so
 // the cases track the operating point instead of hardcoding it.
 func TestLitmusMlResponseV6Verdict(t *testing.T) {
 	cases := []struct {
@@ -45,16 +45,16 @@ func TestLitmusMlResponseV6Verdict(t *testing.T) {
 		},
 		{
 			name:      "suspicious at the ceiling",
-			raw:       fmt.Sprintf(`{"v":"6","prob":0.66,"l":%[1]d,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":%[1]d,"conf":85}]}`, SuspiciousCeiling),
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.66,"l":%[1]d,"conf":85,"version":"vtest","fs":[{"id":0,"prob":0.66,"l":%[1]d,"conf":85}]}`, suspiciousCeiling(CriticalLevel)),
 			wantClass: 1,
-			wantL:     SuspiciousCeiling,
+			wantL:     suspiciousCeiling(CriticalLevel),
 			wantConf:  85,
 		},
 		{
 			name:      "benign past the ceiling",
-			raw:       fmt.Sprintf(`{"v":"6","prob":0.5,"l":%[1]d,"conf":80,"version":"vtest","fs":[{"id":0,"prob":0.5,"l":%[1]d,"conf":80}]}`, SuspiciousCeiling+1),
+			raw:       fmt.Sprintf(`{"v":"6","prob":0.5,"l":%[1]d,"conf":80,"version":"vtest","fs":[{"id":0,"prob":0.5,"l":%[1]d,"conf":80}]}`, suspiciousCeiling(CriticalLevel)+1),
 			wantClass: 0,
-			wantL:     SuspiciousCeiling + 1,
+			wantL:     suspiciousCeiling(CriticalLevel) + 1,
 			wantConf:  80,
 		},
 		{
@@ -193,9 +193,9 @@ func TestClassFromLevel(t *testing.T) {
 		{name: "level 0 is hostile", l: 0, want: 2},
 		{name: "critical line is hostile", l: CriticalLevel, want: 2},
 		{name: "just past the critical line is suspicious", l: CriticalLevel + 1, want: 1},
-		{name: "suspicious ceiling is still suspicious", l: SuspiciousCeiling, want: 1},
-		{name: "just past the ceiling is benign", l: SuspiciousCeiling + 1, want: 0},
-		{name: "far past the ceiling is benign", l: SuspiciousCeiling * 2, want: 0},
+		{name: "suspicious ceiling is still suspicious", l: suspiciousCeiling(CriticalLevel), want: 1},
+		{name: "just past the ceiling is benign", l: suspiciousCeiling(CriticalLevel) + 1, want: 0},
+		{name: "far past the ceiling is benign", l: suspiciousCeiling(CriticalLevel) * 2, want: 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

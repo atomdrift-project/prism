@@ -1008,8 +1008,8 @@ type feedRow struct {
 	// detail page names only open databases and blogs (DetectedBy).
 	Corroborated bool
 	// HasURL marks a sample hopper fetched from a URL: something published it.
-	// A file that is neither cited nor fetched was only ever uploaded, and
-	// the fallout log leaves it out (falloutTraceable).
+	// A file with neither a URL nor a PURL was only ever uploaded, and the
+	// fallout log leaves it out (falloutTraceable).
 	HasURL bool
 	// ShowVerdict labels the row with its verdict, for a list that mixes them.
 	ShowVerdict bool
@@ -9260,7 +9260,7 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 // suspicious on the per-100M-benigns scale. A v6/v7 envelope's level is the
 // strictest grid level at which the file fires; level <= CriticalLevel means it
 // fires at or below our critical line (hostile), higher levels mean it only
-// fires in the noisier tail (suspicious, up to SuspiciousCeiling), and `-1`
+// fires in the noisier tail (suspicious, up to suspiciousCeiling), and `-1`
 // means it never fires (benign). Both derivations (envelopeClass and
 // classFromLevel) use this one constant — there is no second cutoff.
 //
@@ -9270,20 +9270,21 @@ func (r *litmusMlResponse) UnmarshalJSON(data []byte) error {
 // cliff). See collimator/src/collimator/thresholds/__init__.py for the cross-repo group.
 const CriticalLevel = 25
 
-// SuspiciousCeiling is the loosest fired-level (FP per 100M benigns) that still
-// reads as suspicious. Above it a firing is benign informational noise rather
-// than a suspicious verdict. Set to L3000 — an EXPERIMENTAL widening (2026-07),
-// the loosest robustly-stable point on the calibrate curve (recall peaks at L4000
-// then collapses ~8pp at L5000). Overrides the prior L100 precision elbow from
-// hopper's fired-level analysis (L250 and looser add more false positives than
-// true positives); re-measure and tighten back if the suspicious bucket floods.
-// Mirrors scan's SUSPICIOUS_LEVEL_CEILING and hopper/promoter's SuspiciousCeiling;
-// keep the cross-repo group in sync.
-const SuspiciousCeiling = 3000
+// gridMax is the loosest level on the calibrated grid.
+const gridMax = 25000
+
+// suspiciousCeiling is the loosest level that still reads as suspicious at a
+// hostile cutoff of budget: 100x the budget, never under L500, never past the
+// grid (L2500 at CriticalLevel). It is scan's suspicious_ceiling, so a level
+// scan places past its suspicious band reads benign here too. Hopper, promoter
+// and beamline still use a fixed L3000.
+func suspiciousCeiling(budget int) int {
+	return min(max(100*budget, 500), gridMax)
+}
 
 // envelopeClass derives the legacy 0/1/2 classification from a v6/v7 envelope's
 // level field. -1 → benign (0); 0..=CriticalLevel → hostile (2); CriticalLevel <
-// l <= SuspiciousCeiling → suspicious (1); looser → benign (0, past the elbow);
+// l <= suspiciousCeiling → suspicious (1); looser → benign (0);
 // nil/null (manual mode, no level info) → hostile (2), fail-safe.
 func envelopeClass(l *int) int {
 	if l == nil {
@@ -9294,7 +9295,7 @@ func envelopeClass(l *int) int {
 		return 0
 	case *l <= CriticalLevel:
 		return 2
-	case *l <= SuspiciousCeiling:
+	case *l <= suspiciousCeiling(CriticalLevel):
 		return 1
 	default:
 		return 0
@@ -9326,8 +9327,8 @@ func (r *litmusMlResponse) verdictClass() int {
 // classFromLevel applies prism's consumer-side level policy to a v6/v7 level
 // marker (../litmus/docs/JSON.md). The sentinel -1 is benign; a nil marker is
 // hostile produced under manual thresholds (no level table applies); levels
-// 0..=CriticalLevel are hostile; CriticalLevel < l <= SuspiciousCeiling are
-// suspicious; looser levels are benign (past the L100 precision elbow). Lower
+// 0..=CriticalLevel are hostile; CriticalLevel < l <= suspiciousCeiling are
+// suspicious; looser levels are benign. Lower
 // levels fire at stricter false-positive cutoffs, so they carry higher
 // confidence. Uses the same CriticalLevel constant as envelopeClass — one
 // cutoff, no divergence.
@@ -9340,7 +9341,7 @@ func classFromLevel(l *int) int {
 		return 0 // benign sentinel
 	case v <= CriticalLevel:
 		return 2 // hostile
-	case v <= SuspiciousCeiling:
+	case v <= suspiciousCeiling(CriticalLevel):
 		return 1 // suspicious
 	default:
 		return 0 // benign: looser than the ceiling
