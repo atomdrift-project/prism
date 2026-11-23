@@ -198,10 +198,12 @@ func TestCarvedPath(t *testing.T) {
 	}
 }
 
-// The regions a reader sees first are where the malware is. This Go module
-// hides an SSH-key and systemd backdoor in base64 strings in agent.go, whose
-// decoded payloads once marked it a container, so the page showed Markdown
-// headings and imports instead (2026-11-23).
+// The regions a reader sees first are where the malware is, titled by the
+// conclusions the headline chips state. This Go module hides an SSH-key and
+// systemd backdoor in base64 strings in agent.go. Its decoded payloads once
+// marked it a container, so the page showed Markdown headings and imports;
+// then its strongest composite, which names those payloads, was kept out of
+// the very regions holding its spans (2026-11-23).
 func TestMalwareRegionsLead(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "solana-vigil-0.1.0.json"))
 	if err != nil {
@@ -224,8 +226,47 @@ func TestMalwareRegionsLead(t *testing.T) {
 			break
 		}
 	}
-	if !slices.Contains(shown, "agent.go: Encoded shell appends SSH login keys") {
-		t.Errorf("regions = %q, want the SSH key append", shown)
+	for _, want := range []string{
+		"agent.go: Concealed SSH key installation with redundant agent startup",
+		"agent.go: Concealed shell installs an always-restarting systemd unit",
+	} {
+		if !slices.Contains(shown, want) {
+			t.Errorf("regions = %q, want %q", shown, want)
+		}
+	}
+	for _, s := range shown {
+		if strings.Contains(s, "Markdown") {
+			t.Errorf("regions = %q, want no Markdown headings beside a backdoor", shown)
+		}
+	}
+	if len(data.TopTraits) == 0 || len(data.TopTraits[0].Sources) == 0 || data.TopTraits[0].Sources[0].Anchor == "" {
+		t.Errorf("the strongest chip does not link to a rendered region: %+v", data.TopTraits)
+	}
+}
+
+// A composite covers every region its legs touch, so each titles one region:
+// the strongest region takes the first chip's composite, the next the next.
+// A composite below notable, or weaker than the region's own strongest match,
+// leaves the match as the title.
+func TestRegionTitlesClaimComposites(t *testing.T) {
+	ssh := ctxNoteRef{ID: "objectives/persistence/login/ssh::key", Desc: "SSH key", Crit: 5}
+	unit := ctxNoteRef{ID: "objectives/persistence/system/service::unit", Desc: "systemd unit", Crit: 4}
+	leg := ctxNoteRef{ID: "micro-behaviors/fs/write::append", Desc: "appends", Crit: 3, Atomic: true}
+	weak := ctxNoteRef{ID: "metadata/lang/natural::term", Desc: "term", Crit: 1}
+	strong := ctxNoteRef{ID: "micro-behaviors/process/create::exec", Desc: "exec", Crit: 5, Atomic: true}
+	lws := []labeledWindow{
+		{Notes: []ctxNoteRef{ssh, unit, leg}, Crit: 5, Start: 0},
+		{Notes: []ctxNoteRef{ssh, unit, leg}, Crit: 5, Start: 100},
+		{Notes: []ctxNoteRef{leg, weak}, Crit: 3, Start: 200},
+		{Notes: []ctxNoteRef{strong, unit}, Crit: 5, Start: 300},
+	}
+	headline := map[string]int{ssh.ID: 1, unit.ID: 2}
+	var got []string
+	for _, title := range regionTitles(lws, nil, nil, headline) {
+		got = append(got, title.Desc)
+	}
+	if want := []string{"SSH key", "systemd unit", "appends", "exec"}; !slices.Equal(got, want) {
+		t.Errorf("titles = %q, want %q", got, want)
 	}
 }
 
@@ -248,7 +289,7 @@ func TestTellingTraitsBreakTies(t *testing.T) {
 		t.Error("a process region does not outrank a Markdown one of equal severity")
 	}
 	if windowScore(&hostile, nil, nil) <= windowScore(&exec, nil, nil) {
-		t.Error("the taxonomy lift outranked a higher severity")
+		t.Error("the taxonomy lift and the metadata drop together outranked a higher severity")
 	}
 	if traitIsTelling("metadata/encoded-payload/base64") {
 		t.Error("metadata is not a telling branch")

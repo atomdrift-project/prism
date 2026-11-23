@@ -465,7 +465,7 @@ func nativeFindings(file *cleaveFile) map[string]*finding {
 	}
 	byID := make(map[string]*finding, len(file.Findings))
 	for i := range file.Findings {
-		if len(file.Findings[i].From) > 0 {
+		if !locatedHere(&file.Findings[i]) {
 			continue
 		}
 		if isOffsetZeroNoise(&file.Findings[i]) {
@@ -474,6 +474,24 @@ func nativeFindings(file *cleaveFile) map[string]*finding {
 		byID[file.Findings[i].ID] = &file.Findings[i]
 	}
 	return byID
+}
+
+// locatedHere reports whether a finding's evidence is on its host's own bytes:
+// it names no other file, or cleave located it here anyway. A composite over a
+// file's decoded payloads names those payloads in From, yet cleave maps their
+// matches back onto the encoded text and records those spans on the host; that
+// text is the only place the evidence can be shown, since the decoded shards
+// carry no windows. Only a copy with no spans of its own belongs to the file it
+// names.
+func locatedHere(f *finding) bool {
+	return len(f.From) == 0 || len(f.Spans) > 0
+}
+
+// mappedHere reports a finding that names other files yet was located on its
+// host's own bytes (see locatedHere). It is shown in the host's regions and
+// linked there, not attributed to the files it names.
+func mappedHere(f *finding) bool {
+	return len(f.From) > 0 && len(f.Spans) > 0
 }
 
 // minSuspiciousCrit is the criticality at and above which a finding is taken

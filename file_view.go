@@ -76,10 +76,14 @@ func windowScore(lw *labeledWindow, wanted map[string]bool, priority map[string]
 		rank += 100
 	}
 	score := rank*8 + lw.Crit*100
-	// Less than one step of anything above, so it only orders regions that
-	// tie on everything else.
+	// A quarter step each way, so even together these only order regions
+	// that tie on everything else. A metadata note backing no headline
+	// finding (a README's headings, an import) is the weakest thing a region
+	// can show; cleave's interpret view gives one no window at all.
 	if traitIsTelling(head.ID) {
-		score += 50
+		score += 25
+	} else if strings.HasPrefix(head.ID, "metadata/") && !wanted[head.ID] {
+		score -= 25
 	}
 	return score
 }
@@ -255,6 +259,10 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 	// dangling past the file cap.
 	tcands := headlineTraits(files)
 	wanted, priority := headlineAtomicPriority(tcands, maxPriorityTraits)
+	headline := make(map[string]int, len(tcands)) // trait id → chip position, from 1
+	for i, c := range tcands {
+		headline[c.f.ID] = i + 1
+	}
 	for _, c := range tcands {
 		for _, id := range traitTargetIDs(c.f, c.host) {
 			if c.crit > forced[id] {
@@ -354,14 +362,15 @@ func buildFileViews(files []cleaveFile) ([]fileView, []topTrait, contentOmitted)
 			Anchor:   "file-" + fd.file.SHA256,
 			Crit:     critIntToString(fd.maxCrit),
 		}
-		for _, lw := range fd.lws {
+		titles := regionTitles(fd.lws, wanted, priority, headline)
+		for i, lw := range fd.lws {
 			w := fileWindow{Blocks: []contextBlock{foldContext(lw.Block)}, Range: windowRange(lw.Block)}
-			if head := lw.headNote(wanted); head.ID != "" {
-				w.Title = head.Desc
+			if title := titles[i]; title.ID != "" {
+				w.Title = title.Desc
 				if w.Title == "" {
-					w.Title = traitChipID(head.ID)
+					w.Title = traitChipID(title.ID)
 				}
-				w.Crit = critIntToString(head.Crit)
+				w.Crit = critIntToString(title.Crit)
 			}
 			view.Windows = append(view.Windows, w)
 		}
@@ -498,8 +507,13 @@ func traitSources(f *finding, host *cleaveFile, idToFile map[int]*cleaveFile, re
 
 // traitSourceList is where a finding's evidence lives, for the headline trail:
 // its own From when that names every file a leg matched in (cleave's entries
-// carry locations), else the legs. Empty means native to the host.
+// carry locations), else the legs. Empty means native to the host, as is a
+// finding mapped onto the host's bytes, whose From names shards with nothing
+// to show.
 func traitSourceList(f *finding, host *cleaveFile) []compactSource {
+	if mappedHere(f) {
+		return nil
+	}
 	legs := compositeSources(f, host)
 	covered := func(l legSource) bool {
 		return l.src.File == host.ID || slices.ContainsFunc(f.From, func(s compactSource) bool { return s.File == l.src.File })
@@ -607,7 +621,9 @@ func compositeLegs(files []cleaveFile) (forced map[int]int, composites []composi
 		host := &files[i]
 		for j := range host.Findings {
 			f := &host.Findings[j]
-			if f.Crit < minFileCrit || inherited(f, idToFile) {
+			// A composite mapped onto the host's own bytes titles a region
+			// there (regionTitles); naming it on a row too would say it twice.
+			if f.Crit < minFileCrit || inherited(f, idToFile) || mappedHere(f) {
 				continue
 			}
 			legs := compositeSources(f, host)
@@ -813,6 +829,51 @@ func (lw *labeledWindow) headNote(wanted map[string]bool) ctxNoteRef {
 		return lw.Notes[0]
 	}
 	return ctxNoteRef{}
+}
+
+// regionTitles names each of a file's regions, indexed like lws, by the
+// composite whose evidence it holds: the conclusion a headline chip states, so
+// the chips and the regions read alike, with the matches that back it noted on
+// their rows. A composite covers every region its legs touch, so each titles
+// only one: regions choose in score order (ties in file order), headline
+// composites first in the order their chips show (headline maps an id to its
+// chip position, from 1), then the most severe. A region left with no
+// unclaimed composite, or none at least notable and as severe as its strongest
+// match, keeps that match (headNote) as its title.
+func regionTitles(lws []labeledWindow, wanted map[string]bool, priority map[string]float64, headline map[string]int) []ctxNoteRef {
+	order := make([]int, len(lws))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		return cmp.Compare(windowScore(&lws[b], wanted, priority), windowScore(&lws[a], wanted, priority))
+	})
+	titles := make([]ctxNoteRef, len(lws))
+	claimed := make(map[string]bool, len(lws))
+	for _, i := range order {
+		titles[i] = lws[i].headNote(wanted)
+		floor := max(titles[i].Crit, minNotableCrit)
+		var best *ctxNoteRef
+		for j := range lws[i].Notes {
+			n := &lws[i].Notes[j]
+			if n.Atomic || claimed[n.ID] || n.Crit < floor || traitIsVendor(n.ID) {
+				continue
+			}
+			// Notes arrive most severe first, so the first of a kind wins.
+			chip, bestChip := headline[n.ID], 0
+			if best != nil {
+				bestChip = headline[best.ID]
+			}
+			if best == nil || chip > 0 && (bestChip == 0 || chip < bestChip) {
+				best = n
+			}
+		}
+		if best != nil {
+			titles[i] = *best
+			claimed[best.ID] = true
+		}
+	}
+	return titles
 }
 
 // headlineAtomicPriority resolves the selected headline composites to their
