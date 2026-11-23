@@ -5189,7 +5189,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 			reqLogger.Warn("rendering upload-failure state", "filename", failed.Filename)
 			renderError(w, r, http.StatusServiceUnavailable, errorData{
 				Title:   "Analysis unavailable",
-				Message: "We received this file but couldn't analyze it — the analysis backends were unreachable. This is a problem on our side; re-uploading won't help until it's resolved.",
+				Message: "We received this file but couldn't analyze it. The problem is on our side; uploading it again won't help until it's fixed.",
 			})
 			return
 		}
@@ -7435,8 +7435,8 @@ func markUploadFailed(sha, filename string, now time.Time) {
 	time.AfterFunc(uploadFailureTTL, func() { uploadsInFlight.CompareAndDelete(sha, failed) })
 }
 
-// uploadFailedError signals that a sample's background ingestion finished with
-// neither path accepting it. Handlers render a "couldn't analyze" page rather
+// uploadFailedError signals that a sample's background ingestion gave up
+// without a result to show. Handlers render a "couldn't analyze" page rather
 // than a 404, which would wrongly invite the user to retry an upload that just
 // failed deterministically.
 type uploadFailedError struct {
@@ -7446,17 +7446,9 @@ type uploadFailedError struct {
 
 func (e *uploadFailedError) Error() string { return "upload ingestion failed for " + e.SHA }
 
-// litmusEnvelope is the {"ml":…,"llm":…,"raw":…} analysis envelope prism
-// caches as a result's RawLitmus.
-type litmusEnvelope struct {
-	ML  json.RawMessage `json:"ml"`
-	LLM json.RawMessage `json:"llm"`
-	Raw json.RawMessage `json:"raw"`
-}
-
 // ingestUpload sends the uploaded bytes to Beamline's public analysis API and
-// caches its terminal assessment for Prism's existing result page. Beamline is
-// the sole upload destination; Hopper and Litmus are not fallback paths.
+// caches the full result it answers with for Prism's result page, so the page
+// never waits on hopper. Beamline is the sole upload destination.
 func ingestUpload(ctx context.Context, spoolPath string, size int64, sha, filename string, stream *uploadEventStream, accepted chan<- error) {
 	ctx, cancel := context.WithTimeout(ctx, uploadIngestTimeout)
 	defer cancel()
@@ -7468,8 +7460,9 @@ func ingestUpload(ctx context.Context, spoolPath string, size int64, sha, filena
 		}
 	}()
 	log := logger.With("sha256", sha, "filename", filename)
+	start := time.Now()
 	acceptedSent := false
-	assessment, err := analyzeFileWithBeamline(ctx, spoolPath, size, filename, stream.publish, func() {
+	result, err := analyzeFileWithBeamline(ctx, spoolPath, size, filename, stream.publish, func() {
 		acceptedSent = true
 		accepted <- nil
 	})
@@ -7478,57 +7471,51 @@ func ingestUpload(ctx context.Context, spoolPath string, size int64, sha, filena
 			accepted <- err
 		}
 		stream.publish([]byte(`{"status":"error","message":"Beamline could not complete this analysis."}`))
-		log.Error("beamline upload failed", "error", err)
+		log.Error("beamline upload failed", "error", err, "duration_ms", time.Since(start).Milliseconds())
 		markUploadFailed(sha, filename, time.Now())
 		return
 	}
-	if assessment.SHA != "" && !strings.EqualFold(assessment.SHA, sha) {
-		log.Error("beamline returned a different artifact hash", "beamline_sha256", assessment.SHA)
-		markUploadFailed(sha, filename, time.Now())
-		return
-	}
-	if assessment.Server != "" || assessment.Source != "" {
+	log = log.With("worker", result.Server, "source", result.Source, "result_bytes", len(result.Body))
+	if result.Server != "" || result.Source != "" {
 		info, marshalErr := json.Marshal(map[string]string{
-			"server":  assessment.Server,
-			"source":  assessment.Source,
-			"request": assessment.RequestHost,
+			"server":  result.Server,
+			"source":  result.Source,
+			"request": result.RequestHost,
 		})
 		if marshalErr == nil {
 			stream.publishServer(info)
 		}
 	}
-	env := &litmusEnvelope{ML: assessment.ML, LLM: assessment.LLM, Raw: assessment.Raw}
-	if len(env.ML) == 0 || len(env.Raw) == 0 {
-		// Older Beamline workers accept full=1 but still return the compact
-		// status object. Keep the pre-full behavior during the rollout: that
-		// worker has already forwarded the artifact to the result store, so the
-		// pending stream continues watching for the authoritative stored result.
-		log.Warn("beamline returned compact terminal response; waiting for result store",
-			"has_ml", len(env.ML) > 0, "has_raw", len(env.Raw) > 0)
+	res, err := storedResultFromFull(result.Body, filename, sha)
+	if err != nil {
+		stream.publish([]byte(`{"status":"error","message":"Prism could not read the completed analysis."}`))
+		log.Error("beamline full result unreadable", "error", err)
+		markUploadFailed(sha, filename, time.Now())
 		return
 	}
-	// With full=1 Beamline gives Prism the same envelope we used to wait for
-	// Hopper to materialize. Cache it before closing the upload stream so the
-	// browser's ready event lands only after the result page is renderable.
-	if err := cache.Set(ctx, sha, storedResultFromLitmus(filename, env, size)); err != nil {
+	// Cached before the upload stream closes, so the browser's ready event
+	// lands only once the result page can render.
+	if err := cache.Set(ctx, sha, res); err != nil {
 		stream.publish([]byte(`{"status":"error","message":"Prism could not save the completed analysis."}`))
 		log.Error("beamline full result cache write failed", "error", err)
 		markUploadFailed(sha, filename, time.Now())
 		return
 	}
+	log.Info("upload analyzed",
+		"classification", res.Classification,
+		"ruleset", res.TraitsVersion,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	uploadsInFlight.Delete(sha)
 }
 
-type beamlineAssessment struct {
-	Status      string          `json:"status"`
-	SHA         string          `json:"sha"`
-	SHA256      string          `json:"sha256"`
-	ML          json.RawMessage `json:"ml"`
-	LLM         json.RawMessage `json:"llm"`
-	Server      string          `json:"-"`
-	Source      string          `json:"-"`
-	RequestHost string          `json:"-"`
-	Raw         json.RawMessage `json:"raw"`
+// beamlineResult is how an upload's Beamline stream ended: scan's full
+// result body, header first, and who produced it.
+type beamlineResult struct {
+	Server      string
+	Source      string
+	RequestHost string
+	Body        []byte
 }
 
 func beamlineAnalyzeURL() string {
@@ -7551,16 +7538,15 @@ func beamlineAnalyzeURL() string {
 	return u.String()
 }
 
-// analyzeWithBeamline posts raw bytes to Beamline and reads until the NDJSON
-// stream's terminal object. With full=1 the terminal object is the full
-// {ml,llm,raw} envelope, so it has no status field of its own.
-func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
+// analyzeWithBeamline posts raw bytes to Beamline and returns the full result
+// its stream ends with.
+func analyzeWithBeamline(ctx context.Context, buf []byte, filename string, onFrame func([]byte), onAccepted func()) (*beamlineResult, error) {
 	return analyzeBeamline(ctx, int64(len(buf)), filename, func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(buf)), nil
 	}, onFrame, onAccepted)
 }
 
-func analyzeFileWithBeamline(ctx context.Context, path string, size int64, filename string, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
+func analyzeFileWithBeamline(ctx context.Context, path string, size int64, filename string, onFrame func([]byte), onAccepted func()) (*beamlineResult, error) {
 	return analyzeBeamline(ctx, size, filename, func() (io.ReadCloser, error) {
 		return os.Open(path)
 	}, onFrame, onAccepted)
@@ -7568,7 +7554,13 @@ func analyzeFileWithBeamline(ctx context.Context, path string, size int64, filen
 
 type beamlineBodyFactory func() (io.ReadCloser, error)
 
-func analyzeBeamline(ctx context.Context, size int64, filename string, body beamlineBodyFactory, onFrame func([]byte), onAccepted func()) (*beamlineAssessment, error) {
+// analyzeBeamline posts an artifact to /v1/analyze?full=1 and reads the NDJSON
+// stream: progress frames, each handed to onFrame, until a line carrying
+// `"v":8`. That line is the header of scan's full result, and it and every
+// line after it are the result (scan's docs/SERVER_API.md). A line carrying
+// `decision` or `status` instead is Beamline or scan saying no analysis was
+// produced, and a stream that ends before either was cut short.
+func analyzeBeamline(ctx context.Context, size int64, filename string, body beamlineBodyFactory, onFrame func([]byte), onAccepted func()) (*beamlineResult, error) {
 	target := beamlineAnalyzeURL()
 	if target == "" {
 		return nil, errors.New("beamline API URL is invalid")
@@ -7583,50 +7575,44 @@ func analyzeBeamline(ctx context.Context, size int64, filename string, body beam
 		onAccepted()
 	}
 
-	scanner := bufio.NewScanner(io.LimitReader(resp.Body, maxLitmusResponseBytes))
-	scanner.Buffer(make([]byte, 64*1024), 4<<20)
-	var assessment beamlineAssessment
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
+	// A bufio.Reader rather than a Scanner: a report line can run to tens of
+	// megabytes, and the result is taken whole once its header arrives.
+	reader := bufio.NewReader(io.LimitReader(resp.Body, maxLitmusResponseBytes))
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if line = bytes.TrimSpace(line); len(line) > 0 {
+			var frame struct {
+				Decision string          `json:"decision"`
+				Status   string          `json:"status"`
+				V        json.RawMessage `json:"v"`
+			}
+			if err := json.Unmarshal(line, &frame); err != nil {
+				return nil, fmt.Errorf("decode beamline frame %.200q: %w", line, err)
+			}
+			if string(frame.V) == strconv.Itoa(fullResultVersion) {
+				rest, err := io.ReadAll(reader)
+				if err != nil {
+					return nil, fmt.Errorf("read beamline full result: %w", err)
+				}
+				return &beamlineResult{
+					Server: server, Source: source, RequestHost: requestHost,
+					Body: append(append(line, '\n'), rest...),
+				}, nil
+			}
+			if frame.Decision != "" || frame.Status != "" {
+				return nil, fmt.Errorf("beamline answered without a full result: %.500s", line)
+			}
+			if onFrame != nil {
+				onFrame(line)
+			}
 		}
-		if onFrame != nil {
-			onFrame(line)
+		if errors.Is(readErr, io.EOF) {
+			return nil, errors.New("beamline stream ended without a full result")
 		}
-		var frame beamlineAssessment
-		if err := json.Unmarshal(line, &frame); err != nil {
-			return nil, fmt.Errorf("decode beamline response: %w", err)
-		}
-		if frame.Status != "" || beamlineFullEnvelope(&frame) {
-			assessment = frame
-			break
+		if readErr != nil {
+			return nil, fmt.Errorf("read beamline response: %w", readErr)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read beamline response: %w", err)
-	}
-	if assessment.Status != "" && assessment.Status != "analyzed" {
-		return nil, fmt.Errorf("beamline returned status %q", assessment.Status)
-	}
-	if assessment.Status == "" && !beamlineFullEnvelope(&assessment) {
-		return nil, errors.New("beamline stream ended without a full result")
-	}
-	if assessment.Status == "" {
-		assessment.Status = "analyzed"
-	}
-
-	if assessment.SHA == "" {
-		assessment.SHA = assessment.SHA256
-	}
-	assessment.Server = server
-	assessment.Source = source
-	assessment.RequestHost = requestHost
-	return &assessment, nil
-}
-
-func beamlineFullEnvelope(frame *beamlineAssessment) bool {
-	return frame != nil && len(frame.ML) > 0 && len(frame.Raw) > 0
 }
 
 func beamlineResponseIdentity(resp *http.Response) (server, source, requestHost string) {
@@ -7704,43 +7690,6 @@ func openBeamlineStream(ctx context.Context, target string, size int64, filename
 		}
 	}
 	return nil, lastErr
-}
-
-// storedResultFromLitmus builds a cacheable result from an analysis
-// envelope. Mirrors storedResultFromSample but sources everything from
-// the envelope plus the known upload metadata (uploads carry no provenance).
-func storedResultFromLitmus(filename string, env *litmusEnvelope, size int64) storedResult {
-	envelope := map[string]json.RawMessage{}
-	if json.Valid(env.ML) {
-		envelope["ml"] = env.ML
-	}
-	if json.Valid(env.LLM) {
-		envelope["llm"] = env.LLM
-	}
-	if json.Valid(env.Raw) {
-		envelope["raw"] = env.Raw
-	}
-	rawLitmus, err := json.Marshal(envelope)
-	if err != nil {
-		rawLitmus = []byte("{}")
-	}
-	classification := ""
-	if len(env.ML) > 0 {
-		var mlResp litmusMlResponse
-		if json.Unmarshal(env.ML, &mlResp) == nil {
-			classification = classificationName(mlResp.verdictClass())
-		}
-	}
-	now := time.Now().UTC()
-	return storedResult{
-		Filename:       filename,
-		RawLitmus:      string(rawLitmus),
-		Classification: classification,
-		CachedAt:       now,
-		AnalyzedAt:     now,
-		CreatedAt:      now,
-		SizeBytes:      size,
-	}
 }
 
 // hopperRescanURL builds the absolute URL of hopper's POST /v1/work/rescan/{sha256}

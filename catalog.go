@@ -440,26 +440,31 @@ func spliceMembers(ctx context.Context, st *store.Store, envelope string, wanted
 	for i := 1; i < len(files); i++ {
 		var sha string
 		_ = json.Unmarshal(files[i]["sha"], &sha) //nolint:errcheck // checked by the lookup below
-		report, ok := reports[sidOf[sha]]
-		if !ok {
-			continue
+		if report, ok := reports[sidOf[sha]]; ok {
+			fillStub(files[i], report, idOf)
 		}
-		var entry map[string]json.RawMessage
-		if json.Unmarshal(report, &entry) != nil {
-			continue
-		}
-		for k, v := range entry {
-			if !slices.Contains(placementKeys, k) {
-				files[i][k] = v
-			}
-		}
-		citeByID(files[i], idOf)
 	}
 	set(raw, "files", files)
 	delete(raw, "truncated")
 	set(top, "raw", raw)
 	out, err := json.Marshal(top)
 	return string(out), err
+}
+
+// fillStub fills a member's stub with its report without moving it, and
+// rewrites the report's sources to the list's ids. A report that does not
+// parse leaves the stub as it was.
+func fillStub(stub map[string]json.RawMessage, report []byte, idOf map[string]int) {
+	var entry map[string]json.RawMessage
+	if json.Unmarshal(report, &entry) != nil {
+		return
+	}
+	for k, v := range entry {
+		if !slices.Contains(placementKeys, k) {
+			stub[k] = v
+		}
+	}
+	citeByID(stub, idOf)
 }
 
 // storedResultFromSample maps what the store holds about a file onto the

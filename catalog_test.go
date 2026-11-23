@@ -81,9 +81,9 @@ func digest(s string) []byte {
 
 func hexDigest(s string) string { return hex.EncodeToString(digest(s)) }
 
-// fileResult writes a version 8 result to the store: a header, one line per
-// file, then the reports in file order.
-func fileResult(t *testing.T, w *store.Store, files []map[string]any, reports []string) {
+// resultBody is a version 8 result: a header, one line per file, then the
+// reports in file order.
+func resultBody(t *testing.T, files []map[string]any, reports []string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `{"v":8,"scan":{"engine":"3.0.0","ruleset":"r1","level":25,"worker":"w1","at":"2026-11-12T15:00:00Z","ms":40},"files":%d}`+"\n", len(files))
@@ -97,7 +97,13 @@ func fileResult(t *testing.T, w *store.Store, files []map[string]any, reports []
 	for _, r := range reports {
 		b.WriteString(r + "\n")
 	}
-	decoded, err := scanresult.Decode(b.Bytes())
+	return b.Bytes()
+}
+
+// fileResult writes a version 8 result to the store.
+func fileResult(t *testing.T, w *store.Store, files []map[string]any, reports []string) {
+	t.Helper()
+	decoded, err := scanresult.Decode(resultBody(t, files, reports))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -111,12 +117,9 @@ func sumOf(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// evilPackage files an npm release holding an install script, judged as a
-// worker would judge it: the package hostile through its script, which a
-// trait of the package's report cites by digest.
+// evilPackage files an npm release holding an install script (evilResult).
 func evilPackage(t *testing.T, w *store.Store) (pkg, script string) {
 	t.Helper()
-	pkg, script = hexDigest("package bytes"), hexDigest("script bytes")
 	mtime := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
 	if _, err := w.Ingest(t.Context(), []store.Arrival{{
 		SHA256: digest("package bytes"), Size: 4000, Path: "bad/npm/evil-1.0.0.tgz", Source: "forager", Feed: "npmjs.org",
@@ -125,11 +128,21 @@ func evilPackage(t *testing.T, w *store.Store) (pkg, script string) {
 	}}, store.QueueNew); err != nil {
 		t.Fatal(err)
 	}
-	reports := []string{
+	pkg, script, files, reports := evilResult()
+	fileResult(t, w, files, reports)
+	return pkg, script
+}
+
+// evilResult is an npm release holding an install script, judged as a worker
+// would judge it: the package hostile through its script, which a trait of
+// the package's report cites by digest.
+func evilResult() (pkg, script string, files []map[string]any, reports []string) {
+	pkg, script = hexDigest("package bytes"), hexDigest("script bytes")
+	reports = []string{
 		`{"mol":"H(Os)","traits":[{"id":"b::fetch-exec","crit":5,"desc":"fetches and runs","from":[{"sha256":"` + script + `","line":3}]}]}`,
 		`{"mol":"Os","traits":[{"id":"b::fetch-exec","crit":5,"desc":"fetches and runs"}]}`,
 	}
-	fileResult(t, w, []map[string]any{
+	files = []map[string]any{
 		{
 			"sha256": pkg, "size": 4000, "type": "npm", "report": sumOf(reports[0]),
 			"verdict": map[string]any{
@@ -146,8 +159,8 @@ func evilPackage(t *testing.T, w *store.Store) (pkg, script string) {
 			"verdict": map[string]any{"outcome": "ok", "class": "hostile", "fires_at": 12},
 			"floor":   map[string]any{"class": "hostile", "fires_at": 12, "hostile": 1},
 		},
-	}, reports)
-	return pkg, script
+	}
+	return pkg, script, files, reports
 }
 
 func TestCatalogResult(t *testing.T) {
