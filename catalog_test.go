@@ -274,6 +274,49 @@ func TestCatalogFeed(t *testing.T) {
 	}
 }
 
+// Malware lists a hostile file only once it is labeled bad; until then it is
+// Review's.
+func TestHostileListsSplitOnLabel(t *testing.T) {
+	w := newTestStore(t)
+	pkg, _ := evilPackage(t, w)
+	ctx := t.Context()
+	saved := feedDropdownCache
+	feedDropdownCache = openNullCache[feedDropdowns]("test feed dropdowns")
+	t.Cleanup(func() { feedDropdownCache = saved })
+
+	list := func(name string) []string {
+		t.Helper()
+		args := hostileListArgs(name, false)
+		fetch, err := loadFeedRowsFromHopper(ctx, &args)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var shas []string
+		for i := range fetch.rows {
+			shas = append(shas, fetch.rows[i].SHA256)
+		}
+		return shas
+	}
+	if got := list(malwareList); len(got) != 0 {
+		t.Errorf("malware lists an unlabeled file: %q", got)
+	}
+	if got := list(reviewList); !slices.Equal(got, []string{pkg}) {
+		t.Errorf("review = %q, want the unlabeled package", got)
+	}
+
+	if _, err := w.Ingest(ctx, []store.Arrival{{
+		SHA256: digest("package bytes"), Size: 4000, Path: "bad/npm/evil-1.0.0.tgz", Label: "bad", LabelSource: "marker",
+	}}, store.QueueNew); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(malwareList); !slices.Equal(got, []string{pkg}) {
+		t.Errorf("malware = %q, want the package once labeled bad", got)
+	}
+	if got := list(reviewList); len(got) != 0 {
+		t.Errorf("review lists a file labeled bad: %q", got)
+	}
+}
+
 // Prism's sessions are read-only to the server, so a write through its store
 // fails; and a schema without hopper's tables is refused at open.
 func TestCatalogIsReadOnly(t *testing.T) {

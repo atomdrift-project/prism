@@ -31,7 +31,7 @@
                 <h1>{{.Heading}}</h1>
                 {{with .Lede}}<p class="lede">{{.}}</p>{{end}}
             </div>
-            {{if and .HasHopper (not .Malware) (not .Package)}}
+            {{if and .HasHopper (not .List) (not .Package)}}
             <div class="counter" id="index-counter"{{with .Stats}} data-total="{{.Total}}"{{end}}>
                 <span class="live-dot" id="counter-dot" aria-hidden="true"></span>
                 <span>Files indexed</span>
@@ -57,7 +57,7 @@
                     <span class="label">{{if .Package}}Version{{else}}Platform{{end}}</span>
                     {{range .Pills}}<a class="pill" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}{{with .Count}} {{.}}{{end}}</a>{{end}}
                 </nav>
-                {{else if not .Malware}}
+                {{else if not .List}}
                 <form method="GET" action="{{if .SelectedEco}}/{{.SelectedEco}}/{{else}}/stream{{end}}" class="filter-form" id="filter-form">
                     <div class="field">
                         <label class="label" for="criticality">Crit</label>
@@ -92,7 +92,7 @@
                 {{if not .Package}}
                 <div class="bar-side">
                     <label for="feeds-filter" title="Only samples sighted by an external threat feed"><input type="checkbox" name="feeds" value="1" id="feeds-filter" {{if .FeedsOnly}}checked{{end}} />Sighted elsewhere</label>
-                    {{if .Malware}}<a class="link" href="/feed.atom">Atom feed</a>{{else}}<a class="link" href="/help/query">Syntax</a>{{end}}
+                    {{if eq .List "malware"}}<a class="link" href="/feed.atom">Atom feed</a>{{else if not .List}}<a class="link" href="/help/query">Syntax</a>{{end}}
                 </div>
                 {{end}}
             </div>
@@ -101,7 +101,7 @@
             {{if .Rows}}
             <div class="scroll">
                 <div class="list">
-                    <div class="cols label" aria-hidden="true"><span>{{if .Package}}File{{else}}Sample{{end}}</span><span>{{if .Package}}Version{{else if .Malware}}Platform{{else}}Ecosystem{{end}}</span><span>Description</span><span>Seen</span></div>
+                    <div class="cols label" aria-hidden="true"><span>{{if .Package}}File{{else}}Sample{{end}}</span><span>{{if .Package}}Version{{else if .List}}Platform{{else}}Ecosystem{{end}}</span><span>Description</span><span>Seen</span></div>
                     <ol>
                         {{range .Rows}}{{template "listrow" .}}{{end}}
                     </ol>

@@ -1,9 +1,9 @@
 package main
 
-// The Fallout Atom feed: the hostile view as a subscription surface
-// (/feed.atom). Served from the same cached hostile snapshot the frontpage
-// uses, so a feed reader polling every few minutes costs one warm cache read
-// and zero extra hopper work.
+// The Atom feed: the Malware list as a subscription surface (/feed.atom).
+// Served from the same cached snapshot the Malware page and the home page use,
+// so a feed reader polling every few minutes costs one warm cache read and
+// zero extra hopper work.
 
 import (
 	"encoding/xml"
@@ -45,7 +45,7 @@ type atomDoc struct {
 	Entries []atomEntry `xml:"entry"`
 }
 
-// buildAtomFeed renders the newest-first hostile rows as Atom 1.0. base is
+// buildAtomFeed renders the newest-first Malware rows as Atom 1.0. base is
 // the request origin ("https://lab.atomdrift.org"); entry ids use the
 // urn:sha256 form so they stay stable across hosts and reorderings.
 func buildAtomFeed(rows []feedRow, base string, now time.Time) ([]byte, error) {
@@ -64,7 +64,7 @@ func buildAtomFeed(rows []feedRow, base string, now time.Time) ([]byte, error) {
 		Author:  atomAuthor{Name: "atomdrift lab"},
 		Links: []atomLink{
 			{Href: base + "/feed.atom", Rel: "self", Type: "application/atom+xml"},
-			{Href: base + "/?criticality=hostile", Rel: "alternate", Type: "text/html"},
+			{Href: base + "/malware", Rel: "alternate", Type: "text/html"},
 		},
 	}
 	for i := range rows {
@@ -118,9 +118,10 @@ func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	snapshot, _, err := loadFeedSnapshot(r.Context(), &feedQueryArgs{criticality: "hostile"}, logger, false)
+	args := hostileListArgs(malwareList, false)
+	snapshot, _, err := loadFeedSnapshot(r.Context(), &args, logger, false)
 	if err != nil {
-		logger.Warn("atom feed: hostile snapshot unavailable", "error", err)
+		logger.Warn("atom feed: malware snapshot unavailable", "error", err)
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
 	}

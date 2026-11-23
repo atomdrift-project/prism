@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -514,7 +515,7 @@ func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
 		row := &snapshot.Rows[i]
 		if row.Classification == "hostile" &&
 			!row.CreatedAt.Before(week.Start) && row.CreatedAt.Before(week.End) &&
-			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.PURLBase, row.HasURL) &&
+			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.PURLBase, row.URLHost) &&
 			!falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			n++
 		}
@@ -525,9 +526,41 @@ func weeklyHostileCount(ctx context.Context, loc *time.Location) int {
 // falloutTraceable reports a catch someone else can trace: a package with a
 // PURL, or a file fetched from a URL. A sighting alone does not count: the
 // sightings ledger also cites reconstructions, so it is too noisy to vouch for
-// anything in the wild.
-func falloutTraceable(purlBase string, hasURL bool) bool {
-	return purlBase != "" || hasURL
+// anything in the wild. Neither does a URL on a malware download site: that is
+// where a collector picked the file up by hash, not where anyone published it.
+// A PURL still admits such a file, since a registry did publish it.
+func falloutTraceable(purlBase, urlHost string) bool {
+	return purlBase != "" || urlHost != "" && !malwareSiteHost(urlHost)
+}
+
+// malwareSites are the malware download sites: the corpora forager pulls
+// samples from by hash (see malwareCorpusFeeds), and the other public sample
+// stores. Each entry covers its subdomains.
+var malwareSites = []string{
+	"abuse.ch", // MalwareBazaar, URLhaus
+	"filescan.io",
+	"hybrid-analysis.com",
+	"malshare.com",
+	"reversinglabs.com",
+	"tria.ge",
+	"virusshare.com",
+	"virussign.com",
+	"virustotal.com",
+	"vx-underground.org",
+}
+
+// malwareSiteHost reports whether host is, or is under, a malware download site.
+func malwareSiteHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	for _, site := range malwareSites {
+		if host == site || strings.HasSuffix(host, "."+site) {
+			return true
+		}
+	}
+	return false
 }
 
 // falloutQualifies gates a hostile catch into the log. Beyond the hostile
@@ -736,7 +769,7 @@ func falloutRowsInWindow(rows []feedRow, week falloutWeek, verified falloutVerif
 		row := rows[i]
 		if row.Classification == "hostile" &&
 			!row.AnalyzedAt.Before(week.Start) && row.AnalyzedAt.Before(week.End) &&
-			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.PURLBase, row.HasURL) &&
+			falloutQualifies(row.Why, row.LLMGrade) && falloutTraceable(row.PURLBase, row.URLHost) &&
 			verified.matches(row.Corroborated) && !falloutOffTopic(row.Feed, row.Ecosystem, row.FileType) {
 			out = append(out, row)
 		}

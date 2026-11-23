@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func uploadTemplateForTest(t *testing.T) *template.Template {
 // hostileRow builds a row that clears the fallout gate (falloutQualifies): a
 // hostile verdict with an LLM summary and a hostile LLM grade, fetched from a
 // registry URL like every package catch. Tests that probe the gate itself
-// override Why/LLMGrade/HasURL.
+// override Why/LLMGrade/URLHost.
 func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feedRow {
 	return feedRow{
 		SHA256:         sha,
@@ -79,7 +80,7 @@ func hostileRow(sha, eco, fileType, formula, pkg string, age time.Duration) feed
 		Formula:        formula,
 		Why:            "exfiltrates credentials on install",
 		LLMGrade:       "hostile",
-		HasURL:         true,
+		URLHost:        "registry.npmjs.org",
 		AnalyzedAt:     falloutTestNow.Add(-age),
 	}
 }
@@ -197,17 +198,54 @@ func TestFalloutVerificationFilter(t *testing.T) {
 func TestFalloutNeedsAPURLOrURL(t *testing.T) {
 	fetched := hostileRow(shaN(1), "npm", "javascript", "O1(C)", "fetched", time.Hour)
 	pkg := hostileRow(shaN(2), "npm", "javascript", "O1(C)", "pkg", time.Hour)
-	pkg.HasURL = false
+	pkg.URLHost = ""
 	pkg.PURLBase = "pkg:npm/pkg"
 	upload := hostileRow(shaN(3), "", "elf", "O1(C)", "upload", time.Hour)
-	upload.HasURL = false
+	upload.URLHost = ""
 	sighted := hostileRow(shaN(4), "", "elf", "O1(C)", "sighted", time.Hour)
-	sighted.HasURL = false
+	sighted.URLHost = ""
 	sighted.Corroborated = true
 
 	got := falloutRowsInWindow([]feedRow{fetched, pkg, upload, sighted}, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny)
 	if len(got) != 2 || got[0].SHA256 != fetched.SHA256 || got[1].SHA256 != pkg.SHA256 {
 		t.Fatalf("rows = %+v, want the fetched and PURL-bearing catches only", got)
+	}
+}
+
+// A URL on a malware download site is where a collector picked the file up by
+// hash, so it does not put a catch in the log. A PURL still does. The URLs are
+// the ones forager records for each corpus.
+func TestFalloutDropsMalwareSiteURLs(t *testing.T) {
+	var rows []feedRow
+	for i, raw := range []string{
+		"https://mb-api.abuse.ch/api/v1/",
+		"https://urlhaus-api.abuse.ch/v1/download/" + shaN(0) + "/",
+		"https://malshare.com/api.php",
+		"https://tria.ge/api/v0/samples/x/sample",
+		"https://www.virustotal.com/api/v3",
+		"http://samples.virussign.com/samples/virussign.com_20260904_LimitedFree.zip",
+		"https://www.filescan.io/api/files/" + shaN(0) + "?type=base64",
+		"https://data.reversinglabs.com/api/oss/community/v2/free",
+		"https://MB-API.ABUSE.CH:443/api/v1/",
+	} {
+		r := hostileRow(shaN(byte(i)), "", "tar.gz", "O1(C)", "corpus", time.Hour)
+		r.URLHost = hostOfURL(raw)
+		rows = append(rows, r)
+	}
+	published := hostileRow(shaN(10), "npm", "javascript", "O1(C)", "published", time.Hour)
+	lookalike := hostileRow(shaN(11), "", "tar.gz", "O1(C)", "lookalike", time.Hour)
+	lookalike.URLHost = "notabuse.ch" // shares a suffix, not the site
+	packaged := hostileRow(shaN(12), "npm", "javascript", "O1(C)", "packaged", time.Hour)
+	packaged.URLHost, packaged.PURLBase = "mb-api.abuse.ch", "pkg:npm/packaged"
+	rows = append(rows, published, lookalike, packaged)
+
+	got := falloutRowsInWindow(rows, falloutWeekOf(falloutTestNow, falloutTestNow), falloutAny)
+	var kept []string
+	for i := range got {
+		kept = append(kept, got[i].Package)
+	}
+	if want := []string{"published", "lookalike", "packaged"}; !slices.Equal(kept, want) {
+		t.Errorf("kept %q, want %q", kept, want)
 	}
 }
 

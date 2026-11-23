@@ -22,7 +22,7 @@ const homeRows = 5
 // versionPills caps a package page's version filter.
 const versionPills = 10
 
-// platformPills caps the Malware page's platform filter.
+// platformPills caps the platform filter on Malware and Review.
 const platformPills = 6
 
 var (
@@ -138,9 +138,10 @@ func latestFallout(ctx context.Context, now time.Time) []falloutRow {
 	return rows
 }
 
-// latestMalware returns the newest homeRows hostile samples.
+// latestMalware returns the first homeRows rows of the Malware page.
 func latestMalware(ctx context.Context) []feedRow {
-	snapshot, _, err := loadFeedSnapshot(ctx, &feedQueryArgs{criticality: "hostile"}, logger, false)
+	args := hostileListArgs(malwareList, false)
+	snapshot, _, err := loadFeedSnapshot(ctx, &args, logger, false)
 	if err != nil {
 		logger.Warn("home: malware unavailable", "error", err)
 		return nil
@@ -228,13 +229,14 @@ func (d *feedPageData) loadPackage(ctx context.Context, args *feedQueryArgs, byp
 	}
 }
 
-// platformPillsFor is the Malware page's platform filter: the ecosystems with
-// the most hostile samples in the unfiltered snapshot, and the selected one
-// whether or not it ranks. A failed read leaves the bar without pills.
-func platformPillsFor(ctx context.Context, selected string, feedsOnly bool) []pill {
-	snapshot, _, err := loadFeedSnapshot(ctx, &feedQueryArgs{criticality: "hostile", feedsOnly: feedsOnly}, logger, false)
+// platformPillsFor is a fixed list's platform filter: the ecosystems with the
+// most samples in the list's unfiltered snapshot, and the selected one whether
+// or not it ranks. A failed read leaves the bar without pills.
+func platformPillsFor(ctx context.Context, list, selected string, feedsOnly bool) []pill {
+	args := hostileListArgs(list, feedsOnly)
+	snapshot, _, err := loadFeedSnapshot(ctx, &args, logger, false)
 	if err != nil {
-		logger.Warn("malware: platform filter unavailable", "error", err)
+		logger.Warn("platform filter unavailable", "list", list, "error", err)
 		return nil
 	}
 	counts := make(map[string]int, 16)
@@ -259,9 +261,9 @@ func platformPillsFor(ctx context.Context, selected string, feedsOnly bool) []pi
 			q.Set("feeds", "1")
 		}
 		if len(q) == 0 {
-			return "/malware"
+			return "/" + list
 		}
-		return "/malware?" + q.Encode()
+		return "/" + list + "?" + q.Encode()
 	}
 	pills := []pill{{Label: "All", URL: link(""), Active: selected == ""}}
 	for _, eco := range ranked {

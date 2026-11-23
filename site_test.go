@@ -275,6 +275,53 @@ func TestMalwarePage(t *testing.T) {
 	}
 }
 
+// Review shares Malware's layout but is its own list: no nav entry, no Atom
+// feed, and no verdict filter.
+func TestReviewPage(t *testing.T) {
+	uploadTemplate = uploadTemplateForTest(t)
+	t.Cleanup(func() { uploadTemplate = nil })
+	rr := httptest.NewRecorder()
+	newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/review", http.NoBody))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"<h1>Review</h1>", "Hostile, but not known malware.", `id="search-input" value=""`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("review page missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`id="criticality"`, `href="/feed.atom">Atom feed`, `aria-current="page"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("review page has %q", unwanted)
+		}
+	}
+}
+
+// Malware and Review split the hostile files on the bad label, and must never
+// share a snapshot with each other or with the plain hostile view.
+func TestHostileListArgs(t *testing.T) {
+	malware, review := hostileListArgs(malwareList, false), hostileListArgs(reviewList, false)
+	if malware.criticality != "hostile" || malware.label != "bad" || malware.exceptLabel != "" {
+		t.Errorf("malware args %+v", malware)
+	}
+	if review.criticality != "hostile" || review.label != "" || review.exceptLabel != "bad" {
+		t.Errorf("review args %+v", review)
+	}
+	if !hostileListArgs(malwareList, true).feedsOnly {
+		t.Error("feedsOnly dropped")
+	}
+	hostile := feedQueryArgs{criticality: "hostile"}
+	keys := map[string]string{"malware": feedCacheKey(&malware), "review": feedCacheKey(&review), "hostile": feedCacheKey(&hostile)}
+	seen := make(map[string]string, len(keys))
+	for name, key := range keys {
+		if other, dup := seen[key]; dup {
+			t.Errorf("%s and %s share cache key %q", name, other, key)
+		}
+		seen[key] = name
+	}
+}
+
 func TestStaticPages(t *testing.T) {
 	homeTemplate = parseForTest(t, "home.html")
 	apiTemplate = parseForTest(t, "api.html")

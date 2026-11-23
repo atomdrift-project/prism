@@ -961,6 +961,10 @@ type feedRow struct {
 	// and legacy rows. The fallout log reads it to tell a supply-chain
 	// discovery from a commodity-malware corpus (see malwareCorpusFeeds).
 	Feed string
+	// URLHost is the host hopper fetched the sample from, empty when it was
+	// only ever uploaded. The fallout log wants a URL or a PURL, and a URL
+	// from a malware download site does not count (falloutTraceable).
+	URLHost string
 	// Package/Version are hopper's registry attribution (e.g. "lodash",
 	// "4.17.21"); both empty for uploads and unattributed samples. The
 	// template reads them through Headline and SubID.
@@ -1006,10 +1010,6 @@ type feedRow struct {
 	// the per-row "✓" mark. The citing sources stay off the feed page; the
 	// detail page names only open databases and blogs (DetectedBy).
 	Corroborated bool
-	// HasURL marks a sample hopper fetched from a URL: something published it.
-	// A file with neither a URL nor a PURL was only ever uploaded, and the
-	// fallout log leaves it out (falloutTraceable).
-	HasURL bool
 	// ShowVerdict labels the row with its verdict, for a list that mixes them.
 	ShowVerdict bool
 	Downloads   int64
@@ -1240,13 +1240,16 @@ type feedPageData struct {
 	// never adds a query to the feed's hot path.
 	Stats *indexStats
 	// Package is set on a package page and nil on every other list.
-	Package         *packageView
-	Nonce           string // script-src nonce
-	StyleNonce      string // style-src nonce
-	BuildCommit     string
-	Title           string // the tab's title
-	Heading         string // the page's h1
-	Lede            string // one line under it; may be empty
+	Package     *packageView
+	Nonce       string // script-src nonce
+	StyleNonce  string // style-src nonce
+	BuildCommit string
+	Title       string // the tab's title
+	Heading     string // the page's h1
+	Lede        string // one line under it; may be empty
+	// List names the fixed hostile list the page is, "malware" or "review";
+	// empty on every other list.
+	List            string
 	SelectedDomain  string
 	SelectedFormula string
 	SelectedCrit    string
@@ -1263,7 +1266,7 @@ type feedPageData struct {
 	Ecosystems []string
 	Rows       []feedRow
 	// Pills replace the filter selects on the pages that have one obvious
-	// thing to filter by: platform on Malware, version on a package.
+	// thing to filter by: platform on Malware and Review, version on a package.
 	Pills []pill
 	// diags records each query behind the page, for the trailing comments.
 	diags  []queryDiag
@@ -1271,8 +1274,6 @@ type feedPageData struct {
 	// Page is the 1-indexed current page over the cached snapshot.
 	Page      int
 	HasHopper bool
-	// Malware marks the /malware page: every hostile sample, nothing else.
-	Malware bool
 	// FeedDegraded is set when hopper is connected but the feed query failed
 	// (timeout, circuit breaker open, replica blip). The page still renders —
 	// the list just shows a notice instead of a 500. HasHopper stays true so
@@ -1331,6 +1332,7 @@ type cachedFeedSample struct {
 	Source         string
 	// Feed is hopper's collector channel for the sample; see feedRow.Feed.
 	Feed      string
+	URLHost   string // see feedRow.URLHost
 	Ecosystem string
 	// Package/Version are hopper's registry attribution; Headline and SubID
 	// derive from them at render time (feedRowsFromSnapshot).
@@ -1352,7 +1354,6 @@ type cachedFeedSample struct {
 	TopTraits    []feedTrait
 	Conf         int
 	Corroborated bool
-	HasURL       bool
 	Downloads    int64
 	Probability  float64
 	SuspiciousT  float64
@@ -2331,6 +2332,7 @@ func newMux() *http.ServeMux {
 	})
 	mux.HandleFunc("GET /fallout", handleFallout)
 	mux.HandleFunc("GET /malware", handleMalware)
+	mux.HandleFunc("GET /review", handleReview)
 	mux.HandleFunc("GET /api", handleAPI)
 	mux.HandleFunc("GET /contributing", handleContributing)
 	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
@@ -2688,6 +2690,11 @@ type feedQueryArgs struct {
 	// each installer that ships it), so these disable TopLevelOnly.
 	claimName   string
 	claimSigner string
+	// label keeps only the files hopper gives this label; exceptLabel drops
+	// them. Hopper can filter on a label but not on its absence, so
+	// exceptLabel is applied to the rows a read returns.
+	label       string
+	exceptLabel string
 	// feedsOnly restricts the stream to samples cited by external sources,
 	// independently of the sample's label or analysis verdict.
 	feedsOnly bool
@@ -2702,10 +2709,11 @@ func feedCacheKey(a *feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v14:eco=" + a.ecosystem + ":dom=" + a.domain +
+	return "feed-v15:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
 		":cn=" + a.claimName + ":cs=" + a.claimSigner +
+		":label=" + a.label + ":xlabel=" + a.exceptLabel +
 		":from=" + timeKey(a.since) + ":to=" + timeKey(a.until)
 }
 
@@ -2827,6 +2835,12 @@ func feedDiagParams(a *feedQueryArgs) string {
 	}
 	if a.feedsOnly {
 		parts = append(parts, "feeds=1")
+	}
+	if a.label != "" {
+		parts = append(parts, "label="+diagSafe(a.label))
+	}
+	if a.exceptLabel != "" {
+		parts = append(parts, "xlabel="+diagSafe(a.exceptLabel))
 	}
 	if !a.since.IsZero() || !a.until.IsZero() {
 		parts = append(parts, "window="+timeKey(a.since)+".."+timeKey(a.until))
@@ -2965,6 +2979,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		// scanner, blog, or advisory names this file's sha256 or release (the
 		// sightings ledger).
 		Cited: args.feedsOnly,
+		Label: args.label,
 		Limit: feedLimit,
 		Since: args.since,
 		Until: args.until,
@@ -2999,6 +3014,9 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 	}
 	now := time.Now()
 	for i := range rows {
+		if args.exceptLabel != "" && rows[i].Label == args.exceptLabel {
+			continue
+		}
 		// Build the row straight from what the store returned. Every field the
 		// feed shows is derivable from it, so there is no need to consult (and
 		// churn) the shared per-SHA result cache.
@@ -3059,7 +3077,7 @@ func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
 			TopTraits:      sample.TopTraits,
 			LLMGrade:       sample.LLMGrade,
 			Corroborated:   sample.Corroborated,
-			HasURL:         sample.HasURL,
+			URLHost:        sample.URLHost,
 			AnalyzedAt:     sample.CreatedAt,
 			AnalyzedDate:   feedDate(sample.CreatedAt, now),
 			TimeAgo:        timeAgo(now.Sub(sample.CreatedAt)),
@@ -3077,12 +3095,13 @@ var feedStaticPrecacheEcosystems = []string{
 }
 
 // feedPrecacheVariants enumerates the baseline feed views the static tier
-// sweeps: the unfiltered "any" view (the frontpage default), the criticality
-// views (hostile is the Hot Particle's candidate pool), the feeds-only views,
-// and each static ecosystem's default (hostile) view. The hot tier adds
-// whatever pivots real traffic favors; everything else is cached on demand.
+// sweeps: Malware (also the home page and the Atom feed), the unfiltered "any"
+// view, the criticality views, the feeds-only views, and each static
+// ecosystem's hostile view. The hot tier adds whatever pivots real traffic
+// favors; everything else is cached on demand.
 var feedPrecacheVariants = func() []feedQueryArgs {
 	v := []feedQueryArgs{
+		hostileListArgs(malwareList, false),
 		{criticality: "hostile"},
 		{},
 		{criticality: "suspicious"},
@@ -3244,7 +3263,10 @@ func (p *feedPopularity) record(a *feedQueryArgs) {
 	if a.search != "" || a.formula != "" {
 		return
 	}
-	key := feedQueryArgs{ecosystem: a.ecosystem, criticality: a.criticality, feedsOnly: a.feedsOnly}
+	key := feedQueryArgs{
+		ecosystem: a.ecosystem, criticality: a.criticality, feedsOnly: a.feedsOnly,
+		label: a.label, exceptLabel: a.exceptLabel,
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.counts[key] == 0 && len(p.counts) >= feedPopularityCap {
@@ -3310,7 +3332,7 @@ func cachedFeedSamplesFromRows(rows []feedRow) []cachedFeedSample {
 			TopTraits:      row.TopTraits,
 			LLMGrade:       row.LLMGrade,
 			Corroborated:   row.Corroborated,
-			HasURL:         row.HasURL,
+			URLHost:        row.URLHost,
 			CreatedAt:      row.AnalyzedAt,
 		})
 	}
@@ -4631,7 +4653,29 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMalware(w http.ResponseWriter, r *http.Request) {
-	renderFeed(w, r, feedScope{malware: true})
+	renderFeed(w, r, feedScope{list: malwareList})
+}
+
+func handleReview(w http.ResponseWriter, r *http.Request) {
+	renderFeed(w, r, feedScope{list: reviewList})
+}
+
+// The fixed lists of hostile files, each its own page at /{list}.
+const (
+	malwareList = "malware" // labeled bad
+	reviewList  = "review"  // not labeled bad
+)
+
+// hostileListArgs is a fixed list's query across every platform: Malware keeps
+// the hostile files hopper labels bad, Review the hostile files it does not.
+func hostileListArgs(list string, feedsOnly bool) feedQueryArgs {
+	a := feedQueryArgs{criticality: "hostile", feedsOnly: feedsOnly}
+	if list == reviewList {
+		a.exceptLabel = "bad"
+	} else {
+		a.label = "bad"
+	}
+	return a
 }
 
 func handleEcosystem(w http.ResponseWriter, r *http.Request) {
@@ -4807,11 +4851,11 @@ func paginateFeed(data *feedPageData, r *http.Request) {
 type feedScope struct {
 	ecosystem string // /npm/
 	purl      string // /npm/lodash
-	malware   bool   // /malware: hostile only, any platform
+	list      string // /malware, /review: a fixed hostile list, any platform
 }
 
 // renderFeed renders every page that is a list of samples: the index and its
-// searches, an ecosystem, Malware, and a package.
+// searches, an ecosystem, Malware, Review, and a package.
 func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 	query := r.URL.Query()
 	// Server-side fallback for ?q=sha256:<hex> / ?q=<64-hex> deep links —
@@ -4838,8 +4882,8 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 		critToken = firstNonEmpty(crit, "any")
 	}
 	ecosystem := scope.ecosystem
-	if scope.malware {
-		// Malware is one fixed question, so its box stays empty; the platform
+	if scope.list != "" {
+		// A fixed list is one question, so its box stays empty; the platform
 		// filter is the page's own and rides the query string.
 		crit, critToken = "hostile", ""
 		if eco := strings.ToLower(query.Get("ecosystem")); validEcosystem(eco) {
@@ -4902,13 +4946,15 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 		Heading:         "Index",
 		Lede:            "Every analyzed file.",
 		HasHopper:       hopperStore.Load() != nil,
-		Malware:         scope.malware,
+		List:            scope.list,
 	}
 	data.Chrome.Refresh = query.Get("refresh") == "1"
 	switch {
-	case scope.malware:
+	case scope.list == malwareList:
 		data.Chrome.Nav = "malware"
-		data.Title, data.Heading, data.Lede = "Malware", "Malware", "New malware, unfiltered."
+		data.Title, data.Heading, data.Lede = "Malware", "Malware", "Known malware."
+	case scope.list == reviewList:
+		data.Title, data.Heading, data.Lede = "Review", "Review", "Hostile, but not known malware."
 	case purlBase != "":
 		// A package page titles itself by the coordinate.
 		data.Title = purlDisplayString(purlCanonical)
@@ -4916,7 +4962,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 	case ecosystem != "":
 		data.Title, data.Heading, data.Lede = ecosystem+" · Index", ecosystem, ""
 	}
-	if !scope.malware {
+	if scope.list == "" {
 		data.SearchQuery = composeSearchQuery(
 			critToken, purlDisplayString(data.SelectedPURL), data.SelectedEco, data.SelectedDomain,
 			data.SelectedFormula, data.SelectedQ,
@@ -4946,14 +4992,18 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 		claimSigner: claimSigner,
 		feedsOnly:   data.FeedsOnly,
 	}
+	if scope.list != "" {
+		list := hostileListArgs(scope.list, data.FeedsOnly)
+		args.label, args.exceptLabel = list.label, list.exceptLabel
+	}
 	bypass := isHardRefresh(r)
 	switch {
 	case purlBase != "":
 		data.loadPackage(r.Context(), &args, bypass)
 	case !data.HasHopper:
-	case scope.malware:
+	case scope.list != "":
 		data.Rows = data.load(r.Context(), &args, bypass)
-		data.Pills = platformPillsFor(r.Context(), ecosystem, data.FeedsOnly)
+		data.Pills = platformPillsFor(r.Context(), scope.list, ecosystem, data.FeedsOnly)
 	default:
 		data.Rows = data.load(r.Context(), &args, bypass)
 		// The index mixes verdicts, so each row says which it got.
