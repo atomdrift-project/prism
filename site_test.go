@@ -177,7 +177,7 @@ func TestListRow(t *testing.T) {
 	// The sighting mark follows the name, not the hash.
 	name := strings.Index(named, `>evil 1.0.0</a>`)
 	mark := strings.Index(named, `aria-label="Sighted elsewhere"`)
-	hash := strings.Index(named, `<span class="file-sha"`)
+	hash := strings.Index(named, `<button type="button" class="file-sha"`)
 	if name < 0 || mark < name || hash < mark {
 		t.Errorf("want name, then sighting mark, then hash:\n%s", named)
 	}

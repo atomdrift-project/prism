@@ -14,7 +14,8 @@
 // a neighbour.
 //
 // d and r are the two buttons the markup already advertises with
-// aria-keyshortcuts, so this is what makes those attributes true.
+// aria-keyshortcuts, so this is what makes those attributes true. The
+// #kbd-toggle button turns all of them off.
 
 const NAV_KEY = "prism_nav";
 
@@ -69,7 +70,30 @@ function returnURL(nav) {
 const nav = readNav();
 const { prev, next } = neighbours(nav);
 
+// Single letters can collide with speech input and screen-reader keys, so
+// the reader can switch them off; the choice outlives the tab.
+const OFF_KEY = "prism_shortcuts_off";
+let shortcutsOff = false;
+try {
+  shortcutsOff = localStorage.getItem(OFF_KEY) === "1";
+} catch (_) {
+  /* storage blocked: shortcuts stay on */
+}
+const toggle = document.getElementById("kbd-toggle");
+toggle?.setAttribute("aria-pressed", String(!shortcutsOff));
+toggle?.addEventListener("click", () => {
+  shortcutsOff = !shortcutsOff;
+  toggle.setAttribute("aria-pressed", String(!shortcutsOff));
+  try {
+    if (shortcutsOff) localStorage.setItem(OFF_KEY, "1");
+    else localStorage.removeItem(OFF_KEY);
+  } catch (_) {
+    /* storage blocked: the choice lasts this page */
+  }
+});
+
 document.addEventListener("keydown", (ev) => {
+  if (shortcutsOff) return;
   if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return;
   if (ev.defaultPrevented || isTypingTarget(ev.target)) return;
 

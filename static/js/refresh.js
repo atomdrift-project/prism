@@ -124,6 +124,7 @@ document.querySelectorAll(".refresh-btn").forEach((btn) => {
         btn.textContent = `✕ ${msg}`;
         btn.classList.add("is-error");
         btn.title = msg;
+        btn.disabled = false; // let the reader try again
         announce(msg);
         return;
       }
@@ -147,6 +148,7 @@ document.querySelectorAll(".refresh-btn").forEach((btn) => {
       btn.textContent = "✕ network error";
       btn.classList.add("is-error");
       btn.title = String(err);
+      btn.disabled = false;
       announce("Refresh failed: network error.");
     }
   });

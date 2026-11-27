@@ -6,8 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     {{template "favicon"}}
-    {{if .CurrentWeek}}<meta http-equiv="refresh" content="300">{{end}}
-    <title>Fallout - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
+    <title>Fallout{{if not .CurrentWeek}}, {{.WindowLabel}}{{end}} - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <link rel="canonical" href="/fallout{{if .SelectedEco}}?ecosystem={{.SelectedEco}}{{end}}" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
@@ -22,7 +21,7 @@
     // first paint the reader keeps is already labeled in local time; every later
     // visit reads the cookie and skips straight through. The reload is gated on
     // the cookie actually sticking, so a browser refusing cookies does nothing
-    // here rather than looping against the page's meta refresh.
+    // here rather than reloading on every visit.
     (function () {
         var present = /(?:^|;\s*)tz=/;
         if (present.test(document.cookie)) return;
@@ -47,7 +46,7 @@
 <body>
     {{template "banner" .}}
     {{template "topbar" .Chrome}}
-    <main class="page">
+    <main class="page" id="main">
         <div class="page-head">
             <div>
                 <h1>Fallout</h1>
@@ -88,9 +87,9 @@
             <div class="empty">Nothing {{.WindowLabel}}{{with .SelectedEco}} in {{.}}{{end}}.</div>
             {{end}}
             <nav class="pager" aria-label="Weeks">
-                {{if .NewerURL}}<a href="{{.NewerURL}}" rel="next" title="The week after">‹ Newer week</a>{{else}}<span aria-disabled="true" title="This is the week in progress">‹ Newer week</span>{{end}}
+                {{if .NewerURL}}<a href="{{.NewerURL}}" rel="next" title="The week after">‹ Newer week</a>{{else}}<span class="off" title="This is the week in progress">‹ Newer week</span>{{end}}
                 <span class="mid">{{.WindowLabel}}{{if not .CurrentWeek}} · <a href="{{.CurrentURL}}">This week</a>{{end}}</span>
-                {{if .OlderURL}}<a href="{{.OlderURL}}" rel="prev" title="The week before">Older week ›</a>{{else}}<span aria-disabled="true" title="The archive reaches no further back">Older week ›</span>{{end}}
+                {{if .OlderURL}}<a href="{{.OlderURL}}" rel="prev" title="The week before">Older week ›</a>{{else}}<span class="off" title="The archive reaches no further back">Older week ›</span>{{end}}
             </nav>
         </section>
     </main>

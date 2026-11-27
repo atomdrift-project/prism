@@ -10,9 +10,10 @@ import (
 )
 
 // The detail page advertises d and r with aria-keyshortcuts, and j/k have no
-// visible control to hang the attribute on — so the page states them once for
-// a screen reader. All four are handled by shortcuts.js, which the page has to
-// actually load for any of that to be true.
+// visible control to hang the attribute on — so the page states them once,
+// beside the switch that turns them off (WCAG 2.1.4). All of them are handled
+// by shortcuts.js, which the page has to actually load for any of that to be
+// true.
 func TestResultPageLoadsShortcuts(t *testing.T) {
 	var buf bytes.Buffer
 	if err := resultTemplateForTest(t).Execute(&buf, archiveData()); err != nil {
@@ -26,6 +27,7 @@ func TestResultPageLoadsShortcuts(t *testing.T) {
 		"x to go back to the feed",
 		"d to download",
 		"r to re-queue",
+		`id="kbd-toggle" aria-pressed="true"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result page missing %q", want)

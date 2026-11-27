@@ -218,23 +218,37 @@ if (searchForm) {
   });
 }
 
-if (criticalityFilter) {
-  criticalityFilter.addEventListener("change", () => {
-    updateFilter("crit", criticalityFilter.value);
+// A dropdown navigates once the choice is made. Arrowing through a closed
+// <select> fires change on every step in some browsers, which would leave
+// the page on the first keypress; a keyboard choice commits on Enter or on
+// leaving the control instead.
+function onChoose(select, key) {
+  if (!select) return;
+  const initial = select.value;
+  let keyed = false;
+  const commit = () => {
+    keyed = false;
+    if (select.value !== initial) updateFilter(key, select.value);
+  };
+  select.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      commit();
+    } else if (/^(Arrow|Home$|End$|PageUp$|PageDown$)|^\S$/.test(ev.key)) {
+      keyed = true;
+    }
+  });
+  select.addEventListener("change", () => {
+    if (!keyed) commit();
+  });
+  select.addEventListener("blur", () => {
+    if (keyed) commit();
   });
 }
 
-if (ecosystemFilter) {
-  ecosystemFilter.addEventListener("change", () => {
-    updateFilter("ecosystem", ecosystemFilter.value);
-  });
-}
-
-if (domainFilter) {
-  domainFilter.addEventListener("change", () => {
-    updateFilter("domain", domainFilter.value);
-  });
-}
+onChoose(criticalityFilter, "crit");
+onChoose(ecosystemFilter, "ecosystem");
+onChoose(domainFilter, "domain");
 
 // The feeds checkbox rides the URL directly rather than the search-box
 // language: it is a boolean view toggle (?feeds=1), not a query term.
@@ -253,10 +267,11 @@ if (feedsFilter) {
 }
 
 // Full SHA-256s click-copy — the fastest path from feed row to ticket or
-// terminal. The copied state is a brief color flip; clipboard failures
-// (permissions, http) degrade to the text simply staying selectable.
+// terminal. The copied state is a brief color flip, said aloud through the
+// upload status region; clipboard failures (permissions, http) degrade to the
+// text simply staying selectable.
 document.addEventListener("click", (ev) => {
-  const sha = ev.target.closest(".file-sha");
+  const sha = ev.target.closest("button.file-sha");
   if (!sha || !navigator.clipboard) return;
   const text = (sha.textContent || "").trim();
   if (!/^[a-f0-9]{64}$/i.test(text)) return;
@@ -265,6 +280,12 @@ document.addEventListener("click", (ev) => {
     .then(() => {
       sha.classList.add("copied");
       setTimeout(() => sha.classList.remove("copied"), 1200);
+      const live = document.getElementById("a11y-live");
+      if (!live) return;
+      live.textContent = "";
+      requestAnimationFrame(() => {
+        live.textContent = "SHA-256 copied.";
+      });
     })
     .catch(() => {
       /* clipboard unavailable — the text stays selectable */
@@ -286,7 +307,7 @@ if (input && form) {
     if (input.files.length === 0) return;
     const file = input.files[0];
     if (file.size > maxSize) {
-      uploadStatus.className = "top-upload-status";
+      uploadStatus.className = "top-upload-status is-error";
       uploadStatus.innerHTML =
         'File exceeds 100 MiB. Use <a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.';
       input.value = "";

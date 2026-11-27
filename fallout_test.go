@@ -608,16 +608,24 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		// The week nav: a link back through the archive, and no forward link
 		// on the week in progress.
 		`href="/fallout?week=2026-07-27" rel="prev"`,
-		`aria-disabled="true" title="This is the week in progress"`,
+		`<span class="off" title="This is the week in progress">`,
 		// The time-zone probe: nonced so CSP admits it, and naming the cookie
 		// viewerLocation reads back.
 		`<script nonce="test-script-nonce">`,
 		"resolvedOptions().timeZone",
 		"'" + tzCookieName + "=' + zone",
+		// Every page can be skipped past its header to the content.
+		`<a class="skip" href="#main">`,
+		`<main class="page" id="main">`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered fallout page missing %q", want)
 		}
+	}
+	// A page that reloads itself loses the reader's place and cannot be
+	// stopped (WCAG 2.2.1).
+	if strings.Contains(html, "http-equiv") {
+		t.Error("fallout page must not refresh itself")
 	}
 }
 

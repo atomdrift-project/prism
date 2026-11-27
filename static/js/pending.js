@@ -101,8 +101,13 @@
     document.querySelectorAll(".pending-step").forEach((step) => {
       const key = step.dataset.step;
       const index = order.indexOf(key);
+      const done = index >= 0 && index < completeThrough;
       step.classList.toggle("active", key === active);
-      step.classList.toggle("complete", index >= 0 && index < completeThrough);
+      step.classList.toggle("complete", done);
+      if (key === active) step.setAttribute("aria-current", "step");
+      else step.removeAttribute("aria-current");
+      const said = step.querySelector(".step-done");
+      if (said) said.textContent = done ? ", done" : "";
     });
   }
 
@@ -193,7 +198,8 @@
     setBusyState("Result ready", "Ready");
     setStep("result", 3);
     setCurrent("All clear — opening the result", "The full report is ready.");
-    setTimeout(() => window.location.replace(`/${encodeURIComponent(sha)}`), 180);
+    // Long enough for a screen reader to say so before the page turns.
+    setTimeout(() => window.location.replace(`/${encodeURIComponent(sha)}`), 1000);
   }
 
   function showFailure(message = "The analysis could not be completed.") {
@@ -204,7 +210,6 @@
     setBusyState("A hiccup happened", "Stopped");
     setCurrent("The sample needs another look", message, true);
     current.style.background = "#fff1f3";
-    document.querySelector(".pending-stream")?.setAttribute("aria-busy", "false");
   }
 
   function renderServerInfo(data) {

@@ -107,8 +107,10 @@ func randOperand() int64 {
 // serveChallenge renders the interstitial with status 429. The page is
 // CSP-clean: no inline script or style, same-origin image and form only, so it
 // renders under prism's strict Content-Security-Policy. retryAfter feeds the
-// Retry-After header for the non-browser clients that read it.
-func serveChallenge(w http.ResponseWriter, r *http.Request, retryAfter time.Duration) {
+// Retry-After header for the non-browser clients that read it, and tells a
+// person who would rather not do sums how long to wait instead. failed says
+// the last answer was wrong, so the page can say so.
+func serveChallenge(w http.ResponseWriter, r *http.Request, retryAfter time.Duration, failed bool) {
 	a, b := randOperand(), randOperand()
 	exp := time.Now().Add(challengeMaxAge).Unix()
 	token := strconv.FormatInt(exp, 10) + "." + challengeMAC(clientIP(r), a+b, exp)
@@ -118,8 +120,12 @@ func serveChallenge(w http.ResponseWriter, r *http.Request, retryAfter time.Dura
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 	w.WriteHeader(http.StatusTooManyRequests)
+	wait := 0
+	if retryAfter > 0 {
+		wait = int(retryAfter.Seconds()) + 1
+	}
 	_ = challengeTmpl.Execute(w, challengeData{ //nolint:errcheck // response already committed
-		A: a, B: b, Token: token, Next: next,
+		A: a, B: b, Token: token, Next: next, Wait: wait, Failed: failed,
 	})
 }
 
@@ -130,7 +136,7 @@ func serveChallenge(w http.ResponseWriter, r *http.Request, retryAfter time.Dura
 // can always reach it to solve.
 func handleChallenge(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		serveChallenge(w, r, 0)
+		serveChallenge(w, r, 0, false)
 		return
 	}
 	if challengeSolved(r, r.PostFormValue("token"), r.PostFormValue("answer")) {
@@ -140,7 +146,7 @@ func handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.Debug("challenge failed", "client_ip", clientIP(r))
-	serveChallenge(w, r, 0)
+	serveChallenge(w, r, 0, true)
 }
 
 // challengeSolved verifies a submitted answer against its signed token: correct
@@ -172,9 +178,11 @@ func sanitizeNext(next string) string {
 }
 
 type challengeData struct {
-	Token string
-	Next  string
-	A, B  int64
+	Token  string
+	Next   string
+	A, B   int64
+	Wait   int  // seconds until the limiter admits the next request; 0 if unknown
+	Failed bool // the previous answer was wrong
 }
 
 // challengeTmpl is the interstitial page. html/template escapes every field;
@@ -190,7 +198,7 @@ var challengeTmpl = template.Must(template.New("challenge").Parse(`<!DOCTYPE htm
 </head>
 <body>
 <main>
-<img src="/static/robot.jpg" alt="A dizzy little robot, spinning">
+<img src="/static/robot.jpg" alt="A dizzy little robot">
 <h1>Whoa there, speed&nbsp;demon</h1>
 <p>You're loading pages faster than our little robot can carry them, and now
 it's gotten dizzy. Prove there's a human at the wheel and we'll wave you through.</p>
@@ -198,15 +206,18 @@ it's gotten dizzy. Prove there's a human at the wheel and we'll wave you through
 <input type="hidden" name="token" value="{{.Token}}">
 <input type="hidden" name="next" value="{{.Next}}">
 <p>Quick, while the robot recovers:</p>
+{{if .Failed}}<p class="err" id="answer-error" role="alert">Not quite. Here's another.</p>{{end}}
 <div class="equation">
 <span class="num">{{.A}}</span>
 <span class="op">+</span>
 <span class="num">{{.B}}</span>
 <span class="op">=</span>
-<input type="text" name="answer" inputmode="numeric" autocomplete="off" aria-label="Your answer">
+<input type="text" name="answer" inputmode="numeric" autocomplete="off" aria-label="Your answer"
+{{- if .Failed}} aria-invalid="true" aria-describedby="answer-error"{{end}}>
 </div>
 <button type="submit">I'm (probably) human</button>
 </form>
+{{if .Wait}}<p class="wait">Or wait {{.Wait}} {{if eq .Wait 1}}second{{else}}seconds{{end}} and reload.</p>{{end}}
 </main>
 </body>
 </html>

@@ -104,7 +104,7 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 		// bare 429 + Retry-After they can honor — logged at Debug, since the
 		// access log already records the 429 and a flood must not self-amplify.
 		if wantsChallenge(r) {
-			serveChallenge(w, r, retryAfter)
+			serveChallenge(w, r, retryAfter, false)
 			return
 		}
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))

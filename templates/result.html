@@ -5,21 +5,21 @@
 {{define "region"}}
 {{- $file := . -}}
 {{range .Windows}}
-<section class="region file-card" aria-label="{{.Title}}">
+<section class="region file-card">
     <header class="region-head">
         <span class="crit-dot {{if .Crit}}{{.Crit}}{{else}}notable{{end}}" aria-hidden="true"></span>
-        <span class="region-title">{{if .Title}}{{.Title}}{{else}}{{$file.Filename}}{{end}}</span>
+        <h3 class="region-title">{{with .Crit}}<span class="sr-only">{{.}}: </span>{{end}}{{if .Title}}{{.Title}}{{else}}{{$file.Filename}}{{end}}</h3>
         <span class="region-loc">{{if not $file.Solo}}<a href="#{{$file.Anchor}}" title="{{$file.Path}}">{{$file.Filename}}</a>{{if .Range}} · {{end}}{{end}}{{.Range}}</span>
     </header>
     {{range .Blocks}}
     {{if .Hex}}
     <div class="code hex">
-        {{range .Rows}}{{if .Gap}}<div class="line gap"><span class="ln">⋯</span><span class="src">{{.Gap}} more {{if eq .Gap 1}}row{{else}}rows{{end}}</span></div>{{else}}<div class="line{{if .Crit}}{{if .Cont}} cont cont-{{.Crit}}{{else}} hit hit-{{.Crit}}{{end}}{{end}}"{{if .Annos}} title="{{range $i, $a := .Annos}}{{if $i}} · {{end}}{{$a.Desc}}{{end}}"{{end}}><span class="ln">{{.Loc}}</span><span class="src">{{range .Segs}}<span class="cell">{{.Text}}</span>{{end}}</span><span class="ascii">{{range .ASCII}}{{.Text}}{{end}}</span></div>{{end}}
+        {{range .Rows}}{{if .Gap}}<div class="line gap"><span class="ln">⋯</span><span class="src">{{.Gap}} more {{if eq .Gap 1}}row{{else}}rows{{end}}</span></div>{{else}}<div class="line{{if .Crit}}{{if .Cont}} cont cont-{{.Crit}}{{else}} hit hit-{{.Crit}}{{end}}{{end}}"{{if .Annos}} title="{{range $i, $a := .Annos}}{{if $i}} · {{end}}{{$a.Desc}}{{end}}"{{end}}><span class="ln">{{.Loc}}</span><span class="src">{{range .Segs}}<span class="cell">{{.Text}}</span>{{end}}</span><span class="ascii">{{range .ASCII}}{{.Text}}{{end}}</span>{{template "anno" .}}</div>{{end}}
         {{end}}
     </div>
     {{else}}
     <div class="code chroma">
-        {{range .Rows}}{{if .Gap}}<div class="line gap"><span class="ln">⋯</span><span class="src">{{.Gap}} {{if eq .Gap 1}}line{{else}}lines{{end}}</span></div>{{else}}<div class="line{{if .Crit}}{{if .Cont}} cont cont-{{.Crit}}{{else}} hit hit-{{.Crit}}{{end}}{{end}}"{{if .Annos}} title="{{range $i, $a := .Annos}}{{if $i}} · {{end}}{{$a.Desc}}{{end}}"{{end}}><span class="ln">{{.Loc}}</span><span class="src">{{if .Lead}}<span class="clip">… </span>{{end}}{{range .Segs}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="clip"> …</span>{{end}}</span></div>{{end}}
+        {{range .Rows}}{{if .Gap}}<div class="line gap"><span class="ln">⋯</span><span class="src">{{.Gap}} {{if eq .Gap 1}}line{{else}}lines{{end}}</span></div>{{else}}<div class="line{{if .Crit}}{{if .Cont}} cont cont-{{.Crit}}{{else}} hit hit-{{.Crit}}{{end}}{{end}}"{{if .Annos}} title="{{range $i, $a := .Annos}}{{if $i}} · {{end}}{{$a.Desc}}{{end}}"{{end}}><span class="ln">{{.Loc}}</span><span class="src">{{if .Lead}}<span class="clip">… </span>{{end}}{{range .Segs}}{{if .Class}}<span class="{{.Class}}">{{.Text}}</span>{{else}}{{.Text}}{{end}}{{end}}{{if .Trail}}<span class="clip"> …</span>{{end}}</span>{{template "anno" .}}</div>{{end}}
         {{end}}
     </div>
     {{end}}
@@ -27,6 +27,8 @@
 </section>
 {{end}}
 {{end}}
+{{- /* A matched line's findings, said aloud: the tooltip is mouse-only. */ -}}
+{{define "anno"}}{{if .Annos}}<span class="sr-only">, {{if and .Crit (not .Cont)}}{{.Crit}} match: {{end}}{{range $i, $a := .Annos}}{{if $i}}; {{end}}{{$a.Desc}}{{end}}</span>{{end}}{{end}}
 {{- /* The evidence body, addressable by name for the members endpoint. */ -}}
 {{define "contentBody"}}
 {{range .FileViews}}{{if .Windows}}<div id="{{.Anchor}}">{{template "region" .}}</div>{{end}}{{end}}
@@ -35,13 +37,13 @@
 {{- /* The header's findings, addressable by name for the members endpoint:
        the flagged dependencies first, then the top traits. */ -}}
 {{define "findingsbody"}}
-<div class="badges-slot">{{if or .FlaggedDeps .Badges}}<div class="badges" aria-label="Findings">
+<div class="badges-slot">{{if or .FlaggedDeps .Badges}}<div class="badges" role="group" aria-label="Findings">
 {{- range .FlaggedDeps}}{{if .Href}}<a class="badge {{.Crit}}" href="{{.Href}}" title="{{.Locator}}">{{template "depbadge" .}}</a>{{else}}<span class="badge {{.Crit}}" title="{{.Locator}}">{{template "depbadge" .}}</span>{{end}}{{end}}
 {{- with .FlaggedDepsHidden}}<span class="badge">+{{.}} more</span>{{end}}
-{{- range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span>{{.Desc}}</span>{{end -}}
+{{- range .Badges}}<span class="badge {{.Crit}}"><span class="crit-dot {{.Crit}}" aria-hidden="true"></span><span class="sr-only">{{.Crit}}: </span>{{.Desc}}</span>{{end -}}
 </div>{{end}}</div>
 {{end}}
-{{define "depbadge"}}<span class="crit-dot {{.Crit}}" aria-hidden="true"></span>Depends on {{.Label}}{{with .Kind}} <em>{{.}}</em>{{end}}{{end}}
+{{define "depbadge"}}<span class="crit-dot {{.Crit}}" aria-hidden="true"></span><span class="sr-only">{{.Crit}}: </span>Depends on {{.Label}}{{with .Kind}} <em>{{.}}</em>{{end}}{{end}}
 <!doctype html>
 <html lang="en">
 <head>
@@ -65,8 +67,6 @@
             {{template "tokens"}}
             --paper: #ffffff;
             --rule-soft: #f0f0f0;
-            --hostile: #e11d48;
-            --suspicious: #d97706;
             --notable: #2563eb;
             --hostile-bg: #FDEEF1;
             --suspicious-bg: #FCF1E6;
@@ -87,14 +87,12 @@
             flex-direction: column;
         }
         a { color: inherit; text-decoration: none; }
-        :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
-        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         {{template "chromestyle" .}}
         .shell { flex: 1; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 48px; padding: 32px 48px 40px; max-width: 1440px; margin: 0 auto; }
         .rail { position: sticky; top: 24px; align-self: start; display: flex; flex-direction: column; gap: 20px; }
         .rail-block { display: flex; flex-direction: column; gap: 10px; }
         /* Rail headings are the sidebar headings of atomdrift.org. */
-        .rail-title { padding-bottom: 5px; border-bottom: 2px solid var(--blue); font-family: var(--display); font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--ink-soft); }
+        .rail-title { margin: 0; padding-bottom: 5px; border-bottom: 2px solid var(--blue); font-family: var(--display); font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--ink-soft); }
         .compound { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--cream); }
         .compound .malecule { width: 100%; height: auto; display: block; }
         .compound-formula { display: flex; flex-direction: column; gap: 3px; }
@@ -109,16 +107,16 @@
         .prov .v.mono { font-family: var(--mono); font-size: 11.5px; }
         .prov a.v { color: var(--blue); }
         .registry-desc { margin: 0; font-size: 14px; color: var(--ink-light); font-style: italic; max-width: 60ch; }
-        .parents { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
-        .parents a { color: var(--blue); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .parents { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+        .parents a { min-height: 24px; line-height: 24px; color: var(--blue); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
         .head { display: flex; flex-direction: column; gap: 12px; }
         .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .verdict { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 10px; border-radius: 4px; color: #fff; background: var(--ink-light); cursor: default; }
-        .verdict sup { font-size: 10px; opacity: 0.9; }
+        .verdict sup { font-size: 11px; opacity: 0.9; }
         .verdict.hostile { background: var(--hostile); }
         .verdict.suspicious { background: var(--suspicious); }
-        .verdict.benign { background: #16a34a; }
+        .verdict.benign { background: var(--benign); }
         .eco-badge { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 10.5px; border-radius: 4px; padding: 1px 6px; letter-spacing: 0.3px; color: var(--ink-mid); background: var(--mist); }
         .meta .faint { font-size: 12.5px; color: var(--ink-light); }
         .actions { margin-left: auto; display: flex; gap: 8px; }
@@ -130,11 +128,11 @@
         .download-btn:hover { background: var(--toxic-muted); border-color: var(--toxic-muted); }
         .download-btn.is-disabled { background: var(--mist); color: var(--ink-light); border-color: var(--rule); cursor: not-allowed; }
         /* Brief confirmation that the filename went to the clipboard alongside the download. */
-        .download-btn.is-done { background: #16a34a; border-color: #16a34a; color: #fff; }
-        .refresh-btn { background: var(--paper); color: var(--ink-mid); border: 1px solid var(--rule); }
+        .download-btn.is-done { background: var(--benign); border-color: var(--benign); color: #fff; }
+        .refresh-btn { background: var(--paper); color: var(--ink-mid); border: 1px solid var(--field); }
         .refresh-btn:hover { border-color: var(--blue); }
         .refresh-btn:disabled { color: var(--ink-light); cursor: default; }
-        .refresh-btn.is-done { color: #16a34a; border-color: #16a34a; }
+        .refresh-btn.is-done { color: var(--benign); border-color: var(--benign); }
         .refresh-btn.is-error { color: var(--hostile); border-color: var(--hostile); }
         h1 { margin: 0; font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.7px; line-height: 1.1; color: var(--ink); word-break: break-word; }
         .summary { margin: 0; font-size: 17px; line-height: 1.5; color: var(--ink-mid); max-width: 72ch; }
@@ -143,7 +141,7 @@
         .badge em { font-style: normal; font-weight: 400; color: var(--ink-light); }
         a.badge:hover { color: var(--ink); border-color: var(--blue); }
         .crit-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-light); flex: none; }
-        .crit-dot.hostile { background: var(--hostile); }
+        .crit-dot.hostile { background: var(--hostile); border-radius: 1px; transform: rotate(45deg) scale(0.9); }
         .crit-dot.suspicious { background: var(--suspicious); }
         .crit-dot.notable { background: var(--notable); }
         .ids { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
@@ -152,7 +150,7 @@
         .id-line .v { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
         .id-line a.v { color: var(--blue); }
         .cites { font-size: 12.5px; color: var(--ink-mid); }
-        .cites a { color: var(--blue); font-weight: 500; }
+        .cites a, .note a { color: var(--blue); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
         h2 { margin: 12px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--rule); font-family: var(--display); font-size: 19px; font-weight: 700; letter-spacing: -0.3px; color: var(--ink); }
         .evidence { display: flex; flex-direction: column; gap: 20px; }
         .region { position: relative; display: flex; flex-direction: column; gap: 8px; padding-left: 18px; }
@@ -160,7 +158,7 @@
         .region:hover::before { background: var(--toxic-muted); }
         .id-line.formula { display: none; }
         .region-head { display: flex; align-items: baseline; gap: 10px; }
-        .region-title { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--ink); }
+        .region-title { margin: 0; font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--ink); }
         .region-loc { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-light); white-space: nowrap; }
         .region-loc a:hover { color: var(--blue); }
         .code { border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; padding: 6px 0; background: var(--paper); font-family: var(--mono); font-size: 12.5px; }
@@ -168,7 +166,7 @@
            editor sets. The old 22px plus 2px of padding made every row 26px,
            which read as a transcript rather than as source. */
         .line { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; padding: 0 12px; }
-        .line .ln { text-align: right; font-size: 11px; color: var(--ink-light); line-height: 18px; user-select: none; }
+        .line .ln { text-align: right; font-size: 11px; color: var(--ink-soft); line-height: 18px; user-select: none; }
         .line .src { line-height: 18px; color: var(--ink-light); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
         .line.hit .src { color: var(--ink); white-space: pre-wrap; word-break: break-all; }
         .line.hit-notable { background: var(--notable-bg); box-shadow: inset 3px 0 0 var(--notable); }
@@ -178,13 +176,19 @@
         .line.cont-notable { box-shadow: inset 3px 0 0 var(--notable-bg); }
         .line.cont-suspicious { box-shadow: inset 3px 0 0 var(--suspicious-bg); }
         .line.cont-hostile { box-shadow: inset 3px 0 0 var(--hostile-bg); }
-        .clip { color: var(--ink-light); }
-        .line.gap .src, .line.gap .ln { color: var(--ink-light); font-family: "Inter", system-ui, sans-serif; font-size: 11.5px; }
+        .clip { color: var(--ink-soft); }
+        .line.gap .src, .line.gap .ln { color: var(--ink-soft); font-family: "Inter", system-ui, sans-serif; font-size: 11.5px; }
         .line.gap { background: var(--mist); }
         .hex .line { grid-template-columns: 80px minmax(0, 1fr) 140px; }
         .hex .cell { display: inline-block; width: 2ch; margin-right: 0.5ch; }
         .hex .ascii { color: var(--ink-light); white-space: pre; }
         .note { margin: 0; font-size: 13px; color: var(--ink-mid); }
+        /* Single-key shortcuts must be switchable off (WCAG 2.1.4); the switch
+           is out of sight until a keyboard reaches it, like the skip link. */
+        .kbd-note { position: fixed; left: 8px; bottom: 8px; z-index: 100; max-width: min(520px, calc(100vw - 16px)); margin: 0; padding: 10px 14px; border-radius: 6px; background: var(--ink); color: #ffffff; font-size: 13px; transform: translateY(150%); }
+        .kbd-note:focus-within { transform: none; }
+        .kbd-note button { margin-left: 8px; min-height: 32px; padding: 0 10px; border: 1px solid #ffffff; border-radius: 6px; background: transparent; color: #ffffff; font: inherit; cursor: pointer; }
+        .kbd-note button[aria-pressed="false"] { text-decoration: line-through; }
         /* Holds the space the real regions will occupy so their arrival moves
            nothing, and stays invisible for the first fifth of a second so a
            fast load never flashes a placeholder at anyone. */
@@ -193,16 +197,14 @@
         .skel-region { display: flex; flex-direction: column; gap: 8px; padding-left: 18px; border-left: 2px solid var(--rule); }
         .skel-head { height: 15px; width: 44%; border-radius: 3px; background: var(--rule-soft); }
         .skel-code { height: 116px; border-radius: 6px; border: 1px solid var(--rule); background: var(--mist); }
-        @media (prefers-reduced-motion: reduce) { .evidence-pending { animation: none; opacity: 1; } }
-        .note a { color: var(--blue); font-weight: 500; }
         .pending-shell { display: flex; flex-direction: column; gap: 20px; }
         .pending-kicker { display: flex; align-items: center; gap: 9px; color: var(--toxic-dark); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
         .pending-kicker::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--toxic-muted); box-shadow: 0 0 0 5px var(--toxic-dim); animation: pending-pulse 1.4s ease-in-out infinite; }
-        .pending-kicker.done::before { background: #16a34a; box-shadow: 0 0 0 5px #eaf8ed; animation: none; }
+        .pending-kicker.done::before { background: var(--benign); box-shadow: 0 0 0 5px #eaf8ed; animation: none; }
         @keyframes pending-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
         .pending-title-row { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
         .pending-title-row h1 { max-width: 16ch; }
-        .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; color: var(--toxic-dark); background: var(--toxic-dim); font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+        .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; color: var(--toxic-dark); background: var(--toxic-dim); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
         .pending-state.ready { color: #167534; border-color: #b9e8c2; background: #effbf1; }
         .pending-copy { margin: 0; max-width: 62ch; color: var(--ink-mid); font-size: 16px; }
         .pending-copy em { color: var(--toxic-dark); font-style: normal; }
@@ -210,13 +212,13 @@
         .pending-meta .id-line { gap: 14px; }
         .pending-meta .k { width: 78px; }
         .pending-meta .id-line:last-child { grid-column: 1 / -1; }
-        .pending-timeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin: 8px 0 4px; }
+        .pending-timeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin: 8px 0 4px; padding: 0; list-style: none; }
         .pending-step { position: relative; display: flex; flex-direction: column; gap: 7px; padding-right: 12px; color: var(--ink-light); font-size: 12px; }
         .pending-step::after { content: ""; position: absolute; left: 17px; right: 0; top: 8px; height: 2px; background: var(--rule); }
         .pending-step:last-child::after { display: none; }
         .pending-step .dot { z-index: 1; width: 17px; height: 17px; border: 4px solid var(--paper); border-radius: 50%; background: var(--rule); box-shadow: 0 0 0 1px var(--rule); }
         .pending-step.complete { color: var(--ink-mid); }
-        .pending-step.complete .dot { background: #16a34a; box-shadow: 0 0 0 1px #16a34a; }
+        .pending-step.complete .dot { background: var(--benign); box-shadow: 0 0 0 1px var(--benign); }
         .pending-step.active { color: var(--toxic-dark); font-weight: 700; }
         .pending-step.active .dot { background: var(--toxic-muted); box-shadow: 0 0 0 4px var(--toxic-dim), 0 0 0 5px var(--toxic-muted); }
         .pending-step.active::after { background: linear-gradient(90deg, var(--toxic-muted) 0 35%, var(--rule) 35%); }
@@ -249,14 +251,14 @@
         .pending-route .value { color: var(--ink-mid); font-family: var(--mono); text-align: right; overflow-wrap: anywhere; }
         .pending-aside { display: flex; flex-direction: column; gap: 14px; }
         .pending-aside .rail-title { margin-bottom: 2px; }
-        @media (prefers-reduced-motion: reduce) { .pending-kicker::before { animation: none; } }
         @media (max-width: 960px) {
             body { font-size: 15px; }
             .shell { grid-template-columns: 1fr; gap: 20px; padding: 16px 18px 28px; }
             .rail { position: static; }
-            /* No drawing and no controls on a phone: the formula reads as text
-               under the URL, and download/refresh are desk work. */
-            .compound, .actions { display: none; }
+            /* No drawing on a phone: the formula reads as text under the URL.
+               Download and refresh stay, since a zoomed desktop lands here too. */
+            .compound { display: none; }
+            .actions { margin-left: 0; flex-wrap: wrap; }
             .id-line.formula { display: flex; }
             h1 { font-size: 22px; }
             .summary { font-size: 15px; }
@@ -264,7 +266,7 @@
             .badge { border: 0; padding: 4px 0; font-size: 14px; border-radius: 0; }
             .ids { gap: 8px; padding: 10px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
             .id-line { flex-direction: column; gap: 2px; }
-            .id-line .k { width: auto; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+            .id-line .k { width: auto; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
             .id-line .v { white-space: normal; overflow-wrap: anywhere; }
             .region { padding-left: 12px; }
             .region-head { flex-wrap: wrap; gap: 4px 10px; }
@@ -294,16 +296,16 @@
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
                     <div class="id-line"><span class="k">Source</span><span class="v">browser upload</span></div>
                 </div>
-                <div class="pending-timeline" aria-label="Analysis route">
-                    <div class="pending-step complete" data-step="received"><span class="dot"></span><span>Received</span></div>
-                    <div class="pending-step active" data-step="analysis"><span class="dot"></span><span>Analysis server</span></div>
-                    <div class="pending-step" data-step="archive"><span class="dot"></span><span>Result store</span></div>
-                    <div class="pending-step" data-step="result"><span class="dot"></span><span>Result</span></div>
-                </div>
+                <ol class="pending-timeline" aria-label="Analysis route">
+                    <li class="pending-step complete" data-step="received"><span class="dot" aria-hidden="true"></span><span>Received<span class="sr-only step-done">, done</span></span></li>
+                    <li class="pending-step active" data-step="analysis" aria-current="step"><span class="dot" aria-hidden="true"></span><span>Analysis server<span class="sr-only step-done"></span></span></li>
+                    <li class="pending-step" data-step="archive"><span class="dot" aria-hidden="true"></span><span>Result store<span class="sr-only step-done"></span></span></li>
+                    <li class="pending-step" data-step="result"><span class="dot" aria-hidden="true"></span><span>Result<span class="sr-only step-done"></span></span></li>
+                </ol>
             </div>
-            <section class="pending-stream" aria-live="polite" aria-busy="true">
-                <div class="pending-stream-head"><span>Live handoff</span><span class="pending-elapsed" id="pending-elapsed">0s</span></div>
-                <div class="pending-current" id="pending-current"><strong id="pending-message">Connecting to the analysis server…</strong><p id="pending-detail">Opening the live analysis stream.</p></div>
+            <section class="pending-stream">
+                <div class="pending-stream-head"><span>Live handoff</span><span class="pending-elapsed" id="pending-elapsed" aria-hidden="true">0s</span></div>
+                <div class="pending-current" id="pending-current" role="status"><strong id="pending-message">Connecting to the analysis server…</strong><p id="pending-detail">Opening the live analysis stream.</p></div>
                 <div class="pending-signal" id="pending-signal"><span class="pending-level" id="pending-level"></span><span class="pending-traits" id="pending-traits"></span></div>
                 <div class="pending-route" id="pending-route" hidden>
                     <div class="pending-route-row"><span class="label">Analysis server</span><span class="value" id="pending-server">not reported yet</span></div>
@@ -315,7 +317,7 @@
                 </details>
             </section>
         </main>
-        <aside class="rail"><div class="rail-block pending-aside"><span class="rail-title">What happens next</span><p class="note">A server is reading the sample now. When the full result arrives, this page will flip over automatically.</p><div class="prov"><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
+        <aside class="rail"><div class="rail-block pending-aside"><h2 class="rail-title">What happens next</h2><p class="note">A server is reading the sample now. When the full result arrives, this page will flip over automatically.</p><div class="prov"><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
     </div>
     {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/js/pending.js?v={{.BuildCommit}}"></script>
@@ -327,11 +329,11 @@
         <main id="main">
             <div class="head">
                 <div class="meta">
-                    <span class="verdict {{.RiskLevel}}" title="{{.VerdictTip}}">{{.RiskLabel}}{{if gt .LevelConfidence 0}} <sup>{{.LevelConfidence}}%</sup>{{end}}</span>
+                    <span class="verdict {{.RiskLevel}}" title="{{.VerdictTip}}">{{.RiskLabel}}{{if gt .LevelConfidence 0}} <sup>{{.LevelConfidence}}%</sup>{{end}}{{with .VerdictTip}}<span class="sr-only">. {{.}}</span>{{end}}</span>
                     {{if .Ecosystem}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{end}}
                     {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
                     <span class="actions">
-                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" aria-disabled="true" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
+                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
                         {{if .RefreshAllowed}}<button type="button" class="refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh this sample's analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Refresh</button>{{end}}
                     </span>
                 </div>
@@ -348,7 +350,7 @@
             </div>
             <h2>Evidence</h2>
             <div class="evidence" id="evidence">
-                {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" aria-busy="true" aria-label="Loading the archive's evidence"><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
+                {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" role="status"><span class="sr-only">Loading the archive's evidence.</span><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{with .MembersHTML}}{{.}}{{end}}
                 {{if and (not .FileViews) (not .DeferredMembers) (not .MembersHTML)}}<p class="note">No evidence locations were recorded for this file. <a href="/{{.SHA256}}.json">Raw result</a></p>{{end}}
@@ -366,7 +368,7 @@
             </div>
             {{end}}
             <div class="rail-block">
-                <span class="rail-title">Provenance</span>
+                <h2 class="rail-title">Provenance</h2>
                 <div class="prov">
                     {{range .ShortProv}}<div><span class="k">{{.Label}}</span>{{if .Href}}<a class="v{{if .Mono}} mono{{end}}" href="{{.Href}}"{{if .External}} target="_blank" rel="noopener noreferrer"{{end}}>{{.Value}}</a>{{else}}<span class="v{{if .Mono}} mono{{end}}" title="{{.Value}}">{{.Value}}</span>{{end}}</div>{{end}}
                     {{if .Size}}<div><span class="k">Size</span><span class="v">{{.Size}}{{if .FileType}}, {{.FileType}}{{end}}</span></div>{{end}}
@@ -374,15 +376,14 @@
             </div>
             {{if .Parents}}
             <div class="rail-block">
-                <span class="rail-title">Found inside</span>
+                <h2 class="rail-title">Found inside</h2>
                 <div class="parents">{{range .Parents}}<a href="/{{.SHA256}}" title="{{.Path}}">{{.Filename}}</a>{{end}}</div>
             </div>
             {{end}}
         </aside>
     </div>
     {{template "footer" .}}
-    <p class="sr-only">Keyboard shortcuts on this page: j for the next sample, k for the previous one, x to go back to the feed, d to download the original bytes, r to re-queue the sample for analysis.</p>
-    <div id="a11y-live" class="sr-only" aria-live="polite"></div>
+    <p class="kbd-note">Keyboard shortcuts on this page: j for the next sample, k for the previous one, x to go back to the feed, d to download the original bytes, r to re-queue the sample for analysis. <button type="button" id="kbd-toggle" aria-pressed="true">Keyboard shortcuts</button></p>
     <script nonce="{{.Nonce}}" src="/static/js/refresh.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
@@ -395,10 +396,12 @@
         fetch(url, { headers: { Accept: "application/json" } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
             var note = document.getElementById("members-loading");
             if (!m) {
-                if (note) { note.className = "note"; note.removeAttribute("aria-busy"); note.textContent = "The archive's members could not be loaded."; }
+                if (note) { note.className = "note"; note.textContent = "The archive's members could not be loaded."; }
                 return;
             }
             if (note) note.remove();
+            var live = document.getElementById("a11y-live");
+            if (live) live.textContent = "Evidence loaded.";
             var host = document.getElementById("evidence");
             host.insertAdjacentHTML("beforeend", m.content_html);
             var badges = document.querySelector(".badges-slot, .badges, .head .note");

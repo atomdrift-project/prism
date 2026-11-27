@@ -66,6 +66,7 @@
 </head>
 <body>
     {{template "banner" .}}
+    {{template "skip"}}
     <header class="topbar">
         <div class="counter" id="index-counter">
             {{if .HasHopper}}<span class="live-dot" aria-hidden="true"></span>
@@ -74,7 +75,7 @@
         {{template "sitenav" .Chrome}}
     </header>
     <div class="toxic-stripe"></div>
-    <main class="page">
+    <main class="page" id="main">
         <div class="hero">
             <div class="lockup">
                 <h1>{{template "wordmark"}}</h1>

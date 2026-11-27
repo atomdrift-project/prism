@@ -36,15 +36,15 @@ import (
 func critColor(crit string) string {
 	switch crit {
 	case "hostile":
-		return "#e11d48"
+		return "#be123c"
 	case "suspicious":
-		return "#d97706"
+		return "#b45309"
 	case "notable":
 		return "#2563eb"
 	case "baseline":
 		return "#8b8b8b"
 	default:
-		return "#bdbdbd"
+		return "#949494" // 3:1 on the cream ground
 	}
 }
 
@@ -829,7 +829,7 @@ func maleculeSVG(graph maleculeGraph, width, height float64) string {
 	tint := func(i int, hex string) string { return maleculeFade(hex, fade[i]*maleculeHaze) }
 
 	var out strings.Builder
-	fmt.Fprintf(&out, `<svg viewBox="0 0 %.0f %.0f" class="malecule" role="img" aria-label="malecule">`,
+	fmt.Fprintf(&out, `<svg viewBox="0 0 %.0f %.0f" class="malecule" aria-hidden="true" focusable="false">`,
 		width, height)
 	// One gradient per severity per depth tier, so a sphere is lit rather than
 	// flat and a distant one is lit in its own hazed colour.

@@ -38,7 +38,10 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
             --mist: #f5f5f5;
             --rule: #e8e8e8;
             --blue: #2563eb;
-            --blue-dim: rgba(59, 130, 246, 0.1);
+            --field: #8a8a8a;
+            --hostile: #be123c;
+            --suspicious: #b45309;
+            --benign: #15803d;
             --toxic: #d0ff00;
             --toxic-muted: #9abe25;
             --toxic-dark: #4a6b0f;
@@ -51,7 +54,15 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
 {{define "chromestyle"}}
         /* Header and footer, shared by every page so the chrome never drifts
            between them: one row of brand, search and nav over the atomdrift
-           lime stripe, and atomdrift's carbon footer. */
+           lime stripe, and atomdrift's carbon footer. The focus ring, skip
+           link and reduced-motion rule match atomdrift.org and the console. */
+        :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+        .skip { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; border-radius: 6px; background: var(--ink); color: #ffffff; font-weight: 600; text-decoration: none; transform: translateY(-150%); }
+        .skip:focus { transform: none; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+        }
         .topbar { display: flex; align-items: center; gap: 12px 28px; flex-wrap: wrap; padding: 14px 48px; background: #ffffff; }
         .topbar a, .site-footer a { text-decoration: none; }
         .brand { display: flex; align-items: center; gap: 12px; min-height: 44px; color: var(--ink); }
@@ -61,13 +72,13 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .logo { font-family: var(--display); font-weight: 700; font-size: 24px; letter-spacing: -0.5px; line-height: 1; color: var(--ink); white-space: nowrap; }
         {{template "wordmarkstyle"}}
         .logo-tagline { margin-top: 3px; font-size: 13px; letter-spacing: 0.2px; color: var(--ink-soft); white-space: nowrap; }
-        .search-form { flex: 1 1 260px; max-width: 460px; display: flex; align-items: center; gap: 9px; height: 42px; margin: 0; padding: 0 14px; background: #ffffff; border: 1px solid #d4d4d8; border-radius: 8px; color: var(--ink-light); transition: border-color 0.2s, box-shadow 0.2s; }
+        .search-form { flex: 1 1 260px; max-width: 460px; display: flex; align-items: center; gap: 9px; height: 42px; margin: 0; padding: 0 14px; background: #ffffff; border: 1px solid var(--field); border-radius: 8px; color: var(--ink-light); transition: border-color 0.2s; }
         .search-form svg { flex: none; }
         .search-form input { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-family: var(--mono); font-size: 13px; }
         .search-form input::-webkit-search-cancel-button { display: none; }
         .search-form input::placeholder { color: var(--ink-light); opacity: 1; }
         .search-form:hover { border-color: var(--ink-light); }
-        .search-form:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-dim); }
+        .search-form:focus-within { border-color: var(--blue); outline: 3px solid var(--blue); outline-offset: 2px; }
         .site-nav { margin-left: auto; display: flex; align-items: center; gap: 8px 26px; flex-wrap: wrap; font-size: 14px; }
         /* Every destination reads the same; only the current page is marked. */
         .site-nav a { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink-mid); }
@@ -82,11 +93,12 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .upload-btn.is-disabled { background: #ffffff; border-color: var(--rule); color: var(--ink-light); font-weight: 400; cursor: not-allowed; }
         .top-upload { margin: 0; position: relative; }
         .top-upload input[type="file"] { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-        .top-upload input[type="file"]:focus-visible + .upload-btn { outline: 2px solid var(--blue); outline-offset: 2px; }
+        .top-upload input[type="file"]:focus-visible + .upload-btn { outline: 3px solid var(--blue); outline-offset: 2px; }
         .top-upload-status { position: absolute; z-index: 2; right: 0; top: calc(100% + 10px); max-width: min(360px, 70vw); padding: 6px 12px; border: 1px solid var(--rule); border-radius: 8px; background: #ffffff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); color: var(--ink-light); font-size: 12px; line-height: 1.35; white-space: nowrap; }
         .top-upload-status:empty { display: none; }
         .top-upload-status.is-analyzing { display: inline-flex; align-items: center; color: var(--ink); font-size: 14px; font-weight: 600; }
-        .top-upload-status a { color: var(--blue); font-weight: 500; }
+        .top-upload-status.is-error { color: var(--hostile); }
+        .top-upload-status a { color: var(--blue); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
         .analyzing-dots { display: inline-flex; align-items: flex-end; gap: 3px; margin-left: 3px; margin-right: 5px; height: 0.9em; vertical-align: baseline; }
         .analyzing-dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--toxic-muted); animation: upload-dot 0.86s infinite ease-in-out; }
         .analyzing-dots span:nth-child(2) { animation-delay: 0.12s; }
@@ -109,7 +121,6 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
             .search-form { order: 3; flex-basis: 100%; max-width: none; }
             .logo-tagline { display: none; }
         }
-        @media (prefers-reduced-motion: reduce) { .analyzing-dots span { animation: none; } }
 {{end}}
 {{- /* sitestyle is the whole look of a page built from the shared parts:
        tokens, chrome, cards and the list every index page is made of. */ -}}
@@ -117,15 +128,11 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         :root {
             {{template "tokens"}}
             --ground: var(--cream);
-            --hostile: #be123c;
-            --suspicious: #b45309;
         }
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: #ffffff; color: var(--ink); font-family: "Inter", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
         a { color: inherit; text-decoration: none; }
         a:hover { color: var(--blue); }
-        :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
-        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
         {{template "chromestyle" .}}
         .page { flex: 1; width: 100%; max-width: var(--width); margin: 0 auto; padding: 40px 24px 56px; display: flex; flex-direction: column; gap: 24px; }
         .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
@@ -146,6 +153,7 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .kv li { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); column-gap: 24px; align-items: baseline; padding: 12px 20px; border-top: 1px solid var(--rule); }
         .kv li > :first-child { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
         .kv li > :last-child { color: var(--ink-mid); }
+        .kv li > :last-child a { text-decoration: underline; text-underline-offset: 2px; }
         .kv.first li:first-child { border-top: 0; }
         /* The list: one card, a filter bar, a column head, rows, a pager. */
         .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px 24px; flex-wrap: wrap; min-height: 60px; padding: 8px 20px; border-bottom: 1px solid var(--rule); background: var(--cream); }
@@ -159,7 +167,7 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .pill[aria-current] { border-color: var(--ink); background: var(--ink); color: var(--toxic); font-weight: 600; }
         .filter-form { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; margin: 0; }
         .filter-form .field { display: inline-flex; align-items: center; gap: 8px; }
-        .filter-form select { height: 32px; max-width: 180px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: #ffffff; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
+        .filter-form select { height: 32px; max-width: 180px; padding: 0 8px; border: 1px solid var(--field); border-radius: 6px; background: #ffffff; color: var(--ink); font-family: var(--mono); font-size: 11.5px; }
         .scroll { overflow-x: auto; }
         .list { min-width: 900px; }
         .list ol { margin: 0; padding: 0; list-style: none; }
@@ -180,11 +188,11 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .siblings { flex: none; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; }
         .file-sha, .file-link.hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-light); }
         .file-link.hash { font-size: 12px; color: var(--blue); }
-        .file-sha { cursor: copy; }
+        button.file-sha { max-width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: copy; }
         .file-sha.copied { color: var(--toxic-dark); }
         .installs { flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink); white-space: nowrap; }
         .row-eco { padding-top: 2px; }
-        .eco-badge { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.3px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; color: #52525b; background: #f5f5f5; }
+        .eco-badge { font-family: var(--mono); font-size: 11px; letter-spacing: 0.3px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; color: #52525b; background: #f5f5f5; }
         .eco-red { color: #991b1b; background: #fdecec; }
         .eco-rose { color: #9f1239; background: #feecf0; }
         .eco-orange { color: #9a3412; background: #feeee5; }
@@ -198,7 +206,7 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .row-desc { min-width: 0; padding-top: 1px; color: var(--ink-mid); overflow-wrap: anywhere; }
         .row-desc .why { display: block; }
         .row-desc .why::first-letter { text-transform: uppercase; }
-        .verdict { margin-right: 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+        .verdict { margin-right: 8px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
         .verdict { color: var(--ink-light); }
         .verdict.hostile { color: var(--hostile); }
         .verdict.suspicious { color: var(--suspicious); }
@@ -209,16 +217,25 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         .pager { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; min-height: 52px; padding: 4px 20px; border-top: 1px solid var(--rule); font-size: 13px; }
         .pager a { display: inline-flex; align-items: center; min-height: 44px; color: var(--blue); font-weight: 500; }
         .pager a:hover { text-decoration: underline; text-underline-offset: 2px; }
-        .pager [aria-disabled] { color: var(--ink-light); }
+        .pager .off { color: var(--ink-light); }
         .pager .mid { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
         @media (max-width: 960px) {
             .page { padding: 24px 16px 40px; }
             h1 { font-size: 30px; }
             .kv li { grid-template-columns: 1fr; row-gap: 4px; }
         }
+        /* A phone, or a desktop at 200% zoom: rows stack instead of scrolling sideways. */
+        @media (max-width: 760px) {
+            .list { min-width: 0; }
+            .cols { display: none; }
+            .row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+            .row-when { text-align: left; }
+        }
 {{end}}
 {{- /* The header: brand, search, nav. Dot is a chrome. */ -}}
+{{define "skip"}}<a class="skip" href="#main">Skip to content</a>{{end}}
 {{define "topbar"}}
+    {{template "skip"}}
     <header class="topbar">
         <a href="/" class="brand" aria-label="{{if isPublic}}OpenHash{{else}}litmus{{end}} home">
             {{template "atom"}}
@@ -230,11 +247,11 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
         {{if not .Home}}{{template "searchform" .}}{{end}}
         {{template "sitenav" .}}
     </header>
-    <div class="toxic-stripe"></div>
+    <div class="toxic-stripe" aria-hidden="true"></div>
 {{end}}
 {{define "sitenav"}}
         <nav class="site-nav" aria-label="Site">
-            <a href="/fallout"{{if eq .Nav "fallout"}} aria-current="page"{{end}}>Fallout{{if .FalloutCount}} <span class="nav-count" title="Supply-chain attacks this week">{{.FalloutCount}}</span>{{end}}</a>
+            <a href="/fallout"{{if eq .Nav "fallout"}} aria-current="page"{{end}}>Fallout{{if .FalloutCount}} <span class="nav-count" title="Supply-chain attacks this week"><span class="sr-only">this week: </span>{{.FalloutCount}}</span>{{end}}</a>
             <a href="/malware"{{if eq .Nav "malware"}} aria-current="page"{{end}}>Malware</a>
             <a href="/api"{{if eq .Nav "api"}} aria-current="page"{{end}}>API</a>
             <a href="/contributing"{{if eq .Nav "contributing"}} aria-current="page"{{end}}>Contributing</a>
@@ -246,14 +263,14 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
                 <div id="upload-status" class="top-upload-status" aria-live="polite"></div>
             </form>
             {{else}}
-            <span class="upload-btn is-disabled" aria-disabled="true" title="Uploads are temporarily disabled">Upload</span>
+            <span class="upload-btn is-disabled" title="Uploads are temporarily disabled">Upload<span class="sr-only"> (temporarily disabled)</span></span>
             {{end}}
         </nav>
 {{end}}
 {{define "searchform"}}
             <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
                 <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
-                <input type="search" name="q" id="search-input" value="{{.Query}}" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" aria-label="Search by sha256, purl, filename or filter" />
+                <input type="search" name="q" id="search-input" value="{{.Query}}" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" aria-label="Search: sha256 or purl, filename or filter" />
             </form>
 {{end}}
 {{define "sighted"}}<svg role="img" aria-label="Sighted elsewhere" viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="#4a6b0f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><title>Sighted by an external threat feed</title><path d="M2 8.2 10.8 4l1.4 3-8.8 4.2z"></path><path d="M10.4 3 12.8 8"></path><path d="M7.4 9.6 5.2 14.2M7.4 9.6l2.4 4.6"></path></svg>{{end}}
@@ -273,7 +290,7 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
                         <span class="row-id">
                             {{if .Name}}<span class="row-name"><a class="file-link" href="/{{.SHA256}}">{{.Name}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{template "rowextra" .}}</span>{{end}}
                             <span class="row-hash">
-                                {{if .Name}}<span class="file-sha" title="Copy">{{.SHA256}}</span>{{else}}<a class="file-link hash" href="/{{.SHA256}}">{{.SHA256}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{end}}
+                                {{if .Name}}<button type="button" class="file-sha" title="Copy" aria-label="Copy {{.SHA256}}">{{.SHA256}}</button>{{else}}<a class="file-link hash" href="/{{.SHA256}}">{{.SHA256}}</a>{{if .Corroborated}}{{template "sighted"}}{{end}}{{end}}
                                 {{with .Users}}<span class="installs">{{.}} installs</span>{{end}}
                             </span>
                         </span>
@@ -285,12 +302,13 @@ U+FEFF, U+FFFD; } {{end}} {{define "wordmark"}}{{if isPublic}}open<span class="l
                             {{- /* Nothing says why: say what it is. */ -}}
                             {{- if not (or .Why .TopTraits)}}{{.Desc}}{{end -}}
                         </span>
-                        <span class="row-when" title="{{.AnalyzedAt.UTC.Format "2006-01-02 15:04 UTC"}}">{{.AnalyzedDate}}</span>
+                        <span class="row-when" title="{{.AnalyzedAt.UTC.Format "2006-01-02 15:04 UTC"}}"><span class="sr-only">Seen </span>{{.AnalyzedDate}}</span>
                     </li>
 {{end}}
 {{define "banner"}}{{end}} {{define "footer"}}
 <footer class="site-footer">
     <span>&copy; 2026 <a href="https://atomdrift.org/">The Atomdrift Project</a></span>
-    <a class="footer-build" href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}" target="_blank" rel="noopener">prism {{buildCommitShort}}</a>
+    <a class="footer-build" href="https://github.com/atomdrift-project/prism/commit/{{buildCommit}}">prism {{buildCommitShort}}</a>
 </footer>
+<div id="a11y-live" class="sr-only" aria-live="polite"></div>
 {{end}}

@@ -25,7 +25,7 @@
 <body>
     {{template "banner" .}}
     {{template "topbar" .Chrome}}
-    <main class="page">
+    <main class="page" id="main">
         <div class="page-head">
             <div>
                 <h1>{{.Heading}}</h1>
@@ -114,9 +114,9 @@
             {{end}}
             {{if or .PrevURL .NextURL}}
             <nav class="pager" aria-label="Pages">
-                {{if .PrevURL}}<a rel="prev" href="{{.PrevURL}}">‹ Newer</a>{{else}}<span aria-disabled="true">‹ Newer</span>{{end}}
+                {{if .PrevURL}}<a rel="prev" href="{{.PrevURL}}">‹ Newer</a>{{else}}<span class="off">‹ Newer</span>{{end}}
                 <span class="mid">page {{.Page}}</span>
-                {{if .NextURL}}<a rel="next" href="{{.NextURL}}">Older ›</a>{{else}}<span aria-disabled="true">Older ›</span>{{end}}
+                {{if .NextURL}}<a rel="next" href="{{.NextURL}}">Older ›</a>{{else}}<span class="off">Older ›</span>{{end}}
             </nav>
             {{end}}
         </section>

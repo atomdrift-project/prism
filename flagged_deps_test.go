@@ -166,7 +166,7 @@ func TestResultTemplateRendersFlaggedDepChips(t *testing.T) {
 	html := sb.String()
 
 	dep := `<a class="badge hostile" href="/` + depSHAHostile + `" title="pkg:npm/zaboodle@1.49">`
-	if !strings.Contains(html, dep+`<span class="crit-dot hostile" aria-hidden="true"></span>Depends on npm: zaboodle v1.49</a>`) {
+	if !strings.Contains(html, dep+`<span class="crit-dot hostile" aria-hidden="true"></span><span class="sr-only">hostile: </span>Depends on npm: zaboodle v1.49</a>`) {
 		t.Error("linkable dependency must render as a chip linking to its own record")
 	}
 	if !strings.Contains(html, `<span class="badge suspicious" title="https://x.y.z/dl/x.exe">`) {

@@ -7654,6 +7654,12 @@ func openBeamlineStream(ctx context.Context, target string, size int64, filename
 		req.ContentLength = size
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.Header.Set("X-Filename", filename)
+		// Name the uploads as the website's: beamline forwards Atomdrift-Origin
+		// to the scan worker, which sends it on to hopper, and hopper records the
+		// sample as upload:website. Without it hopper saw Go's default UA
+		// through the relays and recorded upload:other.
+		req.Header.Set("Atomdrift-Origin", "website")
+		req.Header.Set("User-Agent", hopperUserAgent)
 		start := time.Now()
 		resp, doErr := beamlineClient.Do(req)
 		if doErr == nil && resp.StatusCode == http.StatusOK {

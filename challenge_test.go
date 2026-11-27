@@ -137,3 +137,32 @@ func TestNonBrowserGetsPlain429(t *testing.T) {
 		t.Error("plain 429 should carry Retry-After")
 	}
 }
+
+// A wrong answer is said to be wrong, tied to the field, and waiting is
+// offered as an alternative to doing sums at all.
+func TestChallengePageFeedback(t *testing.T) {
+	render := func(retryAfter time.Duration, failed bool) string {
+		w := httptest.NewRecorder()
+		serveChallenge(w, reqWithIP("/x", "1.1.1.1"), retryAfter, failed)
+		return w.Body.String()
+	}
+	fresh := render(3*time.Second, false)
+	if strings.Contains(fresh, `role="alert"`) || strings.Contains(fresh, "aria-invalid") {
+		t.Error("a first visit must not report an error")
+	}
+	if !strings.Contains(fresh, "Or wait 4 seconds and reload.") {
+		t.Errorf("challenge should offer waiting instead:\n%s", fresh)
+	}
+	failed := render(0, true)
+	for _, want := range []string{
+		`id="answer-error" role="alert"`,
+		`aria-invalid="true" aria-describedby="answer-error"`,
+	} {
+		if !strings.Contains(failed, want) {
+			t.Errorf("failed challenge missing %q", want)
+		}
+	}
+	if strings.Contains(failed, "Or wait") {
+		t.Error("with no known wait, the page must not invent one")
+	}
+}

@@ -48,6 +48,14 @@ func TestAnalyzeWithBeamline(t *testing.T) {
 		if got := r.Header.Get("X-Filename"); got != "fixture.zip" {
 			t.Errorf("X-Filename = %q, want fixture.zip", got)
 		}
+		// beamline relays the origin to scan, scan to hopper: the upload is
+		// recorded as upload:website rather than upload:other (Go's default UA).
+		if got := r.Header.Get("Atomdrift-Origin"); got != "website" {
+			t.Errorf("Atomdrift-Origin = %q, want website", got)
+		}
+		if got := r.Header.Get("User-Agent"); got != hopperUserAgent {
+			t.Errorf("User-Agent = %q, want %q", got, hopperUserAgent)
+		}
 		w.Header().Set("X-Beamline-Worker", "scan-test")
 		w.Header().Set("X-Beamline-Source", "scan:analysis")
 		if _, err := w.Write(stream); err != nil {
