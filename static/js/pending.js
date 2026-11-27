@@ -125,9 +125,9 @@
   }
 
   function showArchiveWait() {
-    setBusyState("Reading complete", "Nearly ready");
+    setBusyState("Analysis done", "Nearly ready");
     setStep("archive", 2);
-    setCurrent("The reading is complete", "Waiting for the full result to arrive…", true);
+    setCurrent("Analysis done", "Waiting for the result…", true);
   }
 
   function renderFrame(frame, raw) {
@@ -146,17 +146,17 @@
     if (terminal) {
       showArchiveWait();
     } else {
-      const copy = {
-        queued: ["A server has picked it up", "Your sample is waiting its turn."],
-        ingesting: ["The handoff is underway", "The file is moving to the analysis server."],
-        analyzing: ["The instruments are humming", "A server is reading the sample."],
-        starting: ["Connecting the dots", "Opening the live analysis stream."],
-        retrying: ["A tiny retry boomerang", "The server is taking another swing at the handoff."],
-        progress: ["The sample is making progress", "A fresh signal just came in."],
-      }[phaseKey] || ["The sample is in motion", "A fresh signal just came in."];
-      setBusyState(copy[0], "In flight");
+      const label =
+        {
+          queued: "Queued",
+          ingesting: "Uploading to the analysis server",
+          analyzing: "Analyzing",
+          starting: "Connecting",
+          retrying: "Retrying",
+        }[phaseKey] || "Working";
+      setBusyState(label, "In flight");
       setStep("analysis", 1);
-      setCurrent(copy[0], message || copy[1]);
+      setCurrent(label, message || "");
     }
 
     const { level, severity } = frameSignal(frame);
@@ -171,7 +171,7 @@
           .join(" · ");
         levelLabel.className = `pending-level ${severityClass}`;
       }
-      if (traits.length) traitsLabel.textContent = `Fresh signals · ${traits.join(" · ")}`;
+      if (traits.length) traitsLabel.textContent = `Signals · ${traits.join(" · ")}`;
     }
 
     const item = document.createElement("li");
@@ -182,7 +182,7 @@
     messageNode.className = "message";
     rawNode.className = "raw";
     phaseNode.textContent = phase;
-    messageNode.textContent = message || "A fresh signal just came in.";
+    messageNode.textContent = message || "";
     rawNode.textContent = raw || JSON.stringify(frame);
     item.append(phaseNode, messageNode, rawNode);
     events.appendChild(item);
@@ -197,7 +197,7 @@
     if (elapsedTimer) clearInterval(elapsedTimer);
     setBusyState("Result ready", "Ready");
     setStep("result", 3);
-    setCurrent("All clear — opening the result", "The full report is ready.");
+    setCurrent("Opening the result…", "");
     // Long enough for a screen reader to say so before the page turns.
     setTimeout(() => window.location.replace(`/${encodeURIComponent(sha)}`), 1000);
   }
@@ -207,8 +207,8 @@
     if (eventSource) eventSource.close();
     if (pollTimer) clearInterval(pollTimer);
     if (elapsedTimer) clearInterval(elapsedTimer);
-    setBusyState("A hiccup happened", "Stopped");
-    setCurrent("The sample needs another look", message, true);
+    setBusyState("Failed", "Stopped");
+    setCurrent("Failed", message, true);
     current.style.background = "#fff1f3";
   }
 

@@ -108,7 +108,7 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 			return
 		}
 		w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
-		http.Error(w, "rate limit exceeded; please slow down", http.StatusTooManyRequests)
+		http.Error(w, "rate limit exceeded; see Retry-After", http.StatusTooManyRequests)
 		logger.Debug("rate limited", "client_ip", ip, "path", r.URL.RequestURI())
 	})
 }

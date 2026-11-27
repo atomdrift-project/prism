@@ -2337,7 +2337,9 @@ func newMux() *http.ServeMux {
 	mux.HandleFunc("GET /contributing", handleContributing)
 	mux.HandleFunc("GET /fallout.json", handleFalloutJSON)
 	mux.HandleFunc("GET /api/fallout", handleFalloutJSON)
-	mux.HandleFunc("GET /feed.atom", handleAtomFeed)
+	mux.HandleFunc("GET /malware.atom", handleMalwareAtom)
+	mux.HandleFunc("GET /fallout.atom", handleFalloutAtom)
+	mux.HandleFunc("GET /feed.atom", handleLegacyAtom)
 	mux.HandleFunc("POST /upload", handleUpload)
 	mux.HandleFunc("GET /file/{sha256}", handleLegacyFile)
 	mux.HandleFunc("GET /file/{sha256}/wait", handleFileWait)
@@ -5150,7 +5152,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 		)
 		renderError(w, r, http.StatusBadRequest, errorData{
 			Title:   "Invalid hash",
-			Message: "That doesn't look like a valid SHA256 hash.",
+			Message: "Not a SHA-256 hash.",
 		})
 		return
 	}
@@ -5189,7 +5191,7 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 			reqLogger.Warn("rendering upload-failure state", "filename", failed.Filename)
 			renderError(w, r, http.StatusServiceUnavailable, errorData{
 				Title:   "Analysis unavailable",
-				Message: "We received this file but couldn't analyze it. The problem is on our side; uploading it again won't help until it's fixed.",
+				Message: "Received but not analyzed. The fault is ours; uploading again won't help until it is fixed.",
 			})
 			return
 		}
@@ -5202,12 +5204,12 @@ func handleFile(w http.ResponseWriter, r *http.Request) { //nolint:maintidx // t
 		if strings.Contains(err.Error(), "not found") {
 			renderError(w, r, http.StatusNotFound, errorData{
 				Title:   "Result not found",
-				Message: "This analysis result doesn't exist or has expired. Upload the file again to re-analyze it.",
+				Message: "No such result, or it expired. Upload the file again.",
 			})
 		} else {
 			renderError(w, r, http.StatusInternalServerError, errorData{
-				Title:   "Something went wrong",
-				Message: "We couldn't retrieve this result. Please try again.",
+				Title:   "Result unavailable",
+				Message: "Could not load this result. Try again.",
 			})
 		}
 		return
@@ -6273,7 +6275,7 @@ func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart
 			}
 			status, msg := http.StatusBadGateway, "download unavailable"
 			if errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
-				status, msg = http.StatusGatewayTimeout, "download timed out; please try again"
+				status, msg = http.StatusGatewayTimeout, "download timed out; try again"
 			}
 			reqLogger.Warn("hopper download request failed", "error", err, "hopper_api_addr", hopperAPIAddr)
 			http.Error(w, msg, status)
@@ -6296,7 +6298,7 @@ func fetchHopperFile(w http.ResponseWriter, r *http.Request, sha string, dlStart
 				continue
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(wait)))
-			http.Error(w, "download temporarily unavailable; please try again shortly", http.StatusServiceUnavailable)
+			http.Error(w, "download temporarily unavailable; try again shortly", http.StatusServiceUnavailable)
 			return nil, nil
 		}
 		// A response we'll act on (200 or a terminal status). Stop the response
@@ -6469,7 +6471,7 @@ func handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if !refreshLimiter.Allow() {
 		reqLogger.Warn("refresh rate-limited")
 		w.Header().Set("Retry-After", "1")
-		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many refresh requests; please wait a moment")
+		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many refresh requests; wait a moment")
 		return
 	}
 	current, err := requestRefresh(r.Context(), sha)
@@ -7088,16 +7090,16 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if !uploadEnabled {
 		reqLogger.Info("upload rejected: feature temporarily disabled")
 		renderError(w, r, http.StatusServiceUnavailable, errorData{
-			Title:   "Upload temporarily disabled",
-			Message: "Uploads are temporarily disabled while we rework this feature.",
+			Title:   "Uploads disabled",
+			Message: "Paused while we rework them.",
 		})
 		return
 	}
 	if !uploadBackendsAvailable() {
 		reqLogger.Info("upload rejected: analysis backends unavailable")
 		renderError(w, r, http.StatusServiceUnavailable, errorData{
-			Title:   "Upload temporarily unavailable",
-			Message: "Uploads will return automatically when the analysis services reconnect.",
+			Title:   "Uploads unavailable",
+			Message: "They return when the analysis services reconnect.",
 		})
 		return
 	}
@@ -7109,7 +7111,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Warn("upload rate limited (global)")
 		renderError(w, r, http.StatusTooManyRequests, errorData{
 			Title:   "Rate limit reached",
-			Message: "The upload queue is busy. Please wait a moment and try again.",
+			Message: "The upload queue is busy. Try again in a moment.",
 		})
 		return
 	}
@@ -7117,7 +7119,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Warn("upload rate limited")
 		renderError(w, r, http.StatusTooManyRequests, errorData{
 			Title:   "Rate limit reached",
-			Message: "Too many uploads. Please wait 30 seconds before trying again.",
+			Message: "Too many uploads. Wait 30 seconds.",
 		})
 		return
 	}
@@ -7132,7 +7134,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		reqLogger.Warn("multipart reader init failed", "error", err)
 		renderError(w, r, http.StatusBadRequest, errorData{
 			Title:   "Upload failed",
-			Message: "Something went wrong reading your file. Please try again.",
+			Message: "Could not read the file. Try again.",
 		})
 		return
 	}
@@ -7158,7 +7160,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			renderError(w, r, http.StatusBadRequest, errorData{
 				Title:   "Upload failed",
-				Message: "Malformed upload. Please try again.",
+				Message: "Malformed upload. Try again.",
 			})
 			return
 		}
@@ -7167,7 +7169,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 				renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 					Title: "File too large",
-					MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+					MessageHTML: `Limit: 100 MiB. For larger files, use ` +
 						`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
 				})
 				return
@@ -7175,7 +7177,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 			reqLogger.Warn("multipart next-part failed", "error", err)
 			renderError(w, r, http.StatusBadRequest, errorData{
 				Title:   "Upload failed",
-				Message: "Something went wrong reading your file. Please try again.",
+				Message: "Could not read the file. Try again.",
 			})
 			return
 		}
@@ -7188,7 +7190,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Warn("invalid or missing CSRF token", "read_err", rerr)
 				renderError(w, r, http.StatusForbidden, errorData{
 					Title:   "Session expired",
-					Message: "Your form session has expired. Please reload the page and try again.",
+					Message: "Reload the page and try again.",
 				})
 				return
 			}
@@ -7204,7 +7206,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 				reqLogger.Warn("file part arrived before csrf_token")
 				renderError(w, r, http.StatusForbidden, errorData{
 					Title:   "Session expired",
-					Message: "Your form session has expired. Please reload the page and try again.",
+					Message: "Reload the page and try again.",
 				})
 				return
 			}
@@ -7220,7 +7222,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	reqLogger.Warn("upload missing file part")
 	renderError(w, r, http.StatusBadRequest, errorData{
 		Title:   "No file received",
-		Message: "We didn't receive a file. Please select a file and try again.",
+		Message: "Choose a file and try again.",
 	})
 }
 
@@ -7241,7 +7243,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		reqLogger.Error("upload spool creation failed", "error", err)
 		renderError(w, r, http.StatusServiceUnavailable, errorData{
 			Title:   "Upload unavailable",
-			Message: "Prism could not prepare this upload. Please try again.",
+			Message: "Could not prepare the upload. Try again.",
 		})
 		return
 	}
@@ -7261,7 +7263,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 				Title: "File too large",
-				MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+				MessageHTML: `Limit: 100 MiB. For larger files, use ` +
 					`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
 			})
 			return
@@ -7270,7 +7272,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 			reqLogger.Warn("upload rejected: file too large", "max_bytes", maxUploadSize)
 			renderError(w, r, http.StatusRequestEntityTooLarge, errorData{
 				Title: "File too large",
-				MessageHTML: `The web interface accepts files up to 100 MiB. For larger files, use ` +
+				MessageHTML: `Limit: 100 MiB. For larger files, use ` +
 					`<a href="https://atomdrift.org/scan/">Atomdrift Scan</a>.`,
 			})
 			return
@@ -7278,7 +7280,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		reqLogger.Warn("upload read failed", "error", rerr)
 		renderError(w, r, http.StatusBadRequest, errorData{
 			Title:   "Upload failed",
-			Message: "Something went wrong reading your file. Please try again.",
+			Message: "Could not read the file. Try again.",
 		})
 		return
 	}
@@ -7286,7 +7288,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		reqLogger.Error("upload spool close failed", "error", err)
 		renderError(w, r, http.StatusServiceUnavailable, errorData{
 			Title:   "Upload unavailable",
-			Message: "Prism could not prepare this upload. Please try again.",
+			Message: "Could not prepare the upload. Try again.",
 		})
 		return
 	}
@@ -7310,7 +7312,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Retry-After", "30")
 		renderError(w, r, http.StatusServiceUnavailable, errorData{
 			Title:   "Analysis queue full",
-			Message: "All browser analysis slots are busy. Please try again in about 30 seconds.",
+			Message: "All browser analysis slots are busy. Try again in about 30 seconds.",
 		})
 		return
 	}
@@ -7347,7 +7349,7 @@ func serveUploadedFile(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			renderError(w, r, http.StatusBadGateway, errorData{
 				Title:   "Upload failed",
-				Message: "Beamline could not accept this upload. Please try again.",
+				Message: "The analysis server could not accept the upload. Try again.",
 			})
 			return
 		}

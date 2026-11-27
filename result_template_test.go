@@ -119,7 +119,7 @@ func TestResultDownloadTracksHopperAvailability(t *testing.T) {
 	if err := tmpl.Execute(&buf, unavailable); err != nil {
 		t.Fatalf("execute unavailable: %v", err)
 	}
-	if !strings.Contains(buf.String(), "download unavailable") {
+	if !strings.Contains(buf.String(), "Download unavailable") {
 		t.Fatal("unavailable hopper-api did not render the disabled download control")
 	}
 	if strings.Contains(buf.String(), `.dl?t=`) {

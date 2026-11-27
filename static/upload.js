@@ -319,10 +319,10 @@ if (input && form) {
 
   form.addEventListener("submit", () => {
     setTimeout(() => {
-      setStatusText("Waiting for analysis server to start up...");
+      setStatusText("Waiting for the analysis server…");
     }, 3000);
     setTimeout(() => {
-      setStatusText("Analysis server is starting up; this may take up to a minute.");
+      setStatusText("Analysis server starting; up to a minute.");
     }, 15000);
   });
 }

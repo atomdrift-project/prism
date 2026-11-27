@@ -19,10 +19,11 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:title" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
-    <meta property="og:description" content="Look up any file by hash, or package by PURL." />
-    <meta name="description" content="Look up any file by hash, or package by PURL." />
+    <meta property="og:description" content="Look up a file by hash or a package by PURL." />
+    <meta name="description" content="Look up a file by hash or a package by PURL." />
     <meta name="twitter:card" content="summary" />
-    <link rel="alternate" type="application/atom+xml" title="Malware" href="/feed.atom" />
+    <link rel="alternate" type="application/atom+xml" title="OpenHash: Fallout" href="/fallout.atom" />
+    <link rel="alternate" type="application/atom+xml" title="OpenHash: Malware" href="/malware.atom" />
     <style nonce="{{.StyleNonce}}">
         {{template "fonts" .}}
         {{template "sitestyle" .}}
@@ -82,7 +83,7 @@
                 {{if isPublic}}<p>an <a href="https://atomdrift.org/">atomdrift</a> project</p>{{end}}
             </div>
             <div class="lookup">
-                <label for="search-input">Look up any file by hash, or package by PURL</label>
+                <label for="search-input">Look up a file by hash or a package by PURL</label>
                 <form method="GET" action="/stream" class="search-form" id="search-form" role="search">
                     <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
                     <input type="search" name="q" id="search-input" placeholder="sha256 or purl" autocomplete="off" spellcheck="false" autofocus />

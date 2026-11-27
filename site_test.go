@@ -264,6 +264,8 @@ func TestMalwarePage(t *testing.T) {
 		"<h1>Malware</h1>",
 		`<a href="/malware" aria-current="page">Malware</a>`,
 		`id="search-input" value=""`, // one fixed question: the box stays empty
+		`title="OpenHash: Malware" href="/malware.atom"`,
+		`href="/malware.atom">Atom feed</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("malware page missing %q", want)
@@ -291,7 +293,7 @@ func TestReviewPage(t *testing.T) {
 			t.Errorf("review page missing %q", want)
 		}
 	}
-	for _, unwanted := range []string{`id="criticality"`, `href="/feed.atom">Atom feed`, `aria-current="page"`} {
+	for _, unwanted := range []string{`id="criticality"`, `href="/malware.atom">Atom feed`, `aria-current="page"`} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("review page has %q", unwanted)
 		}
@@ -343,7 +345,7 @@ func TestStaticPages(t *testing.T) {
 
 	home := get("/")
 	for _, want := range []string{
-		"Look up any file by hash, or package by PURL",
+		"Look up a file by hash or a package by PURL",
 		`<form method="GET" action="/stream" class="search-form" id="search-form"`,
 	} {
 		if !strings.Contains(home, want) {

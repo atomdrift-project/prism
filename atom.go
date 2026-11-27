@@ -1,9 +1,9 @@
 package main
 
-// The Atom feed: the Malware list as a subscription surface (/feed.atom).
-// Served from the same cached snapshot the Malware page and the home page use,
-// so a feed reader polling every few minutes costs one warm cache read and
-// zero extra hopper work.
+// The Atom feeds: the Malware list (/malware.atom) and the week's Fallout
+// (/fallout.atom) as subscription surfaces. Each is served from the same cached
+// snapshot its page renders from, so a feed reader polling every few minutes
+// costs one warm cache read and zero extra hopper work.
 
 import (
 	"encoding/xml"
@@ -15,6 +15,18 @@ import (
 // atomFeedLimit caps entries per fetch; feed readers keep their own history,
 // so the subscription only needs the recent tail, not the whole snapshot.
 const atomFeedLimit = 50
+
+// atomFeed names one feed: its title, its own path, and the page it mirrors.
+type atomFeed struct {
+	Title string
+	Path  string
+	Page  string
+}
+
+var (
+	malwareFeed = atomFeed{Title: "OpenHash: Malware", Path: "/malware.atom", Page: "/malware"}
+	falloutFeed = atomFeed{Title: "OpenHash: Fallout", Path: "/fallout.atom", Page: "/fallout"}
+)
 
 type atomLink struct {
 	Href string `xml:"href,attr"`
@@ -45,10 +57,10 @@ type atomDoc struct {
 	Entries []atomEntry `xml:"entry"`
 }
 
-// buildAtomFeed renders the newest-first Malware rows as Atom 1.0. base is
-// the request origin ("https://lab.atomdrift.org"); entry ids use the
-// urn:sha256 form so they stay stable across hosts and reorderings.
-func buildAtomFeed(rows []feedRow, base string, now time.Time) ([]byte, error) {
+// buildAtomFeed renders newest-first rows as Atom 1.0 for feed. base is the
+// request origin ("https://sha256.is"); entry ids use the urn:sha256 form so
+// they stay stable across hosts, reorderings, and the two feeds.
+func buildAtomFeed(feed atomFeed, rows []feedRow, base string, now time.Time) ([]byte, error) {
 	if len(rows) > atomFeedLimit {
 		rows = rows[:atomFeedLimit]
 	}
@@ -58,13 +70,13 @@ func buildAtomFeed(rows []feedRow, base string, now time.Time) ([]byte, error) {
 	}
 	doc := atomDoc{
 		Xmlns:   "http://www.w3.org/2005/Atom", //nolint:revive // the Atom namespace is an identifier, not a URL; https is a different namespace
-		Title:   "Fallout — hostile catches · atomdrift lab",
-		ID:      base + "/",
+		Title:   feed.Title,
+		ID:      base + feed.Page,
 		Updated: updated.UTC().Format(time.RFC3339),
-		Author:  atomAuthor{Name: "atomdrift lab"},
+		Author:  atomAuthor{Name: "OpenHash"},
 		Links: []atomLink{
-			{Href: base + "/feed.atom", Rel: "self", Type: "application/atom+xml"},
-			{Href: base + "/malware", Rel: "alternate", Type: "text/html"},
+			{Href: base + feed.Path, Rel: "self", Type: "application/atom+xml"},
+			{Href: base + feed.Page, Rel: "alternate", Type: "text/html"},
 		},
 	}
 	for i := range rows {
@@ -113,7 +125,8 @@ func requestBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
+// handleMalwareAtom serves the Malware list: every known-bad sample, newest first.
+func handleMalwareAtom(w http.ResponseWriter, r *http.Request) {
 	if hopperStore.Load() == nil {
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
@@ -121,13 +134,44 @@ func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
 	args := hostileListArgs(malwareList, false)
 	snapshot, _, err := loadFeedSnapshot(r.Context(), &args, logger, false)
 	if err != nil {
-		logger.Warn("atom feed: malware snapshot unavailable", "error", err)
+		logger.Warn("atom feed: snapshot unavailable", "feed", malwareFeed.Path, "error", err)
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	out, err := buildAtomFeed(feedRowsFromSnapshot(snapshot), requestBaseURL(r), time.Now())
+	writeAtomFeed(w, r, malwareFeed, feedRowsFromSnapshot(snapshot))
+}
+
+// handleFalloutAtom serves the week in progress, through the same gate as the
+// Fallout page and its JSON, one entry per catch. The week is cut in UTC: a
+// feed has no reader's zone, and entry ids carry over a week's turn anyway.
+func handleFalloutAtom(w http.ResponseWriter, r *http.Request) {
+	if hopperStore.Load() == nil {
+		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	now := time.Now().UTC()
+	week := falloutWeekOf(now, now)
+	args := week.snapshotArgs()
+	snapshot, _, err := loadFeedSnapshot(r.Context(), &args, logger, false)
 	if err != nil {
-		logger.Error("atom feed: marshal failed", "error", err)
+		logger.Warn("atom feed: snapshot unavailable", "feed", falloutFeed.Path, "error", err)
+		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	rows := falloutRowsInWindow(feedRowsFromSnapshot(snapshot), week, falloutAny)
+	writeAtomFeed(w, r, falloutFeed, rows)
+}
+
+// handleLegacyAtom keeps subscriptions to the old single feed alive: it was
+// the Malware list, so that is where it now points.
+func handleLegacyAtom(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, malwareFeed.Path, http.StatusMovedPermanently)
+}
+
+func writeAtomFeed(w http.ResponseWriter, r *http.Request, feed atomFeed, rows []feedRow) {
+	out, err := buildAtomFeed(feed, rows, requestBaseURL(r), time.Now())
+	if err != nil {
+		logger.Error("atom feed: marshal failed", "feed", feed.Path, "error", err)
 		http.Error(w, "feed unavailable", http.StatusInternalServerError)
 		return
 	}
@@ -135,6 +179,6 @@ func handleAtomFeed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	body := append([]byte(xml.Header), out...)
 	if _, err := w.Write(body); err != nil {
-		logger.Debug("atom feed: write failed", "error", err)
+		logger.Debug("atom feed: write failed", "feed", feed.Path, "error", err)
 	}
 }

@@ -608,12 +608,15 @@ func TestFalloutTemplateRenders(t *testing.T) {
 		// The week nav: a link back through the archive, and no forward link
 		// on the week in progress.
 		`href="/fallout?week=2026-07-27" rel="prev"`,
-		`<span class="off" title="This is the week in progress">`,
+		`<span class="off" title="Week in progress">`,
 		// The time-zone probe: nonced so CSP admits it, and naming the cookie
 		// viewerLocation reads back.
 		`<script nonce="test-script-nonce">`,
 		"resolvedOptions().timeZone",
 		"'" + tzCookieName + "=' + zone",
+		// The page advertises its own feed, not Malware's.
+		`title="OpenHash: Fallout" href="/fallout.atom"`,
+		`href="/fallout.atom">Atom feed</a>`,
 		// Every page can be skipped past its header to the content.
 		`<a class="skip" href="#main">`,
 		`<main class="page" id="main">`,

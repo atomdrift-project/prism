@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/xml"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,7 @@ func TestBuildAtomFeed(t *testing.T) {
 			AnalyzedAt:     now.Add(-4 * time.Hour),
 		},
 	}
-	out, err := buildAtomFeed(rows, "https://lab.atomdrift.org", now)
+	out, err := buildAtomFeed(malwareFeed, rows, "https://sha256.is", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,10 @@ func TestBuildAtomFeed(t *testing.T) {
 	for _, want := range []string{
 		"Volume Max 5.2.1 (hostile · chrome)",
 		"urn:sha256:" + testSHAHero,
-		"https://lab.atomdrift.org/" + testSHAHero,
+		"https://sha256.is/" + testSHAHero,
+		"<title>OpenHash: Malware</title>",
+		`href="https://sha256.is/malware.atom" rel="self"`,
+		`href="https://sha256.is/malware" rel="alternate"`,
 		"posts every visited URL to a hardcoded endpoint",
 		"Marketplace reach: 412,033 installs.",
 		"Traits: persist.systemd-unit.",
@@ -75,7 +80,7 @@ func TestBuildAtomFeed(t *testing.T) {
 	for i := range many {
 		many[i] = rows[0]
 	}
-	out, err = buildAtomFeed(many, "https://lab.atomdrift.org", now)
+	out, err = buildAtomFeed(malwareFeed, many, "https://sha256.is", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,5 +157,35 @@ func TestResultTemplateIdentity(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("result page missing %q", want)
 		}
+	}
+}
+
+// The Fallout feed names itself and links back to its own page, not Malware's.
+func TestFalloutAtomFeedIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	rows := []feedRow{{SHA256: testSHAHero, Filename: "x.tgz", Classification: "hostile", AnalyzedAt: now}}
+	out, err := buildAtomFeed(falloutFeed, rows, "https://sha256.is", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"<title>OpenHash: Fallout</title>",
+		"<id>https://sha256.is/fallout</id>",
+		`href="https://sha256.is/fallout.atom" rel="self"`,
+		`href="https://sha256.is/fallout" rel="alternate"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fallout feed missing %q", want)
+		}
+	}
+}
+
+// Subscribers to the old single feed land on the list it always carried.
+func TestLegacyAtomRedirect(t *testing.T) {
+	rr := httptest.NewRecorder()
+	newMux().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/feed.atom", http.NoBody))
+	if rr.Code != http.StatusMovedPermanently || rr.Header().Get("Location") != "/malware.atom" {
+		t.Errorf("GET /feed.atom = %d %q, want 301 /malware.atom", rr.Code, rr.Header().Get("Location"))
 	}
 }

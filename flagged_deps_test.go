@@ -279,7 +279,7 @@ func TestResultTemplateInlinedMembersSuppressNoEvidenceNote(t *testing.T) {
 	if err := tmpl.Execute(&sb, data); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if strings.Contains(sb.String(), "No evidence locations were recorded") {
+	if strings.Contains(sb.String(), "No evidence locations recorded") {
 		t.Error("inlined member evidence rendered beside the no-evidence note")
 	}
 }

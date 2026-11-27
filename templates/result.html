@@ -32,7 +32,7 @@
 {{- /* The evidence body, addressable by name for the members endpoint. */ -}}
 {{define "contentBody"}}
 {{range .FileViews}}{{if .Windows}}<div id="{{.Anchor}}">{{template "region" .}}</div>{{end}}{{end}}
-{{if .FilesOmitted}}<p class="note">Showing the top {{.FilesShownLimit}} files — {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}region{{else}}regions{{end}}) not shown.</p>{{end}}
+{{if .FilesOmitted}}<p class="note">Top {{.FilesShownLimit}} files shown; {{.FilesOmitted}} more {{if eq .FilesOmitted 1}}file{{else}}files{{end}} ({{.ResultsOmitted}} {{if eq .ResultsOmitted 1}}region{{else}}regions{{end}}) omitted.</p>{{end}}
 {{end}}
 {{- /* The header's findings, addressable by name for the members endpoint:
        the flagged dependencies first, then the top traits. */ -}}
@@ -206,8 +206,6 @@
         .pending-title-row h1 { max-width: 16ch; }
         .pending-state { flex: none; padding: 7px 10px; border: 1px solid var(--toxic-border); border-radius: 999px; color: var(--toxic-dark); background: var(--toxic-dim); font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
         .pending-state.ready { color: #167534; border-color: #b9e8c2; background: #effbf1; }
-        .pending-copy { margin: 0; max-width: 62ch; color: var(--ink-mid); font-size: 16px; }
-        .pending-copy em { color: var(--toxic-dark); font-style: normal; }
         .pending-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; padding: 15px 16px; border: 1px solid var(--rule); border-radius: 8px; background: var(--mist); }
         .pending-meta .id-line { gap: 14px; }
         .pending-meta .k { width: 78px; }
@@ -291,7 +289,6 @@
                     <h1>{{.Headline}}</h1>
                     <span class="pending-state" id="pending-state">In flight</span>
                 </div>
-                <p class="pending-copy">The bytes are here. Watch them take a little trip, then wait for the final result to land.</p>
                 <div class="pending-meta">
                     <div class="id-line"><span class="k">SHA-256</span><span class="v">{{.SHA256}}</span></div>
                     <div class="id-line"><span class="k">Source</span><span class="v">browser upload</span></div>
@@ -304,20 +301,20 @@
                 </ol>
             </div>
             <section class="pending-stream">
-                <div class="pending-stream-head"><span>Live handoff</span><span class="pending-elapsed" id="pending-elapsed" aria-hidden="true">0s</span></div>
-                <div class="pending-current" id="pending-current" role="status"><strong id="pending-message">Connecting to the analysis server…</strong><p id="pending-detail">Opening the live analysis stream.</p></div>
+                <div class="pending-stream-head"><span>Progress</span><span class="pending-elapsed" id="pending-elapsed" aria-hidden="true">0s</span></div>
+                <div class="pending-current" id="pending-current" role="status"><strong id="pending-message">Connecting…</strong><p id="pending-detail"></p></div>
                 <div class="pending-signal" id="pending-signal"><span class="pending-level" id="pending-level"></span><span class="pending-traits" id="pending-traits"></span></div>
                 <div class="pending-route" id="pending-route" hidden>
                     <div class="pending-route-row"><span class="label">Analysis server</span><span class="value" id="pending-server">not reported yet</span></div>
                     <div class="pending-route-row"><span class="label">Request host</span><span class="value" id="pending-request-host">not reported yet</span></div>
                 </div>
                 <details class="pending-events-wrap">
-                    <summary>Show stream messages</summary>
+                    <summary>Stream messages</summary>
                     <ol class="pending-events" id="pending-events"><li><span class="phase">starting</span><span class="message">Opening the live analysis stream.</span></li></ol>
                 </details>
             </section>
         </main>
-        <aside class="rail"><div class="rail-block pending-aside"><h2 class="rail-title">What happens next</h2><p class="note">A server is reading the sample now. When the full result arrives, this page will flip over automatically.</p><div class="prov"><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
+        <aside class="rail"><div class="rail-block pending-aside"><h2 class="rail-title">Next</h2><p class="note">This page opens the result when it arrives.</p><div class="prov"><div><span class="k">Filename</span><span class="v" title="{{.Filename}}">{{.Filename}}</span></div><div><span class="k">SHA-256</span><span class="v mono" title="{{.SHA256}}">{{.SHA256Short}}</span></div></div></div></aside>
     </div>
     {{template "footer" .}}
     <script nonce="{{.Nonce}}" src="/static/js/pending.js?v={{.BuildCommit}}"></script>
@@ -333,8 +330,8 @@
                     {{if .Ecosystem}}<a class="eco-badge" href="{{.EcosystemURL}}">{{.Ecosystem}}</a>{{end}}
                     {{with .Users}}<span class="faint">{{.}} installs</span>{{end}}
                     <span class="actions">
-                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Filename copied to clipboard. Keyboard shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" title="Downloads are temporarily unavailable while hopper-api reconnects">download unavailable</span>{{end}}{{end}}
-                        {{if .RefreshAllowed}}<button type="button" class="refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh this sample's analysis. Keyboard shortcut: r" aria-keyshortcuts="r">Refresh</button>{{end}}
+                        {{if and (gt .SizeBytes 0) (le .SizeBytes 419430400)}}{{if .DownloadEnabled}}<a class="download-btn" href="/{{.SHA256}}.dl?t={{.DownloadToken}}" data-basename="{{.Filename}}" aria-label="Download original bytes ({{.Size}}; 400 MB max, 25 per hour per IP). Copies the filename. Shortcut: d" aria-keyshortcuts="d">Download</a>{{else}}<span class="download-btn is-disabled" title="Unavailable until hopper-api reconnects">Download unavailable</span>{{end}}{{end}}
+                        {{if .RefreshAllowed}}<button type="button" class="refresh-btn" data-sha="{{.SHA256}}" data-csrf="{{.CSRFToken}}" data-analyzed-at="{{.AnalyzedAtMillis}}" aria-label="Refresh analysis. Shortcut: r" aria-keyshortcuts="r">Refresh</button>{{end}}
                     </span>
                 </div>
                 <h1>{{.Headline}}</h1>
@@ -350,10 +347,10 @@
             </div>
             <h2>Evidence</h2>
             <div class="evidence" id="evidence">
-                {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" role="status"><span class="sr-only">Loading the archive's evidence.</span><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
+                {{if .DeferredMembers}}<div class="evidence-pending" id="members-loading" role="status"><span class="sr-only">Loading archive evidence.</span><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div><div class="skel-region"><span class="skel-head"></span><span class="skel-code"></span></div></div>{{end}}
                 {{template "contentBody" .}}
                 {{with .MembersHTML}}{{.}}{{end}}
-                {{if and (not .FileViews) (not .DeferredMembers) (not .MembersHTML)}}<p class="note">No evidence locations were recorded for this file. <a href="/{{.SHA256}}.json">Raw result</a></p>{{end}}
+                {{if and (not .FileViews) (not .DeferredMembers) (not .MembersHTML)}}<p class="note">No evidence locations recorded. <a href="/{{.SHA256}}.json">Raw result</a></p>{{end}}
             </div>
         </main>
         <aside class="rail">
@@ -383,7 +380,7 @@
         </aside>
     </div>
     {{template "footer" .}}
-    <p class="kbd-note">Keyboard shortcuts on this page: j for the next sample, k for the previous one, x to go back to the feed, d to download the original bytes, r to re-queue the sample for analysis. <button type="button" id="kbd-toggle" aria-pressed="true">Keyboard shortcuts</button></p>
+    <p class="kbd-note">Shortcuts: j next sample, k previous sample, x back to the feed, d download, r refresh. <button type="button" id="kbd-toggle" aria-pressed="true">Keyboard shortcuts</button></p>
     <script nonce="{{.Nonce}}" src="/static/js/refresh.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/js/shortcuts.js?v={{.BuildCommit}}"></script>
     <script nonce="{{.Nonce}}" src="/static/upload.js?v={{.BuildCommit}}"></script>
@@ -396,7 +393,7 @@
         fetch(url, { headers: { Accept: "application/json" } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (m) {
             var note = document.getElementById("members-loading");
             if (!m) {
-                if (note) { note.className = "note"; note.textContent = "The archive's members could not be loaded."; }
+                if (note) { note.className = "note"; note.textContent = "Archive members failed to load."; }
                 return;
             }
             if (note) note.remove();

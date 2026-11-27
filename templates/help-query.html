@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     {{template "favicon"}}
-    <title>Search syntax - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
+    <title>Syntax - {{if isPublic}}OpenHash{{else}}litmus{{end}}</title>
     <style nonce="{{.StyleNonce}}">
     {{template "fonts" .}}
         :root {
@@ -153,9 +153,9 @@
     {{template "topbar" .Chrome}}
     <main class="container" id="main">
 
-        <h1 class="page-title">Search syntax</h1>
+        <h1 class="page-title">Syntax</h1>
         <p class="page-desc">
-            The search box on the Fallout feed accepts a small query language. Tokens are separated by spaces; keys are case-insensitive. Press <strong>Enter</strong> to submit.
+            Space-separated tokens. Keys are case-insensitive.
         </p>
 
         <div class="section">
@@ -166,61 +166,61 @@
                     <tr>
                         <td class="token"><code class="tok">sha256:&lt;hex&gt;</code></td>
                         <td class="desc">
-                            Jump straight to the file page for that SHA-256.
-                            <span class="alias">Alias: <code>sha:</code>. A bare 64-character hex string works too — paste a hash, hit Enter.</span>
+                            Opens that file.
+                            <span class="alias">Alias: <code>sha:</code>. A bare 64-character hex string also works.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">crit:hostile</code> · <code class="tok">crit:suspicious</code> · <code class="tok">crit:benign</code> · <code class="tok">crit:any</code></td>
                         <td class="desc">
-                            Filter by litmus criticality band. The feed defaults to <code>crit:&gt;=1</code> (suspicious + hostile); use <code>crit:any</code> for the unfiltered view.
-                            <span class="alias">Also accepts numeric comparators over the class number (0 = benign, 1 = suspicious, 2 = hostile): <code>crit:&gt;=1</code>, <code>crit:=2</code>, <code>crit:&lt;1</code>.</span>
+                            Filter by criticality. Default: <code>crit:any</code>.
+                            <span class="alias">Numeric comparisons over the class (0 benign, 1 suspicious, 2 hostile): <code>crit:&gt;=1</code>, <code>crit:=2</code>, <code>crit:&lt;1</code>.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">ecosystem:&lt;name&gt;</code></td>
                         <td class="desc">
-                            Restrict to one package ecosystem (e.g. <code>ecosystem:npm</code>, <code>ecosystem:pypi</code>).
+                            One package ecosystem, e.g. <code>ecosystem:npm</code>.
                             <span class="alias">Alias: <code>eco:</code>. Maps to the <code>/{ecosystem}/</code> URL.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">domain:&lt;host&gt;</code></td>
-                        <td class="desc">Restrict to samples originating from one source domain (e.g. <code>domain:pypi.org</code>).</td>
+                        <td class="desc">One source domain, e.g. <code>domain:pypi.org</code>.</td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">m:&lt;formula&gt;</code></td>
                         <td class="desc">
-                            Find samples sharing the same cleave malecule, e.g. <code>m:C6H12O6</code>.
-                            <span class="alias">Aliases: <code>malecule:</code>, <code>molecule:</code>, <code>formula:</code>. A bare formula-looking token (mixed capital letters and digits, no spaces) is treated as <code>m:</code>.</span>
+                            Samples sharing a malecule, e.g. <code>m:C6H12O6</code>.
+                            <span class="alias">Aliases: <code>malecule:</code>, <code>molecule:</code>, <code>formula:</code>. A bare formula (capitals and digits, no spaces) counts as <code>m:</code>.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">purl:&lt;coord&gt;</code></td>
                         <td class="desc">
-                            Filter to one package identity by Package URL, e.g. <code>purl:pkg:npm/lodash</code> (every version) or <code>purl:pkg:npm/lodash@4.17.21</code> (one release).
-                            <span class="alias">The <code>pkg:</code> scheme is optional — <code>purl:npm/lodash</code> works and is normalized. A bare <code>pkg:…</code> paste is detected without the prefix.</span>
-                            <span class="alias">Records are also linkable directly by URL path: <code>/npm/lodash</code> is the package's version index, and <code>/npm/lodash@4.17.21</code> lands on the sample page when the coordinate pins exactly one record.</span>
+                            One package by Package URL: <code>purl:pkg:npm/lodash</code> (every version) or <code>purl:pkg:npm/lodash@4.17.21</code> (one release).
+                            <span class="alias"><code>pkg:</code> is optional: <code>purl:npm/lodash</code> works. A bare <code>pkg:…</code> needs no <code>purl:</code>.</span>
+                            <span class="alias">As a path: <code>/npm/lodash</code> lists versions; <code>/npm/lodash@4.17.21</code> opens the sample when exactly one record matches.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">name:&lt;name&gt;</code></td>
                         <td class="desc">
-                            Every sample any identity claim says is this software — a registry's claim, or the file's own version resource / bundle manifest — e.g. <code>name:7-Zip</code>. Searches inside archives too: the exe inside each installer that ships it.
-                            <span class="alias">Consumes the rest of the query, so names with spaces need no quoting. Combine by signer with <code>signer:</code>.</span>
+                            Samples claimed to be this software by a registry, version resource or bundle manifest, e.g. <code>name:7-Zip</code>. Includes archive members.
+                            <span class="alias">Takes the rest of the query; spaces need no quoting.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">signer:&lt;org&gt;</code></td>
                         <td class="desc">
-                            Everything signed by one organization (code-signing certificate subject), e.g. <code>signer:Igor Pavlov</code> — the "who vouches for it" view.
-                            <span class="alias">Consumes the rest of the query; spaces are fine.</span>
+                            Samples signed by one organization (certificate subject), e.g. <code>signer:Igor Pavlov</code>.
+                            <span class="alias">Takes the rest of the query; spaces need no quoting.</span>
                         </td>
                     </tr>
                     <tr>
                         <td class="token"><code class="tok">&lt;free text&gt;</code></td>
                         <td class="desc">
-                            Anything else is matched against filename (substring, case-insensitive) and exact SHA-256.
+                            Matches filename (substring, case-insensitive) or exact SHA-256.
                             <span class="alias">Aliases: <code>q:</code>, <code>filename:</code>, <code>file:</code>.</span>
                         </td>
                     </tr>
@@ -240,7 +240,7 @@
                     <span class="what">PyPI samples sharing one malecule</span>
                 </div>
                 <div class="example">
-                    <code>crit:&gt;2 domain:github.com</code>
+                    <code>crit:=2 domain:github.com</code>
                     <span class="what">Hostile samples from github.com</span>
                 </div>
                 <div class="example">
@@ -260,7 +260,7 @@
 
         <div class="section">
             <p class="note">
-                Picking from the Crit / Ecosystem / Domain dropdowns updates only the matching token in the search box — anything else you typed is preserved.
+                The Crit, Ecosystem and Domain menus change only their own token; the rest of the query stays.
             </p>
         </div>
 

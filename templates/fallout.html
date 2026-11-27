@@ -11,10 +11,10 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="{{if isPublic}}OpenHash{{else}}litmus{{end}}" />
     <meta property="og:title" content="Fallout — {{if isPublic}}OpenHash{{else}}litmus{{end}}" />
-    <meta property="og:description" content="Recent supply-chain attacks." />
-    <meta name="description" content="Recent supply-chain attacks." />
+    <meta property="og:description" content="Supply-chain attacks." />
+    <meta name="description" content="Supply-chain attacks." />
     <meta name="twitter:card" content="summary" />
-    <link rel="alternate" type="application/atom+xml" title="Fallout" href="/feed.atom" />
+    <link rel="alternate" type="application/atom+xml" title="OpenHash: Fallout" href="/fallout.atom" />
     <script nonce="{{.Nonce}}">
     // The day bands are the reader's calendar days, and only the browser knows
     // which zone that is. Hand the server the IANA name once and reload, so the
@@ -50,7 +50,7 @@
         <div class="page-head">
             <div>
                 <h1>Fallout</h1>
-                <p class="lede">Recent supply-chain attacks.</p>
+                <p class="lede">Supply-chain attacks.</p>
             </div>
         </div>
         <section class="card" aria-label="Fallout, {{.WindowLabel}}">
@@ -62,7 +62,7 @@
                 </nav>
                 <div class="bar-side">
                     {{range .Sectors}}{{if .Active}}<span>{{.Count}} of {{$.WeeklyCount}}</span>{{end}}{{end}}
-                    <a class="link" href="/feed.atom">Atom feed</a>
+                    <a class="link" href="/fallout.atom">Atom feed</a>
                 </div>
             </div>
             {{if .FeedDegraded}}<div class="notice" role="status">Feed unavailable{{if .Days}}. Showing the last copy{{end}}.</div>{{end}}
@@ -87,9 +87,9 @@
             <div class="empty">Nothing {{.WindowLabel}}{{with .SelectedEco}} in {{.}}{{end}}.</div>
             {{end}}
             <nav class="pager" aria-label="Weeks">
-                {{if .NewerURL}}<a href="{{.NewerURL}}" rel="next" title="The week after">‹ Newer week</a>{{else}}<span class="off" title="This is the week in progress">‹ Newer week</span>{{end}}
+                {{if .NewerURL}}<a href="{{.NewerURL}}" rel="next">‹ Newer week</a>{{else}}<span class="off" title="Week in progress">‹ Newer week</span>{{end}}
                 <span class="mid">{{.WindowLabel}}{{if not .CurrentWeek}} · <a href="{{.CurrentURL}}">This week</a>{{end}}</span>
-                {{if .OlderURL}}<a href="{{.OlderURL}}" rel="prev" title="The week before">Older week ›</a>{{else}}<span class="off" title="The archive reaches no further back">Older week ›</span>{{end}}
+                {{if .OlderURL}}<a href="{{.OlderURL}}" rel="prev">Older week ›</a>{{else}}<span class="off" title="Oldest archived week">Older week ›</span>{{end}}
             </nav>
         </section>
     </main>

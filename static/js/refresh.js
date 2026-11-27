@@ -49,7 +49,7 @@ function watchForCompletion(sha, after, btn) {
       es.close();
       btn.textContent = "✕ sample missing";
       btn.classList.add("is-error");
-      announce("Refresh failed: sample no longer present.");
+      announce("Refresh failed: sample missing.");
     });
     // When the server hits its own waitMaxDuration it just closes the
     // connection — natural EventSource behavior is to auto-reconnect,
@@ -104,7 +104,7 @@ document.querySelectorAll(".refresh-btn").forEach((btn) => {
     btn.disabled = true;
     btn.textContent = "↻ queuing…";
     btn.classList.remove("is-done", "is-error");
-    announce("Refreshing sample…");
+    announce("Refreshing…");
 
     try {
       const body = new URLSearchParams({ csrf_token: csrf });
@@ -132,14 +132,14 @@ document.querySelectorAll(".refresh-btn").forEach((btn) => {
       if (accepted?.status === "current") {
         btn.textContent = "↻ reloading…";
         btn.classList.add("is-done");
-        announce("The current analysis already matches Scan. Reloading.");
+        announce("Analysis already current. Reloading.");
         setTimeout(() => location.reload(), 300);
         return;
       }
       btn.textContent = "↻ waiting…";
       btn.classList.add("is-done");
-      btn.title = "Sample refresh accepted; waiting for a fresh analysis.";
-      announce("Sample refresh accepted. Waiting for analysis to finish.");
+      btn.title = "Queued; waiting for analysis.";
+      announce("Queued. Waiting for analysis.");
       // We only auto-reload when the user themselves triggered the refresh
       // on this page — visiting the same page in another tab won't poll
       // because that tab never observed a successful POST here.

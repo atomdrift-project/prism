@@ -22,11 +22,11 @@ func TestResultPageLoadsShortcuts(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		`src="/static/js/shortcuts.js?v=`,
-		"j for the next sample",
-		"k for the previous one",
-		"x to go back to the feed",
-		"d to download",
-		"r to re-queue",
+		"j next sample",
+		"k previous sample",
+		"x back to the feed",
+		"d download",
+		"r refresh",
 		`id="kbd-toggle" aria-pressed="true"`,
 	} {
 		if !strings.Contains(out, want) {
