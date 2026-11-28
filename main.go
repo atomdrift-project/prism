@@ -2697,6 +2697,11 @@ type feedQueryArgs struct {
 	// exceptLabel is applied to the rows a read returns.
 	label       string
 	exceptLabel string
+	// sighted widens label with the files a threat feed names and atomscan
+	// calls suspicious or hostile, whatever their label short of good: a
+	// fresh payload from a malware feed is known malware before anyone gets
+	// round to labeling it (see loadSightedRows).
+	sighted bool
 	// feedsOnly restricts the stream to samples cited by external sources,
 	// independently of the sample's label or analysis verdict.
 	feedsOnly bool
@@ -2711,11 +2716,15 @@ func feedCacheKey(a *feedQueryArgs) string {
 	if a.feedsOnly {
 		feeds = "1"
 	}
-	return "feed-v15:eco=" + a.ecosystem + ":dom=" + a.domain +
+	sighted := "0"
+	if a.sighted {
+		sighted = "1"
+	}
+	return "feed-v16:eco=" + a.ecosystem + ":dom=" + a.domain +
 		":crit=" + a.criticality + ":formula=" + a.formula + ":feeds=" + feeds +
 		":q=" + a.search + ":purl=" + a.purlBase + ":pv=" + a.purlVersion +
 		":cn=" + a.claimName + ":cs=" + a.claimSigner +
-		":label=" + a.label + ":xlabel=" + a.exceptLabel +
+		":label=" + a.label + ":xlabel=" + a.exceptLabel + ":sighted=" + sighted +
 		":from=" + timeKey(a.since) + ":to=" + timeKey(a.until)
 }
 
@@ -2843,6 +2852,9 @@ func feedDiagParams(a *feedQueryArgs) string {
 	}
 	if a.exceptLabel != "" {
 		parts = append(parts, "xlabel="+diagSafe(a.exceptLabel))
+	}
+	if a.sighted {
+		parts = append(parts, "sighted=1")
 	}
 	if !a.since.IsZero() || !a.until.IsZero() {
 		parts = append(parts, "window="+timeKey(a.since)+".."+timeKey(a.until))
@@ -3000,10 +3012,28 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 	if len(purls) > 0 {
 		q.Search, q.Names = "", purls
 	}
+	sightedQ := q // catalogFeedInWindow pages a windowed q in place
 	rows, truncated, err := catalogFeedInWindow(ctx, st, &q)
 	if err != nil {
 		fail()
 		return feedFetch{}, err
+	}
+	// admitted holds the rows the sightings ledger let in at a class the
+	// criticality filter below would otherwise drop.
+	var admitted map[string]bool
+	if args.sighted {
+		extra, extraTruncated, err := loadSightedRows(ctx, st, &sightedQ)
+		if err != nil {
+			fail()
+			return feedFetch{}, err
+		}
+		admitted = make(map[string]bool, len(extra))
+		for i := range extra {
+			admitted[string(extra[i].SHA256)] = true
+		}
+		rows = mergeFeedRows(rows, extra, sightedQ.Since.IsZero() && sightedQ.Until.IsZero())
+		truncated = truncated || extraTruncated
+		logger.Debug("feed: sighted rows merged", "sighted", len(extra), "rows", len(rows))
 	}
 	dbBreaker.success()
 	recordDep(ctx, "hopper-db", "feed", "ok", feedStart)
@@ -3028,7 +3058,7 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		// argument may be a named band ("hostile") or a comparison
 		// expression (">=1") — both go through criticalityClasses so we
 		// compare against the same set the SQL filter used.
-		if args.criticality != "" {
+		if args.criticality != "" && !admitted[string(rows[i].SHA256)] {
 			classes, ok := criticalityClasses(args.criticality)
 			if !ok {
 				continue
@@ -3046,6 +3076,88 @@ func loadFeedRowsFromHopper(ctx context.Context, args *feedQueryArgs) (feedFetch
 		out.rows = append(out.rows, row)
 	}
 	return out, nil
+}
+
+// sightedClasses are the atomscan classes at which a threat feed's citation
+// alone admits a file to Malware: someone else named it, and our own scan
+// agrees it is not benign.
+var sightedClasses = []int{1, 2}
+
+// loadSightedRows reads the files base selects, minus its label filter, that
+// the sightings ledger cites at sightedClasses and that a malicious or
+// suspicious claim names. Cited alone is not enough: an advisory that calls a
+// release vulnerable cites it too, and a legitimate package with a CVE is not
+// malware. A file hopper labels good stays out whatever names it.
+func loadSightedRows(ctx context.Context, st *store.Store, base *store.FeedQuery) ([]store.FeedRow, bool, error) {
+	q := *base
+	q.Label, q.Cited, q.Classes = "", true, classNames(sightedClasses)
+	rows, truncated, err := catalogFeedInWindow(ctx, st, &q)
+	if err != nil || len(rows) == 0 {
+		return nil, truncated, err
+	}
+	subjects := make([]string, 0, 2*len(rows))
+	for i := range rows {
+		subjects = append(subjects, hex.EncodeToString(rows[i].SHA256))
+		if strings.HasPrefix(rows[i].Name, "pkg:") {
+			subjects = append(subjects, rows[i].Name)
+		}
+	}
+	slices.Sort(subjects)
+	ledger, err := st.Sightings(ctx, slices.Compact(subjects))
+	if err != nil {
+		return nil, truncated, err
+	}
+	kept := rows[:0]
+	for i := range rows {
+		r := &rows[i]
+		if r.Label == "good" {
+			continue
+		}
+		if accuses(ledger[hex.EncodeToString(r.SHA256)], "") || accuses(ledger[r.Name], r.Version) {
+			kept = append(kept, *r)
+		}
+	}
+	return kept, truncated, nil
+}
+
+// accuses reports whether a malicious or suspicious claim among claims names
+// the release at version. A digest claim names its one file. A package claim
+// counts when it covers every release (Affected empty or "*") or lists this version
+// exactly; a range needs the ledger's covers(), which a feed read does not
+// reach, so a range never admits a file here.
+func accuses(claims []store.Sighting, version string) bool {
+	for i := range claims {
+		g := &claims[i]
+		if g.Claim != "malicious" && g.Claim != "suspicious" {
+			continue
+		}
+		if !strings.HasPrefix(g.Subject, "pkg:") || g.Affected == "" || g.Affected == "*" {
+			return true
+		}
+		if version == "" {
+			continue
+		}
+		for v := range strings.SplitSeq(g.Affected, ",") {
+			if strings.TrimSpace(v) == version {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mergeFeedRows unions two feed reads newest first, the way hopper orders one:
+// by sample id, descending, each file once. An unwindowed read is a single
+// page, so capped trims the union back to that page; a windowed read keeps
+// every row, as each read already did.
+func mergeFeedRows(a, b []store.FeedRow, capped bool) []store.FeedRow {
+	out := slices.Concat(a, b)
+	slices.SortStableFunc(out, func(x, y store.FeedRow) int { return cmp.Compare(y.ID, x.ID) })
+	out = slices.CompactFunc(out, func(x, y store.FeedRow) bool { return x.ID == y.ID })
+	if capped && len(out) > feedLimit {
+		out = out[:feedLimit]
+	}
+	return out
 }
 
 func feedRowsFromSnapshot(snapshot cachedFeedSnapshot) []feedRow {
@@ -3267,7 +3379,7 @@ func (p *feedPopularity) record(a *feedQueryArgs) {
 	}
 	key := feedQueryArgs{
 		ecosystem: a.ecosystem, criticality: a.criticality, feedsOnly: a.feedsOnly,
-		label: a.label, exceptLabel: a.exceptLabel,
+		label: a.label, exceptLabel: a.exceptLabel, sighted: a.sighted,
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -4669,13 +4781,14 @@ const (
 )
 
 // hostileListArgs is a fixed list's query across every platform: Malware keeps
-// the hostile files hopper labels bad, Review the hostile files it does not.
+// the hostile files hopper labels bad plus the suspicious or hostile files a
+// threat feed names (sighted), Review the hostile files not labeled bad.
 func hostileListArgs(list string, feedsOnly bool) feedQueryArgs {
 	a := feedQueryArgs{criticality: "hostile", feedsOnly: feedsOnly}
 	if list == reviewList {
 		a.exceptLabel = "bad"
 	} else {
-		a.label = "bad"
+		a.label, a.sighted = "bad", true
 	}
 	return a
 }
@@ -4996,7 +5109,7 @@ func renderFeed(w http.ResponseWriter, r *http.Request, scope feedScope) {
 	}
 	if scope.list != "" {
 		list := hostileListArgs(scope.list, data.FeedsOnly)
-		args.label, args.exceptLabel = list.label, list.exceptLabel
+		args.label, args.exceptLabel, args.sighted = list.label, list.exceptLabel, list.sighted
 	}
 	bypass := isHardRefresh(r)
 	switch {

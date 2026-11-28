@@ -330,6 +330,73 @@ func TestHostileListsSplitOnLabel(t *testing.T) {
 	}
 }
 
+// Malware also lists a file a threat feed names once atomscan calls it
+// suspicious or hostile, before anyone labels it: a fresh URLhaus payload is
+// known malware on arrival. A citation that is not an accusation (a CVE), or
+// that names another release, does not count, and a file labeled good stays
+// out whatever names it.
+func TestMalwareListsSightedFiles(t *testing.T) {
+	w := newTestStore(t)
+	pkg, _ := evilPackage(t, w)
+	ctx := t.Context()
+	saved := feedDropdownCache
+	feedDropdownCache = openNullCache[feedDropdowns]("test feed dropdowns")
+	t.Cleanup(func() { feedDropdownCache = saved })
+
+	malware := func() []string {
+		t.Helper()
+		args := hostileListArgs(malwareList, false)
+		fetch, err := loadFeedRowsFromHopper(ctx, &args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var shas []string
+		for i := range fetch.rows {
+			shas = append(shas, fetch.rows[i].SHA256)
+		}
+		return shas
+	}
+
+	addSightings(t, w, []hopper.Sighting{
+		{Source: "osv", Subject: "pkg:npm/evil", Affected: hopper.AllVersions, Claim: hopper.ClaimVulnerable, Note: "CVE-2026-0001"},
+		{Source: "osv", Subject: "pkg:npm/evil", Affected: "2.0.0", Claim: hopper.ClaimMalicious, Note: "MAL-2026-0001"},
+	})
+	if got := malware(); len(got) != 0 {
+		t.Errorf("malware lists a release only a CVE or another release's advisory names: %q", got)
+	}
+
+	addSightings(t, w, []hopper.Sighting{{Source: "urlhaus", Subject: pkg, Claim: hopper.ClaimSuspicious}})
+	if got := malware(); !slices.Equal(got, []string{pkg}) {
+		t.Errorf("malware = %q, want the hostile file a feed names by digest", got)
+	}
+
+	// A standalone payload atomscan calls only suspicious.
+	payload := hexDigest("payload bytes")
+	if _, err := w.Ingest(ctx, []store.Arrival{{SHA256: digest("payload bytes"), Size: 900, Path: "incoming/payload.bin", Source: "forager", Feed: "urlhaus"}}, store.QueueNew); err != nil {
+		t.Fatal(err)
+	}
+	report := `{"mol":"Os","traits":[{"id":"b::dropper","crit":4,"desc":"drops a file"}]}`
+	fileResult(t, w, []map[string]any{{
+		"sha256": payload, "size": 900, "type": "elf", "report": sumOf(report),
+		"verdict": map[string]any{"outcome": "ok", "class": "suspicious", "fires_at": 8},
+		"floor":   map[string]any{"class": "suspicious", "fires_at": 8},
+	}}, []string{report})
+	if got := malware(); slices.Contains(got, payload) {
+		t.Error("malware lists a suspicious file nothing names")
+	}
+	addSightings(t, w, []hopper.Sighting{{Source: "urlhaus", Subject: payload, Claim: hopper.ClaimSuspicious}})
+	if got := malware(); !slices.Equal(got, []string{payload, pkg}) {
+		t.Errorf("malware = %q, want the sighted suspicious payload, newest first", got)
+	}
+
+	if _, err := w.Ingest(ctx, []store.Arrival{{SHA256: digest("payload bytes"), Size: 900, Path: "good/payload.bin", Label: "good", LabelSource: "marker"}}, store.QueueNew); err != nil {
+		t.Fatal(err)
+	}
+	if got := malware(); slices.Contains(got, payload) {
+		t.Error("malware lists a file labeled good")
+	}
+}
+
 // Prism's sessions are read-only to the server, so a write through its store
 // fails; and a schema without hopper's tables is refused at open.
 func TestCatalogIsReadOnly(t *testing.T) {
