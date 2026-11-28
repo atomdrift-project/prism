@@ -148,10 +148,12 @@ const (
 	// feedDropdownTTL bounds how long the cached ecosystem/domain filter
 	// options are reused before a rebuild re-queries them. They are identical
 	// for every feed filter and change slowly (a new ecosystem or domain shows
-	// up a handful of times a day), so one refresh every few minutes backs
-	// every uncached rebuild in that window instead of two DISTINCT-over-the-
-	// corpus scans per request.
-	feedDropdownTTL = 5 * time.Minute
+	// up a handful of times a day), so one refresh an hour backs every
+	// uncached rebuild in that window. The refresh (store.Facets) reads every
+	// file scanned in feedEcosystemWindow with its newest location: 1.07M
+	// files and 33 s on galadriel (2026-11-28), over half of hopperQueryTimeout,
+	// which every five minutes kept a replica backend busy a tenth of the time.
+	feedDropdownTTL = time.Hour
 	// feedRebuildTimeout bounds a single feed-snapshot rebuild. The rebuild
 	// runs under this deadline on a context detached from the caller's
 	// request (see loadFeedSnapshot): in a singleflight cache the loader is
